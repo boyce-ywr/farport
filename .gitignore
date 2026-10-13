@@ -1,0 +1,16 @@
+.build/
+.swiftpm/
+.test/
+dist/
+.DS_Store
+*.xcuserstate
+docs/screenshots/
+docs/issues/artifacts/
+.env
+.env.*
+*.pem
+*.p12
+*.pfx
+*.key
+id_rsa*
+id_ed25519*

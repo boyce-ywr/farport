@@ -1,0 +1,172 @@
+import AppKit
+import SwiftUI
+import Security
+import WorkbenchCore
+import OpenSSHBackend
+
+@MainActor
+final class AppStore: ObservableObject {
+    static let shared: AppStore = {
+        do { return try AppStore() }
+        catch { let alert = NSAlert(); alert.messageText = "无法打开工作区"; alert.informativeText = error.localizedDescription; alert.runModal(); exit(1) }
+    }()
+    @Published var hosts: [HostProfile] = []
+    @Published var transfers: [TransferJob] = []
+    @Published var errorMessage: String?
+    @Published var tunnels: [TunnelSession] = []
+    @Published var fileClipboard: [FileEndpoint] = []
+    @Published var fontSize: Double = UserDefaults.standard.double(forKey: "fontSize") == 0 ? 13 : UserDefaults.standard.double(forKey: "fontSize")
+    @Published var fontName: String = UserDefaults.standard.string(forKey: "fontName") ?? "SF Mono"
+    @Published var appearance: String = UserDefaults.standard.string(forKey: "appearance") ?? "system"
+    let paths: ApplicationPaths
+    let transport: SSHTransport
+    let isTestWorkspace: Bool
+    private var active: [UUID: CancellationFlag] = [:]
+    private let persistence = DispatchQueue(label: "local.sshworkbench.persistence")
+    private var lastPersistence = Date.distantPast
+
+    init() throws {
+        let custom = ProcessInfo.processInfo.environment["SWB_HOME"]
+        isTestWorkspace = custom != nil
+        let root = custom.map { URL(fileURLWithPath: $0) } ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("SSH Workbench")
+        paths = try ApplicationPaths(root: root)
+        let bundled = Bundle.main.bundleURL.appendingPathComponent("Contents/MacOS/workbench-askpass").path
+        let sibling = URL(fileURLWithPath: CommandLine.arguments[0]).deletingLastPathComponent().appendingPathComponent("workbench-askpass").path
+        transport = SSHTransport(paths: paths, askpass: FileManager.default.isExecutableFile(atPath: bundled) ? bundled : sibling)
+        if FileManager.default.fileExists(atPath: paths.hosts.path) { hosts = try paths.load([HostProfile].self, from: paths.hosts) }
+        if FileManager.default.fileExists(atPath: paths.transfers.path) {
+            transfers = try paths.load([TransferJob].self, from: paths.transfers).map { original in
+                var job = original
+                if job.status == .running || job.status == .queued { job.status = .paused; job.message = "上次运行已结束；点击继续以校验断点。" }
+                return job
+            }
+        }
+    }
+    var activeCount: Int { transfers.filter { $0.status == .running || $0.status == .queued }.count }
+    var colorScheme: ColorScheme? { appearance == "dark" ? .dark : (appearance == "light" ? .light : nil) }
+    func saveHost(_ profile: HostProfile) throws {
+        try profile.validate()
+        if let current = hosts.first(where: { $0.id == profile.id }), current.connectionKey != profile.connectionKey,
+           transfers.contains(where: { ($0.source.hostID == profile.id || $0.destination.hostID == profile.id) && ![.completed, .cancelled].contains($0.status) }) {
+            throw WorkbenchError.message("该主机关联未完成的传输任务。请先完成或取消任务，再修改连接地址、端口、用户、密钥或跳板机。")
+        }
+        if let index = hosts.firstIndex(where: { $0.id == profile.id }) { hosts[index] = profile } else { hosts.append(profile) }
+        try paths.save(hosts, to: paths.hosts)
+    }
+    func removeHost(_ profile: HostProfile) {
+        guard !transfers.contains(where: { ($0.source.hostID == profile.id || $0.destination.hostID == profile.id) && [.running, .queued, .paused, .failed].contains($0.status) }) else {
+            errorMessage = "该主机关联未完成的传输任务，请先完成或取消任务。"; return
+        }
+        hosts.removeAll { $0.id == profile.id }
+        do { try paths.save(hosts, to: paths.hosts) } catch { errorMessage = error.localizedDescription }
+        forgetCredentials(profile)
+    }
+    func rememberSession(_ host: HostProfile, session: String) {
+        guard let index = hosts.firstIndex(where: { $0.id == host.id }) else { return }
+        hosts[index].lastSession = session
+        do { try paths.save(hosts, to: paths.hosts) } catch { errorMessage = error.localizedDescription }
+    }
+    func forgetCredentials(_ profile: HostProfile) {
+        let query: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: "local.sshworkbench.credentials", kSecReturnAttributes as String: true, kSecMatchLimit as String: kSecMatchLimitAll]
+        var results: CFTypeRef?
+        if SecItemCopyMatching(query as CFDictionary, &results) == errSecSuccess, let records = results as? [[String: Any]] {
+            for record in records {
+                if let account = record[kSecAttrAccount as String] as? String, account.hasPrefix(profile.id.uuidString + ":") {
+                    SecItemDelete([kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: "local.sshworkbench.credentials", kSecAttrAccount as String: account] as CFDictionary)
+                }
+            }
+        }
+    }
+    func queue(_ job: TransferJob) {
+        transfers.insert(job, at: 0); persistTransfers(force: true); startNext()
+    }
+    func queueFiles(_ sources: [FileEndpoint], to directory: FileEndpoint, overwrite: Bool = false) throws {
+        let batch = try TransferBatch.jobs(sources: sources, destinationDirectory: directory, overwrite: overwrite)
+        transfers.insert(contentsOf: batch, at: 0); persistTransfers(force: true); startNext()
+    }
+    func pause(_ job: TransferJob) {
+        active[job.id]?.cancel()
+        if let index = transfers.firstIndex(where: { $0.id == job.id }), transfers[index].status == .queued { transfers[index].status = .paused }
+        persistTransfers(force: true)
+    }
+    func resume(_ job: TransferJob) {
+        guard active[job.id] == nil, let index = transfers.firstIndex(where: { $0.id == job.id }) else { return }
+        transfers[index].status = .queued; persistTransfers(force: true); startNext()
+    }
+    func cancel(_ job: TransferJob) {
+        active[job.id]?.cancel()
+        if let index = transfers.firstIndex(where: { $0.id == job.id }) {
+            transfers[index].status = .cancelled; transfers[index].message = "已取消。目标目录的 .swb-*.part 断点文件保留，确认不需要后可删除。"
+        }
+        persistTransfers(force: true)
+    }
+    private func startNext() {
+        while active.count < 2, let job = transfers.first(where: { $0.status == .queued && active[$0.id] == nil }) {
+            let flag = CancellationFlag(); active[job.id] = flag
+            let profiles = hosts; let engine = TransferEngine(transport: transport)
+            Task.detached(priority: .utility) { [weak self] in
+                _ = engine.execute(job, hosts: profiles, cancellation: flag) { updated in
+                    DispatchQueue.main.async { self?.receive(updated) }
+                }
+                DispatchQueue.main.async {
+                    self?.active.removeValue(forKey: job.id); self?.startNext()
+                }
+            }
+        }
+    }
+    private func receive(_ job: TransferJob) {
+        guard let index = transfers.firstIndex(where: { $0.id == job.id }) else { return }
+        if transfers[index].status != .cancelled { transfers[index] = job }
+        persistTransfers(force: job.status != .running)
+    }
+    func persistTransfers(force: Bool = false) {
+        guard force || Date().timeIntervalSince(lastPersistence) > 0.6 else { return }; lastPersistence = Date()
+        let snapshot = transfers; let paths = paths
+        persistence.async { [weak self] in
+            do { try paths.save(snapshot, to: paths.transfers) }
+            catch { DispatchQueue.main.async { self?.errorMessage = "保存传输断点失败：\(error.localizedDescription)" } }
+        }
+    }
+    func prepareToQuit() {
+        tunnels.forEach { $0.stop() }
+        active.values.forEach { $0.cancel() }
+        for index in transfers.indices where transfers[index].status == .running || transfers[index].status == .queued { transfers[index].status = .paused }
+        persistTransfers(force: true); persistence.sync {}
+    }
+    func savePreferences() {
+        UserDefaults.standard.set(fontSize, forKey: "fontSize"); UserDefaults.standard.set(fontName, forKey: "fontName"); UserDefaults.standard.set(appearance, forKey: "appearance")
+    }
+    func importSSHConfig(_ url: URL) {
+        let alert = NSAlert(); alert.messageText = "仅导入可信的 SSH 配置"; alert.informativeText = "SSH 配置中的 ProxyCommand / Match exec 可以执行本地命令。导入后连接将使用所选配置文件；不会复制私钥。"; alert.addButton(withTitle: "信任并导入"); alert.addButton(withTitle: "取消")
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        Task {
+            do {
+                let profiles = try await Task.detached { () -> [HostProfile] in
+                    let text = try String(contentsOf: url, encoding: .utf8)
+                    let aliases = text.split(separator: "\n").flatMap { line -> [String] in
+                        let content = line.split(separator: "#", maxSplits: 1, omittingEmptySubsequences: false).first ?? ""
+                        let parts = content.split(whereSeparator: { $0.isWhitespace }).map { String($0).trimmingCharacters(in: CharacterSet(charactersIn: "\"'")) }
+                        guard parts.first?.lowercased() == "host" else { return [] }
+                        return parts.dropFirst().filter { !$0.contains("*") && !$0.contains("?") && !$0.hasPrefix("!") && !$0.hasPrefix("#") }
+                    }
+                    var imported: [HostProfile] = []
+                    for alias in Array(Set(aliases)).sorted() {
+                        var profile = HostProfile(name: alias, address: alias, group: "SSH 配置")
+                        try profile.validate()
+                        let result = try ProcessRunner.run(executable: "/usr/bin/ssh", arguments: ["-F", url.path, "-G", alias], timeout: 10).checked()
+                        var values: [String: String] = [:]
+                        for line in result.text.split(separator: "\n") {
+                            let parts = line.split(separator: " ", maxSplits: 1).map(String.init)
+                            if parts.count == 2 && values[parts[0]] == nil { values[parts[0]] = parts[1] }
+                        }
+                        profile.port = Int(values["port"] ?? "22") ?? 22; profile.username = values["user"] ?? ""; profile.configFile = url.path
+                        imported.append(profile)
+                    }
+                    return imported
+                }.value
+                for profile in profiles where !hosts.contains(where: { $0.address == profile.address && $0.configFile == profile.configFile }) { try saveHost(profile) }
+                if profiles.isEmpty { errorMessage = "该文件未包含可导入的具体 Host 别名；通配符不会转换为主机。" }
+            } catch { errorMessage = error.localizedDescription }
+        }
+    }
+}
