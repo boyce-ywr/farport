@@ -54,7 +54,7 @@ struct HostEditor: View {
                 }
                 TextField("跳板机 / ProxyJump", text: $profile.jumpHost).help("例如 user@jump:22；多级跳转使用逗号分隔。复杂配置可导入 SSH config。")
                 Toggle("连接时优先打开 tmux 工作区", isOn: $profile.prefersTmux)
-                Picker("标记颜色", selection: $profile.color) { Text("青绿").tag("mint"); Text("蓝色").tag("blue") }.pickerStyle(.segmented)
+                HostColorPicker(selection: $profile.color)
                 if let config = profile.configFile { LabeledContent("SSH 配置文件") { Text(config).lineLimit(2).font(.caption) } }
             }.textFieldStyle(.roundedBorder)
             if !errorMessage.isEmpty { Text(errorMessage).font(.caption).foregroundStyle(.red) }

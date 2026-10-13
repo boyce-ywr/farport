@@ -9,6 +9,7 @@ let package = Package(
         .executable(name: "workbench-askpass", targets: ["WorkbenchAskpass"]),
         .executable(name: "workbench-check", targets: ["WorkbenchCheck"]),
         .executable(name: "workbench-tests", targets: ["WorkbenchCoreTests"]),
+        .executable(name: "workbench-attachment-check", targets: ["WorkbenchAttachmentCheck"]),
         .library(name: "WorkbenchCore", targets: ["WorkbenchCore"])
     ],
     dependencies: [
@@ -20,6 +21,7 @@ let package = Package(
         .executableTarget(name: "WorkbenchApp", dependencies: ["WorkbenchCore", "OpenSSHBackend", "SwiftTerm"]),
         .executableTarget(name: "WorkbenchAskpass"),
         .executableTarget(name: "WorkbenchCheck", dependencies: ["WorkbenchCore", "OpenSSHBackend"]),
+        .executableTarget(name: "WorkbenchAttachmentCheck", dependencies: ["WorkbenchCore", "OpenSSHBackend"]),
         .executableTarget(name: "WorkbenchCoreTests", dependencies: ["WorkbenchCore", "OpenSSHBackend"], path: "Tests/WorkbenchCoreTests")
     ],
     swiftLanguageModes: [.v5]

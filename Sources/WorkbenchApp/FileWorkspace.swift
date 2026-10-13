@@ -9,13 +9,13 @@ struct FileTransferSelection: Identifiable {
 }
 
 struct FileWorkspace: View {
-    let host: HostProfile?
+    var host: HostProfile? { model.host }
     @ObservedObject var store: AppStore
-    @StateObject private var model: FileModel
+    @ObservedObject var model: FileModel
     @ViewState private var transferSelection: FileTransferSelection?
     @ViewState private var editDocument: EditDocument?
     @ViewState private var dropTarget = false
-    init(host: HostProfile?, store: AppStore) { self.host = host; self.store = store; _model = StateObject(wrappedValue: FileModel(host: host, store: store)) }
+    init(model: FileModel, store: AppStore) { self.model = model; self.store = store }
     var body: some View {
         VStack(spacing: 0) {
             toolbar
@@ -68,7 +68,7 @@ struct FileWorkspace: View {
         .task {
             let qaDirectory = store.isTestWorkspace && ProcessInfo.processInfo.environment["SWB_QA_OUTPUT"] != nil
                 ? (host == nil ? ProcessInfo.processInfo.environment["SWB_QA_LOCAL_DIRECTORY"] : "/home/tester/workspace") : nil
-            model.load(qaDirectory)
+            model.loadIfNeeded(qaDirectory)
             if store.isTestWorkspace && ProcessInfo.processInfo.environment["SWB_QA_FILE_NAVIGATION"] == "1" {
                 await verifyDirectoryActivation()
             }
@@ -80,7 +80,8 @@ struct FileWorkspace: View {
         .onDisappear { model.stop() }
         .onChange(of: store.transfers.filter { $0.status == .completed }.map(\.id)) { _, _ in if !model.busy { model.load() } }
         .onChange(of: model.files) { _, files in
-            if store.isTestWorkspace, ProcessInfo.processInfo.environment["SWB_QA_SCREEN"] == "files", model.selection.isEmpty,
+            if store.isTestWorkspace, ProcessInfo.processInfo.environment["SWB_QA_SCREEN"] == "files",
+               ProcessInfo.processInfo.environment["SWB_QA_FILE_NAVIGATION"] != "1", model.selection.isEmpty,
                let path = files.first(where: { $0.name == "README.md" })?.path {
                 model.selection = [path]
             }
@@ -162,11 +163,19 @@ struct FileWorkspace: View {
         Divider()
         Button("重命名") { if let name = promptText("重命名", initial: file.name), RemotePath.validName(name) { let destination = RemotePath.join(model.path, name); model.perform { try $0.rename(file.path, to: destination) } } }
         Button("修改权限") { if let text = promptText("修改权限", detail: "输入三位八进制权限，例如 644 或 755。", initial: file.attributes.permissionText), text.count == 3, let mode = UInt32(text, radix: 8), mode <= 0o777 { model.perform { try $0.chmod(file.path, permissions: mode) } } }
-        Button("删除…", role: .destructive) { if confirm("永久删除“\(file.name)”？", "远程删除不经过 Mac 废纸篓。文件夹中的内容也会被删除，无法撤销。") { model.perform { try $0.removeRecursively(file.path) } } }
+        Button("删除…", role: .destructive) { deleteFiles([file]) }.disabled(model.busy)
     }
     @ViewBuilder private func batchActions(_ files: [RemoteFile]) -> some View {
         Button("复制 \(files.count) 项") { copyFiles(files) }
         Button("传输 \(files.count) 项到…") { transferSelection = FileTransferSelection(sources: files.map { FileEndpoint(hostID: host?.id, path: $0.path) }) }
+        Divider()
+        Button("删除 \(files.count) 项…", role: .destructive) { deleteFiles(files) }.disabled(model.busy)
+    }
+    private func deleteFiles(_ files: [RemoteFile]) {
+        guard !model.busy, !files.isEmpty else { return }
+        let names = files.prefix(10).map(\.name).joined(separator: "\n") + (files.count > 10 ? "\n…共 \(files.count) 项" : "")
+        let title = files.count == 1 ? "永久删除“\(files[0].name)”？" : "永久删除所选 \(files.count) 项？"
+        if confirm(title, "位置：\(host?.name ?? "此 Mac") · \(model.path)\n\n\(names)\n\n文件夹中的内容也会被删除，不经过废纸篓，无法撤销。") { model.deleteFiles(files) }
     }
     private func copyFiles(_ files: [RemoteFile]) {
         store.fileClipboard = files.map { FileEndpoint(hostID: host?.id, path: $0.path) }
@@ -193,6 +202,9 @@ struct FileWorkspace: View {
               let table = findTable(content), let window = table.window else {
             fputs("FAIL · 找不到真实远程目录表格\n", stderr); exit(1)
         }
+        for _ in 0..<50 { if table.numberOfRows == model.visibleFiles.count { break }; try? await Task.sleep(for: .milliseconds(50)) }
+        content.layoutSubtreeIfNeeded()
+        try? await Task.sleep(for: .milliseconds(200))
         table.scrollRowToVisible(row)
         let rectangle = table.rect(ofRow: row)
         let position = table.convert(NSPoint(x: rectangle.minX + 60, y: rectangle.midY), to: nil)
@@ -204,9 +216,13 @@ struct FileWorkspace: View {
                 try? await Task.sleep(for: .milliseconds(50))
             }
             if click == 1 {
+                for _ in 0..<10 {
+                    if model.selection == ["/home/tester/workspace/projects"] || model.busy || model.path != "/home/tester/workspace" { break }
+                    try? await Task.sleep(for: .milliseconds(50))
+                }
                 guard model.path == "/home/tester/workspace", !model.busy,
                       model.selection == ["/home/tester/workspace/projects"] else {
-                    fputs("FAIL · 单击目录名称应只选中，不应进入文件夹\n", stderr); exit(1)
+                    fputs("FAIL · 单击目录名称应只选中，不应进入文件夹：path=\(model.path) busy=\(model.busy) selection=\(model.selection) row=\(table.selectedRow) intended=\(row) frame=\(rectangle)\n", stderr); exit(1)
                 }
                 print("PASS · 单击目录名称只选中，不改变目录")
             }

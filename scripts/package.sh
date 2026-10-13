@@ -50,5 +50,6 @@ if [ "$configuration" = "release" ]; then
   cp -R "$app" "$staging/Farport.app"
   ln -sfn /Applications "$staging/Applications"
   hdiutil create -volname "Farport" -srcfolder "$staging" -ov -format UDZO "$PWD/dist/Farport-$version-$suffix.dmg"
+  (cd dist && shasum -a 256 "Farport-$version-$suffix.dmg" "Farport-$version-$suffix.zip" > "Farport-$version-SHA256SUMS")
 fi
 printf '\n应用已生成：%s\n' "$app"

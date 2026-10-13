@@ -14,6 +14,33 @@ func rejects(_ message: String, _ operation: () throws -> Void) throws {
 }
 
 do {
+    try checkReleaseUpdates()
+    if CommandLine.arguments.contains("--release-check") { try checkLiveRelease() }
+    try expect(HostMarkColor.allCases.count == 10, "主机提供十种标记颜色")
+    try expect(HostMarkColor(storedValue: "mint") == .mint && HostMarkColor(storedValue: "blue") == .blue, "旧颜色配置兼容")
+    try expect(HostMarkColor(storedValue: "unknown") == .mint, "未知颜色有默认值")
+    for color in HostMarkColor.allCases {
+        let profile = HostProfile(name: "fixture", address: "localhost", color: color.rawValue)
+        let restored = try JSONDecoder().decode(HostProfile.self, from: JSONEncoder().encode(profile))
+        try expect(restored.color == color.rawValue, "主机颜色持久化：\(color.title)")
+    }
+    try expect(TerminalFontSize.scaled(base: 14, magnification: 0.5) == 21, "双指放大字号")
+    try expect(TerminalFontSize.scaled(base: 20, magnification: -0.25) == 15, "双指缩小字号")
+    try expect(TerminalFontSize.scaled(base: 14, magnification: -2) == 10, "字号下限")
+    try expect(TerminalFontSize.scaled(base: 14, magnification: 8) == 28, "字号上限")
+    try expect(TerminalFontSize.scaled(base: 14, magnification: .nan) == 14, "忽略无效缩放值")
+    let tmuxAttack = "test'; printf injection; #"
+    let attachCommand = RemoteTmuxCommand.attach(session: tmuxAttack)
+    try expect(attachCommand.contains("/bin/sh -c") && attachCommand.contains("/opt/homebrew/bin/tmux") && attachCommand.contains("/usr/local/bin/tmux"), "附着与管理共用远端 tmux 查找")
+    let attachmentPath = "/work/图 ' 片.png"
+    try expect(try AttachmentReference.text(paths: [attachmentPath]) == RemotePath.quote(attachmentPath) + " ", "附件路径引用转义且不提交")
+    try rejects("拒绝本机相对路径作为远端附件") { _ = try AttachmentReference.text(paths: ["relative.png"]) }
+    try rejects("拒绝附件路径控制字符") { _ = try AttachmentReference.text(paths: ["/tmp/a\nexecute"]) }
+    let identity = AttachmentDeliveryIdentity(sessionID: UUID(), connectionID: UUID(), focusGeneration: 1, inputGeneration: 1)
+    try expect(identity != AttachmentDeliveryIdentity(sessionID: identity.sessionID, connectionID: identity.connectionID, focusGeneration: 2, inputGeneration: 1), "切换标签后不能自动插入旧附件")
+    try expect(identity != AttachmentDeliveryIdentity(sessionID: identity.sessionID, connectionID: UUID(), focusGeneration: 1, inputGeneration: 1), "重连后不能自动插入旧附件")
+    try expect(identity != AttachmentDeliveryIdentity(sessionID: identity.sessionID, connectionID: identity.connectionID, focusGeneration: 1, inputGeneration: 2), "终端输入位置变化后不能自动插入旧附件")
+    try expect(identity != AttachmentDeliveryIdentity(sessionID: identity.sessionID, connectionID: identity.connectionID, focusGeneration: 1, inputGeneration: 1, windowNumber: 7), "切换应用窗口后不能自动插入附件")
     let left = UUID(); let right = UUID(); let third = UUID()
     var layout = TerminalLayout(); layout.select(left); layout.split(with: right)
     layout.select(right)
@@ -21,9 +48,31 @@ do {
     layout.select(left)
     try expect(layout.primary == left && layout.secondary == right && layout.focused == left, "点击左侧标签保留分屏")
     layout.select(third)
-    try expect(layout.primary == third && layout.secondary == right, "新终端替换焦点窗格而非拆除分屏")
+    try expect(layout.primary == third && layout.secondary == nil, "新标签独立显示，不能携带旧标签右侧分栏")
+    layout.select(left)
+    try expect(layout.primary == left && layout.secondary == right, "返回原标签恢复整组分栏")
     layout.close(third, fallback: nil)
-    try expect(layout.primary == right && layout.secondary == nil, "关闭左窗格后保留右窗格")
+    try expect(layout.primary == left && layout.secondary == right, "关闭后台标签不改变前台分栏")
+    let originalTab = layout.selectedTabID
+    let originalRoot = layout.selectedTab!.root.id
+    layout.resize(originalRoot, ratio: 0.63)
+    let savedRoot = layout.selectedTab!.root
+    layout.select(third); layout.selectTab(originalTab!)
+    try expect(layout.selectedTab!.root == savedRoot, "切换标签保留用户分栏比例")
+    layout.select(right); let bottom = UUID(); layout.split(with: bottom, axis: .topBottom)
+    try expect(layout.tabs.count == 2 && layout.selectedTab!.terminals == [left, right, bottom], "右侧继续上下分栏仍属于一个标签")
+    guard case .split(_, .leftRight, _, _, .split(_, .topBottom, _, _, _)) = layout.selectedTab!.root else { throw WorkbenchError.message("嵌套分栏方向不正确") }
+    layout.focusNext(); try expect(layout.focused == left, "下一分栏循环回首项")
+    layout.focusNext(backward: true); try expect(layout.focused == bottom, "上一分栏循环至末项")
+    layout.toggleZoom(); try expect(layout.selectedTab!.zoomed && layout.selectedTab!.terminals.count == 3, "最大化不删除隐藏分栏")
+    layout.select(third); try expect(layout.selectedTab!.zoomed == false, "最大化状态不泄漏到其他标签")
+    layout.selectTab(originalTab!); try expect(layout.focused == bottom && layout.selectedTab!.zoomed, "返回标签保留焦点及最大化状态")
+    layout.toggleZoom(); layout.close(right)
+    try expect(layout.selectedTab!.terminals == [left, bottom], "关闭嵌套分栏只移除指定终端")
+    layout.close(left); try expect(layout.primary == bottom && layout.secondary == nil, "关闭左分栏后保留右分栏且标签身份稳定")
+    try expect(layout.selectedTabID == originalTab, "关闭标签首个终端仍保留标签身份")
+    layout.close(bottom); try expect(layout.focused == third && layout.tabs.count == 1, "关闭最后分栏后切换到其他标签")
+    layout.close(third); try expect(layout.tabs.isEmpty && layout.focused == nil, "最后标签关闭后布局为空")
     let localSources = [FileEndpoint(path: "/source/文件.txt"), FileEndpoint(path: "/source/folder")]
     let batch = try TransferBatch.jobs(sources: localSources, destinationDirectory: FileEndpoint(path: "/destination"))
     try expect(batch.count == 2 && batch[1].destination.path == "/destination/folder", "批量文件及目录保留名称")
@@ -66,6 +115,24 @@ do {
     let temporaryRoot = FileManager.default.temporaryDirectory.appendingPathComponent("farport-core-" + UUID().uuidString)
     let paths = try ApplicationPaths(root: temporaryRoot)
     defer { try? FileManager.default.removeItem(at: temporaryRoot); try? FileManager.default.removeItem(at: paths.sockets) }
+    let shell = try LocalShellConfiguration(shell: "/bin/zsh", home: temporaryRoot, inheritedEnvironment: [
+        "PATH": "/example/bin:/usr/bin:/bin", "LANG": "zh_CN.UTF-8", "TERM": "dumb", "HOME": "/incorrect",
+        "SHELL": "/bin/false", "SWB_CREDENTIAL_ACCOUNT": "fixture", "SWB_QA_OUTPUT": "fixture.png",
+        "SSH_ASKPASS": "/fixture/askpass", "SSH_ASKPASS_REQUIRE": "force", "SSH_CONNECTION": "remote", "SSH_AUTH_SOCK": "/fixture/agent"
+    ])
+    try expect(shell.executable == "/bin/zsh" && shell.executableName == "-zsh", "直接启动用户登录 Shell 而非 SSH")
+    try expect(shell.directory == temporaryRoot.path && shell.environment["HOME"] == temporaryRoot.path && shell.environment["PWD"] == temporaryRoot.path, "本机 Shell 从主目录启动")
+    try expect(shell.environment["SHELL"] == "/bin/zsh" && shell.environment["TERM_PROGRAM"] == "Farport", "本机终端环境标识")
+    try expect(shell.environment["TERM"] == "xterm-256color" && shell.environment["COLORTERM"] == "truecolor", "本机与 SSH 终端色彩能力一致")
+    try expect(shell.environment["PATH"] == "/example/bin:/usr/bin:/bin" && shell.environment["LANG"] == "zh_CN.UTF-8", "保留用户路径与语言")
+    try expect(!shell.environment.keys.contains(where: { $0.hasPrefix("SWB_") }) && shell.environment["SSH_ASKPASS"] == nil && shell.environment["SSH_ASKPASS_REQUIRE"] == nil && shell.environment["SSH_CONNECTION"] == nil, "本机 Shell 不继承内部凭据提示和测试变量")
+    try expect(shell.environment["SSH_AUTH_SOCK"] == "/fixture/agent", "保留用户 SSH Agent")
+    let fallbackEnvironment = try LocalShellConfiguration(shell: "/bin/zsh", home: temporaryRoot, inheritedEnvironment: [:])
+    try expect(fallbackEnvironment.environment["PATH"] == "/usr/bin:/bin:/usr/sbin:/sbin" && fallbackEnvironment.environment["LANG"] == "en_US.UTF-8", "Finder 启动时补全基础环境")
+    try expect(LocalShellConfiguration.userShell.hasPrefix("/"), "从系统账户读取登录 Shell")
+    try rejects("无效 Shell") { _ = try LocalShellConfiguration(shell: "/not-a-shell", home: temporaryRoot) }
+    try rejects("Shell 目录不是可执行文件") { _ = try LocalShellConfiguration(shell: "/bin", home: temporaryRoot) }
+    try rejects("主目录不存在") { _ = try LocalShellConfiguration(shell: "/bin/zsh", home: temporaryRoot.appendingPathComponent("missing")) }
     let transport = SSHTransport(paths: paths, noninteractive: true)
     let originalHost = HostProfile(name: "fixture", address: "127.0.0.1", username: "tester")
     let options = try transport.options(for: originalHost)

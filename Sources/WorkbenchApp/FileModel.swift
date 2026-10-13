@@ -6,6 +6,7 @@ import OpenSSHBackend
 
 @MainActor
 final class FileModel: ObservableObject {
+    let id = UUID()
     @Published var path = "."
     @Published var pathInput = "."
     @Published var files: [RemoteFile] = []
@@ -25,6 +26,7 @@ final class FileModel: ObservableObject {
     private var navigation = CancellationFlag()
     private var previewCancellation = CancellationFlag()
     private var generation = UUID()
+    private var hasLoaded = false
     let previewLimit = 512 * 1024
     init(host: HostProfile?, store: AppStore) { self.host = host; transport = store.transport }
     var visibleFiles: [RemoteFile] { files.filter { (showHidden || !$0.name.hasPrefix(".")) && (filter.isEmpty || $0.name.localizedCaseInsensitiveContains(filter)) } }
@@ -34,6 +36,9 @@ final class FileModel: ObservableObject {
     var previewText: String { String(decoding: previewData, as: UTF8.self) }
     var binaryPreview: Bool { previewData.contains(0) && previewImage == nil }
     var editable: Bool { guard let file = previewFile else { return false }; return !file.attributes.isDirectory && !file.attributes.isSymbolicLink && file.attributes.size <= previewLimit && previewOffset == 0 && String(data: previewData, encoding: .utf8) != nil && !binaryPreview && previewImage == nil }
+    func loadIfNeeded(_ initialPath: String? = nil) {
+        if !hasLoaded && !busy { load(initialPath ?? path) }
+    }
     func load(_ target: String? = nil) {
         navigation.cancel(); navigation = CancellationFlag(); let cancellation = navigation
         let target = target ?? path; let transport = transport; let host = host
@@ -47,7 +52,7 @@ final class FileModel: ObservableObject {
                 }.value
                 guard !cancellation.isCancelled else { return }
                 if path != result.0 { previewCancellation.cancel(); generation = UUID(); previewBusy = false; filter = ""; selection = [] }
-                path = result.0; pathInput = result.0; files = result.1; busy = false
+                path = result.0; pathInput = result.0; files = result.1; busy = false; hasLoaded = true
                 selection.formIntersection(Set(files.map(\.path)))
                 if selection.count != 1 { previewFile = nil; previewData = Data(); followLog = false }
             } catch { if !cancellation.isCancelled { errorMessage = error.localizedDescription; busy = false } }
@@ -84,7 +89,33 @@ final class FileModel: ObservableObject {
                 previewFile = updated
                 previewImage = NSImage(data: result.0)
                 previewBusy = false
-            } catch { if generation == identifier && !cancellation.isCancelled { errorMessage = error.localizedDescription; previewBusy = false } }
+            } catch { if generation == identifier && !cancellation.isCancelled { errorMessage = errorMessage ?? error.localizedDescription; previewBusy = false } }
+        }
+    }
+    func deleteFiles(_ targets: [RemoteFile]) {
+        guard !busy, !targets.isEmpty else { return }
+        let transport = transport; let host = host
+        navigation.cancel(); navigation = CancellationFlag(); let cancellation = navigation
+        previewCancellation.cancel(); generation = UUID(); previewBusy = false; followLog = false
+        busy = true; errorMessage = nil
+        Task {
+            do {
+                let result = try await Task.detached { () -> (Set<String>, [String]) in
+                    let client = try transport.files(host, cancellation: cancellation); defer { client.close() }
+                    var deleted = Set<String>(); var failures: [String] = []
+                    for file in targets {
+                        try cancellation.check()
+                        do { try client.removeRecursively(file.path); deleted.insert(file.path) }
+                        catch { failures.append("\(file.name)：\(error.localizedDescription)") }
+                    }
+                    return (deleted, failures)
+                }.value
+                guard !cancellation.isCancelled else { return }
+                files.removeAll { result.0.contains($0.path) }; selection.subtract(result.0)
+                if let previewFile, result.0.contains(previewFile.path) { self.previewFile = nil; previewData = Data(); previewImage = nil }
+                busy = false
+                if !result.1.isEmpty { errorMessage = "已删除 \(result.0.count) 项，\(result.1.count) 项未能完成（目录可能已部分删除）：\n" + result.1.prefix(5).joined(separator: "\n") }
+            } catch { if !cancellation.isCancelled { busy = false; errorMessage = error.localizedDescription } }
         }
     }
     func perform(_ operation: @escaping @Sendable (any FileClient) throws -> Void) {
@@ -94,7 +125,11 @@ final class FileModel: ObservableObject {
             catch { busy = false; errorMessage = error.localizedDescription }
         }
     }
-    func stop() { navigation.cancel(); previewCancellation.cancel(); followLog = false }
+    func stop() {
+        if busy { hasLoaded = false }
+        navigation.cancel(); previewCancellation.cancel(); generation = UUID()
+        busy = false; previewBusy = false; followLog = false
+    }
 }
 
 struct EditDocument: Identifiable {

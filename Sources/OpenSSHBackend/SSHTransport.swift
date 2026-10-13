@@ -137,7 +137,7 @@ public final class SSHTransport: @unchecked Sendable {
     private func connectionDigest(_ host: HostProfile) -> String { SHA256.hash(data: Data((host.id.uuidString + host.connectionKey).utf8)).map { String(format: "%02x", $0) }.joined() }
     public func terminalArguments(for host: HostProfile, tmuxSession: String? = nil) throws -> [String] {
         var result = try options(for: host) + ["-tt", host.address]
-        if let tmuxSession { result += ["exec tmux attach-session -t \(RemotePath.quote(tmuxSession))"] }
+        if let tmuxSession { result += [RemoteTmuxCommand.attach(session: tmuxSession)] }
         return result
     }
     public func forwardingArguments(for host: HostProfile, kind: ForwardingKind, port: Int, target: String = "127.0.0.1", targetPort: Int = 80) throws -> [String] {

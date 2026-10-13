@@ -18,12 +18,14 @@ struct SSHWorkbenchApp: App {
         .windowStyle(.hiddenTitleBar)
         .commands { WorkbenchCommands() }
         Settings { PreferencesView(store: store) }
+        Window("软件更新", id: "updates") { UpdateView(updater: .shared) }.windowResizability(.contentSize)
     }
 }
 
 final class ApplicationDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular); NSApp.activate(ignoringOtherApps: true)
+        UpdateController.shared.checkIfEnabled()
     }
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         let store = AppStore.shared
@@ -45,15 +47,28 @@ struct WorkbenchCommands: Commands {
             Button("关于栖远 Farport") {
                 NSApp.orderFrontStandardAboutPanel(options: [
                     .applicationName: "栖远 Farport",
-                    .applicationVersion: "0.1.1",
+                    .applicationVersion: UpdateController.shared.currentVersion,
                     .credits: NSAttributedString(string: "连接远方，安放工作。\n\n原生 SSH · tmux 工作区 · 远程文件传输")
                 ])
             }
         }
         CommandGroup(replacing: .newItem) {
             Button("新建窗口") { openWindow(id: "workspace") }.keyboardShortcut("n")
-            Button("新建 SSH 终端") { if let workspace, let host = workspace.host { workspace.connect(host) } }.keyboardShortcut("t").disabled(workspace?.host == nil)
-            Button("分屏终端") { if let workspace, let host = workspace.host { workspace.connect(host, split: true) } }.keyboardShortcut("d", modifiers: [.command, .shift]).disabled(workspace?.host == nil)
+            Button("新建终端") { workspace?.newTerminal() }.keyboardShortcut("t").disabled(workspace == nil)
+            Button("新建本机终端") { workspace?.connectLocal() }.keyboardShortcut("t", modifiers: [.command, .shift]).disabled(workspace == nil)
+            Button("左右分栏") { workspace?.newTerminal(split: true) }.keyboardShortcut("d").disabled(workspace?.page != .terminal)
+            Button("上下分栏") { workspace?.newTerminal(split: true, axis: .topBottom) }.keyboardShortcut("d", modifiers: [.command, .shift]).disabled(workspace?.page != .terminal)
+        }
+        CommandGroup(after: .appInfo) {
+            Button("检查更新…") { openWindow(id: "updates"); UpdateController.shared.check() }
+        }
+        CommandMenu("终端") {
+            Button("上一个分栏") { workspace?.focusNextPane(backward: true) }.keyboardShortcut("[").disabled(workspace?.page != .terminal)
+            Button("下一个分栏") { workspace?.focusNextPane() }.keyboardShortcut("]").disabled(workspace?.page != .terminal)
+            Button("最大化 / 还原当前分栏") { workspace?.togglePaneZoom() }.keyboardShortcut(.return, modifiers: [.command, .shift]).disabled(workspace?.page != .terminal)
+            Divider()
+            Button("上一个标签") { workspace?.selectNextTab(backward: true) }.keyboardShortcut("[", modifiers: [.command, .shift]).disabled(workspace?.page != .terminal)
+            Button("下一个标签") { workspace?.selectNextTab() }.keyboardShortcut("]", modifiers: [.command, .shift]).disabled(workspace?.page != .terminal)
         }
         CommandMenu("工作区") {
             ForEach(Array(WorkspacePage.allCases.enumerated()), id: \.element) { index, page in
@@ -72,6 +87,8 @@ struct WorkbenchCommands: Commands {
 
 struct PreferencesView: View {
     @ObservedObject var store: AppStore
+    @ObservedObject private var updater = UpdateController.shared
+    @Environment(\.openWindow) private var openWindow
     var body: some View {
         Form {
             Section("外观") {
@@ -85,7 +102,11 @@ struct PreferencesView: View {
                 Label("拒绝远端读取剪贴板；多行粘贴需要确认", systemImage: "lock.shield")
                 Button("在 Finder 中显示数据目录") { NSWorkspace.shared.open(store.paths.root) }
             }
-        }.formStyle(.grouped).padding().frame(width: 520, height: 360)
+            Section("软件更新") {
+                Toggle("启动时检查 GitHub Release", isOn: $updater.automaticallyCheck)
+                Button("检查更新…") { openWindow(id: "updates"); updater.check() }
+            }
+        }.formStyle(.grouped).padding().frame(width: 520, height: 450)
             .onChange(of: store.appearance) { _, _ in store.savePreferences() }
             .onChange(of: store.fontSize) { _, _ in store.savePreferences() }
             .onChange(of: store.fontName) { _, _ in store.savePreferences() }
