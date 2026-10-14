@@ -14,6 +14,11 @@ func rejects(_ message: String, _ operation: () throws -> Void) throws {
 }
 
 do {
+    try checkSFTPNames()
+    if let index = CommandLine.arguments.firstIndex(of: "--device-files-check") { try checkDeviceFiles(arguments: Array(CommandLine.arguments.dropFirst(index + 1))) }
+    try checkFileSorting()
+    try checkTransferConflicts()
+    try checkPreviewServer()
     try checkReleaseUpdates()
     if CommandLine.arguments.contains("--release-check") { try checkLiveRelease() }
     try expect(HostMarkColor.allCases.count == 10, "主机提供十种标记颜色")
@@ -73,6 +78,13 @@ do {
     try expect(layout.selectedTabID == originalTab, "关闭标签首个终端仍保留标签身份")
     layout.close(bottom); try expect(layout.focused == third && layout.tabs.count == 1, "关闭最后分栏后切换到其他标签")
     layout.close(third); try expect(layout.tabs.isEmpty && layout.focused == nil, "最后标签关闭后布局为空")
+    layout.select(left); layout.split(with: right); let preserved = layout.selectedTab!
+    layout.select(third); layout.moveTab(third, before: left)
+    try expect(layout.tabs.map(\.id) == [third, left] && layout.focused == third && layout.tabs[1] == preserved, "标签排序不改变分栏或焦点")
+    layout.moveTab(third, before: nil)
+    try expect(layout.tabs.map(\.id) == [left, third], "可移到最后")
+    let beforeInvalidMove = layout; layout.moveTab(UUID(), before: left); layout.moveTab(left, before: UUID()); layout.moveTab(left, before: left)
+    try expect(layout == beforeInvalidMove, "无效和原位排序不改变布局")
     let localSources = [FileEndpoint(path: "/source/文件.txt"), FileEndpoint(path: "/source/folder")]
     let batch = try TransferBatch.jobs(sources: localSources, destinationDirectory: FileEndpoint(path: "/destination"))
     try expect(batch.count == 2 && batch[1].destination.path == "/destination/folder", "批量文件及目录保留名称")

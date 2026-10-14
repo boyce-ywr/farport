@@ -214,6 +214,7 @@ final class Workspace: ObservableObject {
     }
     @Published var sessions: [TerminalSession] = []
     @Published var layout = TerminalLayout()
+    let tabDragScope = UUID()
     @Published var browsingLocalFiles = false
     @Published var showTransferTray = false
     @Published var hostSearch = ""
@@ -372,6 +373,17 @@ final class Workspace: ObservableObject {
     func chooseTerminalTab(_ identifier: UUID) {
         guard let tab = layout.tabs.first(where: { $0.id == identifier }), let session = sessions.first(where: { $0.id == tab.focused }) else { return }
         selectTerminal(session)
+    }
+    @discardableResult func reorderTab(payload: String, onto target: UUID?) -> Bool {
+        let parts = payload.split(separator: ":")
+        guard parts.count == 2, UUID(uuidString: String(parts[0])) == tabDragScope, let identifier = UUID(uuidString: String(parts[1])),
+              let sourceIndex = layout.tabs.firstIndex(where: { $0.id == identifier }), identifier != target else { return false }
+        var before = target
+        if let target, let targetIndex = layout.tabs.firstIndex(where: { $0.id == target }), sourceIndex < targetIndex {
+            before = layout.tabs.dropFirst(targetIndex + 1).first?.id
+        }
+        layout.moveTab(identifier, before: before)
+        return true
     }
     func focusNextPane(backward: Bool = false) {
         layout.focusNext(backward: backward)

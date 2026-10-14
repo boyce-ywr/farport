@@ -151,10 +151,16 @@ public final class SFTPClient: @unchecked Sendable {
         do { return try stat(path) } catch let failure as SFTPFailure where failure.code == 2 { return nil }
     }
     public func list(_ path: String) throws -> [RemoteFile] {
+        let result = try listForBrowsing(path)
+        guard result.skipped == 0 else { throw WorkbenchError.message("目录中有 \(result.skipped) 个非 UTF-8 或含控制字符的文件名。为避免漏传或误删，已停止递归操作；请先在目标主机处理异常文件名。") }
+        return result.files
+    }
+    public func listForBrowsing(_ path: String) throws -> (files: [RemoteFile], skipped: Int) {
         lock.lock(); defer { lock.unlock() }
         var opened = try request(11, expecting: 102) { $0.string(path) }; let handle = try opened.bytes()
         defer { try? closeHandle(handle) }
         var files: [RemoteFile] = []
+        var skipped = 0
         while true {
             let identifier = try enqueue(12) { $0.bytes(handle) }; var (kind, reader) = try response(identifier)
             if kind == 101 { if try !status(&reader, allowEOF: true) { break }; throw WorkbenchError.protocolViolation("目录返回了空状态") }
@@ -162,17 +168,16 @@ public final class SFTPClient: @unchecked Sendable {
             let count = try reader.uint32()
             guard count <= 100_000 else { throw WorkbenchError.protocolViolation("单批目录条目过多") }
             for _ in 0..<count {
-                let name = try reader.string(); _ = try reader.string(); let attributes = try reader.attributes()
-                if name == "." || name == ".." { continue }
-                guard !name.contains("/"), !name.contains("\0") else { throw WorkbenchError.protocolViolation("不安全的目录条目") }
-                files.append(RemoteFile(name: name, path: RemotePath.join(path, name), attributes: attributes))
+                guard let file = try reader.directoryEntry(parent: path) else { skipped += 1; continue }
+                if file.name == "." || file.name == ".." { continue }
+                files.append(file)
             }
-            guard files.count <= 1_000_000 else { throw WorkbenchError.message("目录超过一百万项，请按子目录浏览。") }
+            guard files.count + skipped <= 1_000_000 else { throw WorkbenchError.message("目录超过一百万项，请按子目录浏览。") }
         }
-        return files.sorted { left, right in
+        return (files.sorted { left, right in
             if left.attributes.isDirectory != right.attributes.isDirectory { return left.attributes.isDirectory }
             return left.name.localizedStandardCompare(right.name) == .orderedAscending
-        }
+        }, skipped)
     }
     public func openRead(_ path: String) throws -> Data { try open(path, flags: 1) }
     public func openWrite(_ path: String, truncate: Bool = false, exclusive: Bool = false) throws -> Data { try open(path, flags: 2 | 8 | (truncate ? 16 : 0) | (exclusive ? 32 : 0)) }

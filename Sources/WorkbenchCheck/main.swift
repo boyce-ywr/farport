@@ -201,7 +201,7 @@ do {
             let upload = engine.execute(uploadJob, hosts: hosts, cancellation: CancellationFlag()) { _ in }
             try require(upload.status == .completed, upload.message)
             let collision = engine.execute(uploadJob, hosts: hosts, cancellation: CancellationFlag()) { _ in }
-            try require(collision.status == .failed && collision.message.contains("目标已存在"), "同名文件被静默覆盖")
+            try require(collision.status == .awaitingConfirmation && collision.message.contains("目标已存在"), "同名文件应等待确认且不能静默覆盖")
             recordedJobs += [download, upload]
         }
         try check("损坏断点拒绝续传") {

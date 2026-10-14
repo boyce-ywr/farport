@@ -57,7 +57,7 @@ public struct ReleaseUpdate: Sendable {
             return (release, version)
         }
         guard let selected = candidates.max(by: { $0.1 < $1.1 }) else { return nil }
-        let names = ["Farport-\(selected.1.description)-universal.dmg", "Farport-\(selected.1.description)-\(architecture).dmg"]
+        let names = ["Farport-\(selected.1.description)-\(architecture).dmg", "Farport-\(selected.1.description)-universal.dmg"]
         let asset = names.compactMap { expected in
             selected.0.assets.first { $0.name == expected && $0.id > 0 && $0.size > 0 && $0.size <= 1024 * 1024 * 1024 && $0.sha256 != nil }
         }.first

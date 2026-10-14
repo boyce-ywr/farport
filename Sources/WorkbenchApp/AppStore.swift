@@ -24,6 +24,12 @@ final class AppStore: ObservableObject {
     private var active: [UUID: CancellationFlag] = [:]
     private let persistence = DispatchQueue(label: "local.sshworkbench.persistence")
     private var lastPersistence = Date.distantPast
+    private var previewServers: [FilePreviewServer] = []
+    func retainPreviewServer(_ server: FilePreviewServer) {
+        previewServers.removeAll { !$0.isRunning }
+        while previewServers.count >= 8 { previewServers.removeFirst().stop() }
+        previewServers.append(server)
+    }
 
     init() throws {
         let custom = ProcessInfo.processInfo.environment["SWB_HOME"]
@@ -54,7 +60,7 @@ final class AppStore: ObservableObject {
         try paths.save(hosts, to: paths.hosts)
     }
     func removeHost(_ profile: HostProfile) {
-        guard !transfers.contains(where: { ($0.source.hostID == profile.id || $0.destination.hostID == profile.id) && [.running, .queued, .paused, .failed].contains($0.status) }) else {
+        guard !transfers.contains(where: { ($0.source.hostID == profile.id || $0.destination.hostID == profile.id) && [.running, .queued, .paused, .awaitingConfirmation, .failed].contains($0.status) }) else {
             errorMessage = "该主机关联未完成的传输任务，请先完成或取消任务。"; return
         }
         hosts.removeAll { $0.id == profile.id }
@@ -90,8 +96,23 @@ final class AppStore: ObservableObject {
         persistTransfers(force: true)
     }
     func resume(_ job: TransferJob) {
-        guard active[job.id] == nil, let index = transfers.firstIndex(where: { $0.id == job.id }) else { return }
+        guard active[job.id] == nil, job.status != .awaitingConfirmation, let index = transfers.firstIndex(where: { $0.id == job.id }) else { return }
         transfers[index].status = .queued; persistTransfers(force: true); startNext()
+    }
+    var pendingConflict: TransferJob? { transfers.first { $0.status == .awaitingConfirmation && active[$0.id] == nil } }
+    func approveOverwrite(_ job: TransferJob) {
+        guard active[job.id] == nil, let index = transfers.firstIndex(where: { $0.id == job.id }), transfers[index].status == .awaitingConfirmation,
+              let conflicts = transfers[index].conflicts, !conflicts.isEmpty, conflicts.allSatisfy(\.canReplace) else { return }
+        let paths = Set(conflicts.map(\.path))
+        transfers[index].approvedConflicts = (transfers[index].approvedConflicts ?? []).filter { !paths.contains($0.path) } + conflicts
+        transfers[index].conflicts = nil; transfers[index].status = .queued
+        persistTransfers(force: true); startNext()
+    }
+    func clearTransferRecords(abnormalOnly: Bool = false, identifier: UUID? = nil) {
+        transfers.removeAll { job in
+            active[job.id] == nil && job.status.canClearRecord && (!abnormalOnly || job.status != .completed) && (identifier == nil || identifier == job.id)
+        }
+        persistTransfers(force: true)
     }
     func cancel(_ job: TransferJob) {
         active[job.id]?.cancel()
@@ -109,7 +130,7 @@ final class AppStore: ObservableObject {
                     DispatchQueue.main.async { self?.receive(updated) }
                 }
                 DispatchQueue.main.async {
-                    self?.active.removeValue(forKey: job.id); self?.startNext()
+                    self?.active.removeValue(forKey: job.id); self?.objectWillChange.send(); self?.startNext()
                 }
             }
         }
@@ -128,6 +149,7 @@ final class AppStore: ObservableObject {
         }
     }
     func prepareToQuit() {
+        previewServers.forEach { $0.stop() }; previewServers.removeAll()
         tunnels.forEach { $0.stop() }
         active.values.forEach { $0.cancel() }
         for index in transfers.indices where transfers[index].status == .running || transfers[index].status == .queued { transfers[index].status = .paused }

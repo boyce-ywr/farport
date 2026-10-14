@@ -20,7 +20,7 @@ func checkReleaseUpdates() throws {
     let releases = [older, newer, try release("v9.0.0", draft: true), try release("v10.0.0", prerelease: true)]
     let selected = try ReleaseUpdate.select(from: releases, current: "0.1.4", architecture: "arm64")
     try expect(selected?.version == ReleaseVersion("0.1.10"), "忽略草稿及预发行版本")
-    try expect(selected?.asset?.name == "Farport-0.1.10-universal.dmg", "优先 Universal 安装包")
+    try expect(selected?.asset?.name == "Farport-0.1.10-arm64.dmg", "优先匹配芯片的独立安装包")
     try expect(try ReleaseUpdate.select(from: releases, current: "0.1.10", architecture: "arm64") == nil, "相同版本不更新")
     try expect(try ReleaseUpdate.select(from: [older], current: "0.1.4", architecture: "arm64") == nil, "不降级")
     try expect(try ReleaseUpdate.select(from: [], current: "0.1.4", architecture: "arm64") == nil, "无 Release 正常返回")

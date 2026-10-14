@@ -66,6 +66,13 @@ public struct TerminalLayout: Equatable {
     public mutating func selectTab(_ identifier: UUID) {
         if tabs.contains(where: { $0.id == identifier }) { selectedTabID = identifier }
     }
+    public mutating func moveTab(_ identifier: UUID, before target: UUID?) {
+        guard identifier != target, let source = tabs.firstIndex(where: { $0.id == identifier }),
+              target == nil || tabs.contains(where: { $0.id == target }) else { return }
+        let tab = tabs.remove(at: source)
+        let destination = target.flatMap { identifier in tabs.firstIndex { $0.id == identifier } } ?? tabs.endIndex
+        tabs.insert(tab, at: destination)
+    }
     public mutating func split(with identifier: UUID, axis: TerminalSplitAxis = .leftRight) {
         guard tab(containing: identifier) == nil else { select(identifier); return }
         guard let index = tabs.firstIndex(where: { $0.id == selectedTabID }) else { select(identifier); return }

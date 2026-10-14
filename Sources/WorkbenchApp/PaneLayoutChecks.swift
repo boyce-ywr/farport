@@ -87,7 +87,7 @@ enum PaneLayoutChecks {
         for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
             guard let event = NSEvent.mouseEvent(with: type, location: point, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
                                                windowNumber: window.windowNumber, context: nil, eventNumber: 1, clickCount: 1, pressure: 1) else { continue }
-            if type == .leftMouseDown { terminal.mouseDown(with: event) } else { terminal.mouseUp(with: event) }
+            NSApp.postEvent(event, atStart: false)
         }
     }
     private static func wait(line: Int = #line, _ condition: () -> Bool) async throws {

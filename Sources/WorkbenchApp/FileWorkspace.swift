@@ -15,28 +15,38 @@ struct FileWorkspace: View {
     @ViewState private var transferSelection: FileTransferSelection?
     @ViewState private var editDocument: EditDocument?
     @ViewState private var dropTarget = false
+    @ViewState private var showHTMLSource = false
     init(model: FileModel, store: AppStore) { self.model = model; self.store = store }
     var body: some View {
         VStack(spacing: 0) {
             toolbar
             if let error = model.errorMessage { ErrorBanner(message: error) { model.errorMessage = nil }.padding(.horizontal, 18).padding(.bottom, 8) }
+            if model.skippedFileNames > 0 {
+                Label("已显示可识别的文件；跳过 \(model.skippedFileNames) 个非 UTF-8 或含控制字符的文件名。请在目标主机处理，避免误操作。", systemImage: "exclamationmark.triangle")
+                    .font(.caption).foregroundStyle(.orange).frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 18).padding(.bottom, 10)
+            }
             Divider()
-            HSplitView {
+            GeometryReader { geometry in
+                let available = max(0, geometry.size.width - 10)
+                let previewWidth = min(max(240, available * model.previewRatio), max(240, available - 340))
+                HStack(spacing: 0) {
                 VStack(spacing: 0) {
                     HStack { Image(systemName: "magnifyingglass").foregroundStyle(.tertiary); TextField("筛选当前目录", text: $model.filter).textFieldStyle(.plain); Spacer(); Toggle("隐藏文件", isOn: $model.showHidden).toggleStyle(.checkbox) }.font(.system(size: 11)).padding(14)
-                    Table(model.visibleFiles, selection: $model.selection) {
-                        TableColumn("名称") { file in
+                    Table(model.visibleFiles, selection: $model.selection, sortOrder: $model.sortOrder) {
+                        TableColumn("名称", sortUsing: FileSortComparator(column: .name)) { file in
                             HStack(spacing: 9) {
                                 Image(systemName: fileIcon(file)).foregroundStyle(file.attributes.isDirectory ? Color.teal : .secondary).font(.system(size: 15))
                                 Text(file.name)
                             }.font(.system(size: 12)).lineLimit(1)
                                 .help(file.attributes.isDirectory ? "单击选中，双击打开文件夹" : file.name)
-                        }.width(min: 160, ideal: 260)
-                        TableColumn("大小") { file in Text(file.attributes.isDirectory ? "—" : bytes(file.attributes.size)).font(.system(size: 10, design: .monospaced)).foregroundStyle(.secondary) }.width(min: 55, ideal: 70)
-                        TableColumn("修改时间") { file in Text(file.attributes.date, format: .dateTime.month(.twoDigits).day(.twoDigits).hour().minute()).font(.system(size: 10)).foregroundStyle(.secondary) }.width(min: 100, ideal: 120)
-                        TableColumn("权限") { file in Text(file.attributes.permissionText).font(.system(size: 10, design: .monospaced)).foregroundStyle(.tertiary) }.width(40)
+                        }.width(min: 140, ideal: 210)
+                        TableColumn("文件类型", sortUsing: FileSortComparator(column: .type)) { file in Text(file.typeLabel).font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(1).help(file.typeLabel) }.width(min: 75, ideal: 100)
+                        TableColumn("大小", sortUsing: FileSortComparator(column: .size)) { file in Text(file.attributes.isDirectory ? "—" : bytes(file.attributes.size)).font(.system(size: 10, design: .monospaced)).foregroundStyle(.secondary) }.width(min: 55, ideal: 70)
+                        TableColumn("修改时间", sortUsing: FileSortComparator(column: .modified)) { file in Text(file.attributes.date, format: .dateTime.month(.twoDigits).day(.twoDigits).hour().minute()).font(.system(size: 10)).foregroundStyle(.secondary) }.width(min: 100, ideal: 120)
+                        TableColumn("权限", sortUsing: FileSortComparator(column: .permissions)) { file in Text(file.attributes.permissionText).font(.system(size: 10, design: .monospaced)).foregroundStyle(.tertiary) }.width(min: 50, ideal: 55)
                     }.alternatingRowBackgrounds(.disabled)
                         .background(FileKeyboardCommands(copy: { copyFiles(model.selectedFiles) }, paste: { pasteFiles() }, selectAll: { model.selection = Set(model.visibleFiles.map(\.path)) }).frame(width: 0, height: 0))
+                        .background(FileTableSorting { model.fileSort.cycle($0) }.frame(width: 0, height: 0))
                         .contextMenu(forSelectionType: String.self) { identifiers in
                             let selected = model.files.filter { identifiers.contains($0.path) }
                             if selected.count == 1, let file = selected.first { fileActions(file) }
@@ -47,9 +57,25 @@ struct FileWorkspace: View {
                         .onChange(of: model.selection) { _, _ in model.followLog = false; if let file = model.selectedFile { model.preview(file) } else { model.previewFile = nil } }
                         .onChange(of: model.filter) { _, _ in model.selection.formIntersection(Set(model.visibleFiles.map(\.path))) }
                     Divider()
+                    HStack {
+                        Text(model.fileSort.description).lineLimit(1)
+                        Spacer()
+                        if model.fileSort.column != nil { Button("恢复默认") { model.fileSort = FileSort() }.buttonStyle(.borderless) }
+                    }.font(.system(size: 10)).foregroundStyle(.secondary).padding(.horizontal, 12).padding(.top, 8)
+                        .help("点击列标题依次切换升序、降序、默认；文件夹始终优先。类型依据名称后缀，不读取文件内容。")
                     HStack { Text("\(model.visibleFiles.count) 项 · 已选 \(model.selectedFiles.count) 项"); Spacer(); Text("⌘ / ⇧ 多选 · ⌘C 复制 · ⌘V 粘贴") }.font(.system(size: 10)).foregroundStyle(.secondary).padding(12)
-                }.frame(minWidth: 430)
-                preview.frame(minWidth: 270, idealWidth: 330, maxWidth: 480)
+                }.frame(width: max(0, available - previewWidth))
+                Rectangle().fill(Color.primary.opacity(0.08)).frame(width: 10)
+                    .interactionFrame("file.previewDivider")
+                    .overlay { Capsule().fill(.secondary.opacity(0.5)).frame(width: 3, height: 32) }
+                    .contentShape(Rectangle()).help("左右拖动调整预览宽度；双击恢复默认")
+                    .gesture(DragGesture(minimumDistance: 1, coordinateSpace: .named("file-split")).onChanged { value in
+                        guard available > 0 else { return }; model.previewRatio = min(0.75, max(0.2, (geometry.size.width - value.location.x) / available))
+                    })
+                    .onTapGesture(count: 2) { model.previewRatio = 0.38 }
+                    .onHover { inside in if inside { NSCursor.resizeLeftRight.set() } else { NSCursor.arrow.set() } }
+                preview.frame(width: previewWidth).clipped()
+                }.coordinateSpace(name: "file-split")
             }
         }
         .overlay { if dropTarget { RoundedRectangle(cornerRadius: 12).strokeBorder(.teal, style: StrokeStyle(lineWidth: 2, dash: [7])).padding(8).allowsHitTesting(false) } }
@@ -66,7 +92,7 @@ struct FileWorkspace: View {
         .sheet(item: $transferSelection) { selection in TransferComposer(sources: selection.sources, store: store) }
         .sheet(item: $editDocument) { document in RemoteEditor(document: document, host: host, store: store) { model.load(); if let file = model.previewFile { model.preview(file) } } }
         .task {
-            let qaDirectory = store.isTestWorkspace && ProcessInfo.processInfo.environment["SWB_QA_OUTPUT"] != nil
+            let qaDirectory = store.isTestWorkspace && ProcessInfo.processInfo.environment["SWB_QA_OUTPUT"] != nil && ProcessInfo.processInfo.environment["SWB_QA_SCREEN"] != "device-files"
                 ? (host == nil ? ProcessInfo.processInfo.environment["SWB_QA_LOCAL_DIRECTORY"] : "/home/tester/workspace") : nil
             model.loadIfNeeded(qaDirectory)
             if store.isTestWorkspace && ProcessInfo.processInfo.environment["SWB_QA_FILE_NAVIGATION"] == "1" {
@@ -125,12 +151,31 @@ struct FileWorkspace: View {
                 Divider()
                 if file.attributes.isDirectory {
                     VStack(spacing: 15) { Image(systemName: "folder.fill").font(.system(size: 58)).foregroundStyle(.teal.opacity(0.7)); Button("打开文件夹") { model.load(file.path) } }.frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else if let document = model.previewPDF {
+                    PDFDocumentPreview(document: document)
+                } else if model.isHTML && !showHTMLSource {
+                    HStack {
+                        Button("源码") { showHTMLSource = true }
+                        if let url = model.webURL { Button("在浏览器打开") { NSWorkspace.shared.open(url) } }
+                        Spacer()
+                        Button(model.webScripts ? "禁用脚本" : "允许脚本…") {
+                            if model.webScripts { model.startWebPreview() }
+                            else if confirm("信任此 HTML 报告的脚本？", "脚本将能读取报告所在目录及子目录中的文件。外部网络请求仍被阻止。仅对你信任的报告启用。") { model.startWebPreview(allowScripts: true) }
+                        }
+                    }.font(.caption).buttonStyle(.borderless).padding(10)
+                    if let url = model.webURL { HTMLPreview(url: url, allowsScripts: model.webScripts).id(url) }
+                    else { VStack { Text(model.previewBusy ? "正在启动安全预览…" : "网页预览已停止"); Button("重新预览") { model.startWebPreview() } }.font(.caption).frame(maxWidth: .infinity, maxHeight: .infinity) }
+                    HStack {
+                        Text("仅本机可访问 · 范围：当前 HTML 所在目录").lineLimit(1).help("相对资源按需通过 SFTP 读取；路径不能越出目录，符号链接和外部网络被阻止。关闭应用后链接失效。")
+                        Spacer(); Button("停止服务") { model.stopWebPreview() }
+                    }.font(.system(size: 10)).foregroundStyle(.secondary).padding(10)
                 } else if let image = model.previewImage {
                     ScrollView { Image(nsImage: image).resizable().scaledToFit().padding(16) }
                 } else if model.binaryPreview {
                     VStack(alignment: .leading, spacing: 12) { Label("二进制文件", systemImage: "doc.zipper"); Text("可下载或传输到另一台主机。不会把二进制内容作为文本写回。").font(.caption).foregroundStyle(.secondary); Text(model.previewData.prefix(64).map { String(format: "%02x", $0) }.joined(separator: " ")).font(.system(size: 10, design: .monospaced)).textSelection(.enabled) }.padding(18)
                     Spacer()
                 } else {
+                    if model.isHTML { Button("网页预览") { showHTMLSource = false }.font(.caption).padding(10) }
                     ScrollView([.horizontal, .vertical]) { Text(model.previewText).font(.system(size: 11, design: .monospaced)).textSelection(.enabled).lineSpacing(5).frame(maxWidth: .infinity, alignment: .topLeading).padding(16) }
                     Divider()
                     HStack {
@@ -146,7 +191,7 @@ struct FileWorkspace: View {
                     Image(systemName: model.selectedFiles.count > 1 ? "doc.on.doc" : "doc.text.magnifyingglass").font(.system(size: 33, weight: .light)).foregroundStyle(.tertiary)
                     Text(model.selectedFiles.count > 1 ? "已选择 \(model.selectedFiles.count) 项" : "选择文件，即刻预览").font(.system(size: 12)).foregroundStyle(.secondary)
                     if model.selectedFiles.count > 1 { Button("复制所选项目") { copyFiles(model.selectedFiles) }; Button("批量传输…") { transferSelection = FileTransferSelection(sources: model.selectedEndpoints) } }
-                    Text("文本 · 图片 · 文件夹").font(.system(size: 10)).foregroundStyle(.tertiary)
+                    Text("文本 · 图片 · HTML · PDF · 文件夹").font(.system(size: 10)).foregroundStyle(.tertiary)
                 }.frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }.background(.quaternary.opacity(0.09))

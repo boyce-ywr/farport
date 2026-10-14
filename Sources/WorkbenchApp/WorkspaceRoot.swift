@@ -25,6 +25,7 @@ struct WorkspaceRoot: View {
                     TerminalAttachmentBanner(draft: draft) { workspace.attachmentDraft = nil }
                     Divider()
                 }
+                if let job = store.pendingConflict { TransferConflictBanner(job: job, store: store); Divider() }
                 content.frame(maxWidth: .infinity, maxHeight: .infinity)
                 if workspace.showTransferTray && workspace.page != .transfers {
                     Divider(); TransferTray(store: store, expand: { workspace.page = .transfers })
@@ -35,6 +36,7 @@ struct WorkspaceRoot: View {
         .coordinateSpace(name: "workspace-interactions")
         .onPreferenceChange(InteractionFrames.self) { interactionFrames = $0 }
         .focusedSceneObject(workspace)
+        .background(WindowTitlebar().frame(width: 0, height: 0))
         .sheet(item: $editingHost) { draft in
             HostEditor(profile: draft, store: store) { host in
                 workspace.selectedHostID = host.id; editingHost = nil
@@ -213,6 +215,43 @@ struct WorkspaceRoot: View {
         guard !didPrepareQA, store.isTestWorkspace, let output = ProcessInfo.processInfo.environment["SWB_QA_OUTPUT"] else { return }
         didPrepareQA = true
         let screen = ProcessInfo.processInfo.environment["SWB_QA_SCREEN"] ?? "terminal"
+        if screen == "device-files" {
+            guard let host = workspace.host else { exit(1) }
+            workspace.browseFiles(.host(host.id))
+            let deadline = Date().addingTimeInterval(20)
+            while workspace.currentFileBrowser?.files.isEmpty != false {
+                if Date() > deadline { fputs("FAIL · 设备文件界面未加载\n", stderr); exit(1) }
+                try? await Task.sleep(for: .milliseconds(100))
+            }
+            guard workspace.currentFileBrowser?.errorMessage == nil else { fputs("FAIL · 设备文件界面仍有错误\n", stderr); exit(1) }
+            print("PASS · 真实设备文件界面正常显示，异常文件名计数：\(workspace.currentFileBrowser?.skippedFileNames ?? 0)")
+        }
+        if screen == "window-titlebar" {
+            do { try await WindowTitlebarChecks.run(workspace: workspace) }
+            catch { fputs("FAIL · \(error.localizedDescription)\n", stderr); workspace.sessions.forEach { $0.close() }; exit(1) }
+        }
+        if screen == "file-sorting" {
+            do { try await FileSortChecks.run(workspace: workspace) }
+            catch { fputs("FAIL · \(error.localizedDescription)\n", stderr); exit(1) }
+        }
+        if screen == "tab-management" {
+            do { try await TabManagementChecks.run(workspace: workspace) }
+            catch { fputs("FAIL · \(error.localizedDescription)\n", stderr); workspace.sessions.forEach { $0.close() }; exit(1) }
+        }
+        if ["html-preview", "pdf-preview", "transfer-workflow"].contains(screen) {
+            do {
+                if screen == "transfer-workflow" { try await TransferWorkflowChecks.run(workspace: workspace) }
+                else {
+                    try await PreviewChecks.run(workspace: workspace, pdf: screen == "pdf-preview", output: URL(fileURLWithPath: output))
+                    if NSApp.isActive, let window = NSApp.keyWindow, let frame = interactionFrames["file.previewDivider"], let model = workspace.currentFileBrowser {
+                        let before = model.previewRatio
+                        await dragInterface(frame, window: window, offset: -70)
+                        guard model.previewRatio > before else { throw WorkbenchError.message("预览分隔条拖动未扩大预览区") }
+                        print("PASS · 真实分隔条拖动扩大预览区")
+                    } else { print("SKIP · 后台无系统焦点，未派发分隔条拖动") }
+                }
+            } catch { fputs("FAIL · \(error.localizedDescription)\n", stderr); exit(1) }
+        }
         if screen == "update-check" {
             do { try await UpdateChecks.run(output: URL(fileURLWithPath: output)); NSApp.terminate(nil) }
             catch { fputs("FAIL · \(error.localizedDescription)\n", stderr); exit(1) }
@@ -277,7 +316,7 @@ struct WorkspaceRoot: View {
             window.setContentSize(NSSize(width: max(980, width), height: max(640, height)))
         }
         try? await Task.sleep(for: .seconds(ProcessInfo.processInfo.environment["SWB_QA_BATCH_COPY"] == "1" ? 35 : (ProcessInfo.processInfo.environment["SWB_QA_FILE_NAVIGATION"] == "1" ? 15 : 5)))
-        let expected: WorkspacePage = ["files", "local-files", "file-switching", "file-deletion"].contains(screen) ? .files : (screen == "tmux" ? .tmux : (screen == "transfers" ? .transfers : .terminal))
+        let expected: WorkspacePage = ["files", "local-files", "file-switching", "file-deletion", "html-preview", "pdf-preview", "file-sorting", "device-files"].contains(screen) ? .files : (screen == "tmux" ? .tmux : (["transfers", "transfer-workflow"].contains(screen) ? .transfers : .terminal))
         guard workspace.page == expected else {
             fputs("截图验收失败：请求页面与实际工作区不一致。\n", stderr)
             exit(1)
@@ -325,7 +364,8 @@ struct WorkspaceRoot: View {
             exit(1)
         }
         if ProcessInfo.processInfo.environment["SWB_QA_EXIT"] == "1" {
-            if ["local-terminal", "local-mixed", "file-switching", "attachment-check", "terminal-zoom", "pane-layout"].contains(screen) { workspace.sessions.forEach { $0.close() } }
+            if let hold = ProcessInfo.processInfo.environment["SWB_QA_HOLD"], let seconds = Double(hold) { try? await Task.sleep(for: .seconds(min(seconds, 300))) }
+            if ["local-terminal", "local-mixed", "file-switching", "attachment-check", "terminal-zoom", "pane-layout", "tab-management", "window-titlebar"].contains(screen) { workspace.sessions.forEach { $0.close() } }
             if editingHost != nil { editingHost = nil; try? await Task.sleep(for: .milliseconds(300)) }
             NSApp.terminate(nil)
         }

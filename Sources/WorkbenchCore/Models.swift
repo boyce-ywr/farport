@@ -127,12 +127,14 @@ public struct FileEndpoint: Codable, Hashable, Sendable {
 }
 
 public enum TransferStatus: String, Codable, Sendable {
-    case queued, running, paused, completed, failed, cancelled
+    case queued, running, paused, awaitingConfirmation, completed, failed, cancelled
+    public var canClearRecord: Bool { [.completed, .failed, .cancelled].contains(self) }
     public var title: String {
         switch self {
         case .queued: return "等待中"
         case .running: return "传输中"
         case .paused: return "已暂停"
+        case .awaitingConfirmation: return "等待覆盖确认"
         case .completed: return "已完成"
         case .failed: return "传输失败"
         case .cancelled: return "已取消"
@@ -163,11 +165,21 @@ public struct TransferJob: Identifiable, Codable, Sendable {
     public var message: String = ""
     public var created: Date = Date()
     public var overwrite: Bool = false
+    public var conflicts: [TransferConflict]?
+    public var approvedConflicts: [TransferConflict]?
     public init(source: FileEndpoint, destination: FileEndpoint, overwrite: Bool = false) {
         self.source = source; self.destination = destination; self.overwrite = overwrite
     }
     public var name: String { (source.path as NSString).lastPathComponent }
     public var fraction: Double { totalBytes == 0 ? (status == .completed ? 1 : 0) : min(1, Double(completedBytes) / Double(totalBytes)) }
+}
+
+public struct TransferConflict: Codable, Sendable, Equatable {
+    public var path: String
+    public var existing: FileAttributes
+    public var incoming: FileAttributes
+    public var canReplace: Bool { (existing.isRegularFile && incoming.isRegularFile) || (existing.isDirectory && incoming.isDirectory) }
+    public init(path: String, existing: FileAttributes, incoming: FileAttributes) { self.path = path; self.existing = existing; self.incoming = incoming }
 }
 
 public final class CancellationFlag: @unchecked Sendable {

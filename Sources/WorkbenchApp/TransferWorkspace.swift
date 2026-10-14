@@ -10,7 +10,8 @@ struct TransferWorkspace: View {
             HStack {
                 VStack(alignment: .leading, spacing: 6) { Text("文件流动，工作不断。").font(.system(size: 23, weight: .semibold)); Text("本机上传下载与跨主机传输，共用一个可靠队列。").font(.system(size: 12)).foregroundStyle(.secondary) }
                 Spacer()
-                Button("清除已完成记录") { store.transfers.removeAll { $0.status == .completed }; store.persistTransfers(force: true) }.disabled(!store.transfers.contains { $0.status == .completed })
+                Button("清除失败 / 已取消") { store.clearTransferRecords(abnormalOnly: true) }.disabled(!store.transfers.contains { [.failed, .cancelled].contains($0.status) }).help("只清除记录，不删除源文件、目标或断点文件")
+                Button("清除已结束记录") { store.clearTransferRecords() }.disabled(!store.transfers.contains { $0.status.canClearRecord }).help("清除已完成、失败和已取消记录，保留进行中、待确认及暂停任务")
             }
             HStack(spacing: 16) {
                 Label("最多 2 路并行", systemImage: "arrow.triangle.branch")
@@ -49,7 +50,8 @@ struct TransferRow: View {
                 Text(job.status.title).font(.system(size: 10, weight: .medium)).foregroundStyle(statusColor).padding(.horizontal, 8).padding(.vertical, 5).background(statusColor.opacity(0.09), in: Capsule())
                 if job.status == .running || job.status == .queued { Button { store.pause(job) } label: { Image(systemName: "pause.fill") }.help("暂停并保留断点") }
                 if job.status == .paused || job.status == .failed { Button { store.resume(job) } label: { Image(systemName: "play.fill") }.help("校验并继续") }
-                if [.running, .queued, .paused, .failed].contains(job.status) { Button { if confirm("取消此传输？", "已传输的 .part 文件会保留在目标目录，便于检查；原始文件不会被删除。") { store.cancel(job) } } label: { Image(systemName: "xmark") }.help("取消") }
+                if [.running, .queued, .paused, .awaitingConfirmation, .failed].contains(job.status) { Button { if confirm("取消此传输？", "已传输的 .part 文件会保留在目标目录，便于检查；原始文件不会被删除。") { store.cancel(job) } } label: { Image(systemName: "xmark") }.help("取消") }
+                if job.status.canClearRecord { Button { store.clearTransferRecords(identifier: job.id) } label: { Image(systemName: "trash") }.help("仅清除此记录，不删除文件") }
                 Button { expanded.toggle() } label: { Image(systemName: expanded ? "chevron.up" : "chevron.down") }.help("任务详情")
             }.buttonStyle(.borderless)
             ProgressView(value: job.fraction).tint(statusColor)
@@ -117,7 +119,7 @@ struct TransferComposer: View {
                 if sources.count == 1 { TextField("保存名称", text: $filename) }
                 Toggle("允许覆盖同名文件", isOn: $overwrite)
             }.textFieldStyle(.roundedBorder)
-            Text(overwrite ? "已有目标文件会在新文件写完后原子替换。目录会合并，不会删除目标目录中的其他文件。" : "默认不覆盖已有文件。远端互传使用 Mac 流式中转，不要求两台服务器直接互通。").font(.system(size: 11)).foregroundStyle(overwrite ? Color.orange : .secondary).lineSpacing(4)
+            Text(overwrite ? "已有目标文件会在新文件写完后原子替换。目录会合并，不会删除目标目录中的其他文件。" : "发现同名目标时会等待你确认，不会直接覆盖。远端互传使用 Mac 流式中转。").font(.system(size: 11)).foregroundStyle(overwrite ? Color.orange : .secondary).lineSpacing(4)
             if let errorMessage { ErrorBanner(message: errorMessage) { self.errorMessage = nil } }
             HStack { if resolving { ProgressView().controlSize(.small) }; Spacer(); Button("取消") { dismiss() }; Button("加入传输队列") { queue() }.buttonStyle(.borderedProminent).disabled(sources.isEmpty || resolving || folder.isEmpty || (sources.count == 1 && !RemotePath.validName(filename))) }
         }.padding(28).frame(width: 570)

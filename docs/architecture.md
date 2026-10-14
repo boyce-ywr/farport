@@ -45,6 +45,8 @@ Haven 仅作为需求参考；未引入 Android Context、Service、Compose 或 
 
 ## Windows 预留的实际范围
 
+0.1.5：`TransferJob` 增加等待确认状态、冲突快照和已批准快照，由引擎预检/UI 决策/引擎复核闭环处理。`FilePreviewServer` 是 macOS Network 框架的回环只读 HTTP 适配，绑定固定主机与目录，`PDFKit`/`WKWebView` 渲染保持在 WorkbenchApp，不污染核心平台模型。
+
 `WorkbenchCore` 没有 AppKit、SwiftUI、Keychain 或 Darwin 依赖，领域模型、清单格式、SFTP 编解码可复用。macOS UI、PTY、进程/管道处理、Keychain、本地原子重命名目前明确留在平台模块。
 
 后续 Windows 客户端需要实现 Windows 原生界面、ConPTY、凭据存储、进程与本地文件适配；可以延续 OpenSSH/SFTP 协议边界。当前没有 Windows 构建，也不承诺现有 AppKit 界面直接跨平台。这样不会为尚未开发的平台牺牲本次 Mac 体验。

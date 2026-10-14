@@ -9,11 +9,27 @@ struct InteractionFrames: PreferenceKey {
 extension View {
     func interactionFrame(_ identifier: String) -> some View {
         background {
-            if ProcessInfo.processInfo.environment["SWB_QA_INTERACTIONS"] == "1" || ProcessInfo.processInfo.environment["SWB_QA_SCREEN"] == "file-switching" {
+            if ProcessInfo.processInfo.environment["SWB_QA_INTERACTIONS"] == "1" || ["file-switching", "html-preview", "pdf-preview"].contains(ProcessInfo.processInfo.environment["SWB_QA_SCREEN"] ?? "") {
                 GeometryReader { geometry in Color.clear.preference(key: InteractionFrames.self, value: [identifier: geometry.frame(in: .named("workspace-interactions"))]) }
             }
         }
     }
+}
+
+@MainActor
+func dragInterface(_ frame: CGRect, window: NSWindow, offset: CGFloat) async {
+    guard let content = window.contentView else { return }
+    let vertical = content.safeAreaInsets.top + frame.midY
+    let point = content.convert(NSPoint(x: frame.midX, y: content.isFlipped ? vertical : content.bounds.height - vertical), to: nil)
+    for step in 0...5 {
+        let type: NSEvent.EventType = step == 0 ? .leftMouseDown : (step == 5 ? .leftMouseUp : .leftMouseDragged)
+        let location = NSPoint(x: point.x + offset * CGFloat(min(step, 4)) / 4, y: point.y)
+        if let event = NSEvent.mouseEvent(with: type, location: location, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                                         windowNumber: window.windowNumber, context: nil, eventNumber: step + 1, clickCount: 1, pressure: 1) {
+            NSApp.postEvent(event, atStart: false); try? await Task.sleep(for: .milliseconds(100))
+        }
+    }
+    try? await Task.sleep(for: .milliseconds(200))
 }
 
 @MainActor

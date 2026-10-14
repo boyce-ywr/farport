@@ -3,6 +3,7 @@ import AppKit
 import SwiftUI
 import WorkbenchCore
 import OpenSSHBackend
+import PDFKit
 
 @MainActor
 final class FileModel: ObservableObject {
@@ -14,10 +15,22 @@ final class FileModel: ObservableObject {
     @Published var busy = false
     @Published var previewBusy = false
     @Published var errorMessage: String?
+    @Published var skippedFileNames = 0
     @Published var previewFile: RemoteFile?
     @Published var previewData = Data()
     @Published var previewOffset: UInt64 = 0
     @Published var previewImage: NSImage?
+    @Published var previewPDF: PDFDocument?
+    @Published var webURL: URL?
+    @Published var webScripts = false
+    @Published var previewRatio = 0.38
+    @Published var fileSort = FileSort()
+    var sortOrder: [FileSortComparator] {
+        get { fileSort.column.map { [FileSortComparator(column: $0, order: fileSort.descending ? .reverse : .forward)] } ?? [] }
+        set {}
+    }
+    private var webServer: FilePreviewServer?
+    private weak var store: AppStore?
     @Published var filter = ""
     @Published var showHidden = false
     @Published var followLog = false
@@ -28,8 +41,23 @@ final class FileModel: ObservableObject {
     private var generation = UUID()
     private var hasLoaded = false
     let previewLimit = 512 * 1024
-    init(host: HostProfile?, store: AppStore) { self.host = host; transport = store.transport }
-    var visibleFiles: [RemoteFile] { files.filter { (showHidden || !$0.name.hasPrefix(".")) && (filter.isEmpty || $0.name.localizedCaseInsensitiveContains(filter)) } }
+    init(host: HostProfile?, store: AppStore) { self.host = host; transport = store.transport; self.store = store }
+    var isHTML: Bool { ["html", "htm"].contains(((previewFile?.path ?? "") as NSString).pathExtension.lowercased()) }
+    func stopWebPreview() { webServer?.stop(); webServer = nil; webURL = nil }
+    func startWebPreview(allowScripts: Bool = false) {
+        guard let file = previewFile, isHTML else { return }
+        let identifier = generation; let transport = transport; let host = host
+        stopWebPreview(); webScripts = allowScripts; previewBusy = true
+        Task {
+            do {
+                let server = try await Task.detached { try FilePreviewServer(transport: transport, host: host, directory: RemotePath.parent(file.path), allowsScripts: allowScripts) }.value
+                guard generation == identifier, previewFile?.path == file.path else { server.stop(); return }
+                webServer = server; store?.retainPreviewServer(server)
+                webURL = try server.url(for: file.name); previewBusy = false
+            } catch { if generation == identifier { errorMessage = error.localizedDescription; previewBusy = false } }
+        }
+    }
+    var visibleFiles: [RemoteFile] { fileSort.sorted(files.filter { (showHidden || !$0.name.hasPrefix(".")) && (filter.isEmpty || $0.name.localizedCaseInsensitiveContains(filter)) }) }
     var selectedFiles: [RemoteFile] { visibleFiles.filter { selection.contains($0.path) } }
     var selectedFile: RemoteFile? { selectedFiles.count == 1 ? selectedFiles.first : nil }
     var selectedEndpoints: [FileEndpoint] { selectedFiles.map { FileEndpoint(hostID: host?.id, path: $0.path) } }
@@ -45,14 +73,15 @@ final class FileModel: ObservableObject {
         busy = true; errorMessage = nil
         Task {
             do {
-                let result = try await Task.detached { () -> (String, [RemoteFile]) in
+                let result = try await Task.detached { () -> (String, [RemoteFile], Int) in
                     let client = try transport.files(host, cancellation: cancellation); defer { client.close() }
                     let canonical = try client.realpath(target)
-                    return (canonical, try client.list(canonical))
+                    if let remote = client as? SFTPClient { let listing = try remote.listForBrowsing(canonical); return (canonical, listing.files, listing.skipped) }
+                    return (canonical, try client.list(canonical), 0)
                 }.value
                 guard !cancellation.isCancelled else { return }
                 if path != result.0 { previewCancellation.cancel(); generation = UUID(); previewBusy = false; filter = ""; selection = [] }
-                path = result.0; pathInput = result.0; files = result.1; busy = false; hasLoaded = true
+                path = result.0; pathInput = result.0; files = result.1; skippedFileNames = result.2; busy = false; hasLoaded = true
                 selection.formIntersection(Set(files.map(\.path)))
                 if selection.count != 1 { previewFile = nil; previewData = Data(); followLog = false }
             } catch { if !cancellation.isCancelled { errorMessage = error.localizedDescription; busy = false } }
@@ -67,6 +96,7 @@ final class FileModel: ObservableObject {
         previewCancellation.cancel(); previewCancellation = CancellationFlag(); let cancellation = previewCancellation
         let identifier = UUID(); generation = identifier
         previewFile = file; previewBusy = true
+        previewData = Data(); previewImage = nil; previewPDF = nil; webURL = nil
         if file.attributes.isDirectory { previewData = Data(); previewImage = nil; previewBusy = false; return }
         let transport = transport; let host = host; let limit = previewLimit
         Task {
@@ -77,6 +107,17 @@ final class FileModel: ObservableObject {
                     guard attributes.isRegularFile else { throw WorkbenchError.message("不预览设备、管道或套接字。") }
                     let position = tail ? (attributes.size > UInt64(limit) ? attributes.size - UInt64(limit) : 0) : min(offset, attributes.size)
                     let imageType = ["png", "jpg", "jpeg", "gif", "tiff", "webp", "heic"].contains((file.path as NSString).pathExtension.lowercased())
+                    if (file.path as NSString).pathExtension.lowercased() == "pdf" {
+                        guard attributes.size <= 32 * 1024 * 1024 else { throw WorkbenchError.message("PDF 超过 32 MiB，请下载后查看。") }
+                        var data = Data()
+                        while data.count < Int(attributes.size) {
+                            try cancellation.check()
+                            let chunk = try client.preview(file.path, offset: UInt64(data.count), limit: min(4 * 1024 * 1024, Int(attributes.size) - data.count))
+                            guard !chunk.isEmpty else { throw WorkbenchError.message("PDF 在读取期间发生变化。") }
+                            data.append(chunk)
+                        }
+                        return (data, attributes, 0)
+                    }
                     if imageType, attributes.size <= 8 * 1024 * 1024 {
                         return (try client.preview(file.path, offset: 0, limit: Int(attributes.size)), attributes, 0)
                     }
@@ -88,7 +129,12 @@ final class FileModel: ObservableObject {
                 if file.attributes.isSymbolicLink { updated.attributes.permissions = file.attributes.permissions }
                 previewFile = updated
                 previewImage = NSImage(data: result.0)
+                if (file.path as NSString).pathExtension.lowercased() == "pdf" {
+                    previewPDF = PDFDocument(data: result.0); previewImage = nil
+                    if previewPDF == nil { errorMessage = "PDF 无法解析，可能已损坏或加密，请下载后查看。" }
+                }
                 previewBusy = false
+                if isHTML { startWebPreview() }
             } catch { if generation == identifier && !cancellation.isCancelled { errorMessage = errorMessage ?? error.localizedDescription; previewBusy = false } }
         }
     }

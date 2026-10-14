@@ -27,8 +27,16 @@ public struct PacketReader {
     public mutating func uint64() throws -> UInt64 { let high = try uint32(); return (UInt64(high) << 32) | UInt64(try uint32()) }
     public mutating func bytes() throws -> Data { let count = try uint32(); guard count <= 8 * 1024 * 1024 else { throw WorkbenchError.protocolViolation("字段长度超出限制") }; return try take(Int(count)) }
     public mutating func string() throws -> String {
-        guard let result = String(data: try bytes(), encoding: .utf8) else { throw WorkbenchError.protocolViolation("文件名不是有效 UTF-8") }
+        guard let result = String(data: try bytes(), encoding: .utf8) else { throw WorkbenchError.protocolViolation("文本字段不是有效 UTF-8") }
         return result
+    }
+    public mutating func directoryEntry(parent: String) throws -> RemoteFile? {
+        let rawName = try bytes()
+        _ = try bytes()
+        let attributes = try attributes()
+        guard let name = String(data: rawName, encoding: .utf8) else { return nil }
+        guard !name.isEmpty, !name.contains("/"), name.rangeOfCharacter(from: .controlCharacters) == nil else { return nil }
+        return RemoteFile(name: name, path: RemotePath.join(parent, name), attributes: attributes)
     }
     public mutating func attributes() throws -> FileAttributes {
         let flags = try uint32()
