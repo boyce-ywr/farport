@@ -117,5 +117,3 @@
 - 编译出 Intel 产物不等于 Intel 真机验收；不能把本机 ARM 的结果冒充其他硬件或 macOS 14 的运行结果。
 
 第三方组件及许可信息见 [THIRD_PARTY_NOTICES.md](../THIRD_PARTY_NOTICES.md)。
-
-
