@@ -1,5 +1,7 @@
 # 第三方组件
 
+Farport 自有代码采用 [MIT 许可证](LICENSE)。第三方组件仍遵循各自的许可证。
+
 ## SwiftTerm 1.20.0
 
 - 用途：macOS 终端模拟与原生终端视图。
@@ -10,6 +12,12 @@
 ## OpenSSH
 
 客户端调用 macOS 系统自带的 `ssh`，未将另一份 OpenSSH 二进制打包到应用中。
+
+## Swift Argument Parser
+
+- 来源：`https://github.com/apple/swift-argument-parser`。
+- 许可证：Apache 2.0，附 Swift Runtime Library Exception，详见上游 `LICENSE.txt`。
+- 由 SwiftTerm 的工具目标引入并记录在 `Package.resolved`，Farport 的应用目标不直接链接此组件。
 
 ## Haven
 

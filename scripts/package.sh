@@ -28,6 +28,7 @@ app="$PWD/dist/$architecture/Farport.app"
 if [ -d "$app" ]; then rm -rf "$app"; fi
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources/ThirdParty"
 cp Resources/Info.plist "$app/Contents/Info.plist"
+install -m 644 LICENSE "$app/Contents/Resources/LICENSE.txt"
 cp .build/AppIcon.icns "$app/Contents/Resources/AppIcon.icns"
 for executable in SSHWorkbench workbench-askpass; do
   if [ "$architecture" = universal ]; then

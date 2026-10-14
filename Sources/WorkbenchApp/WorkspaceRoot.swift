@@ -195,6 +195,11 @@ struct WorkspaceRoot: View {
         guard !didPrepareQA, store.isTestWorkspace, let output = ProcessInfo.processInfo.environment["SWB_QA_OUTPUT"] else { return }
         didPrepareQA = true
         let screen = ProcessInfo.processInfo.environment["SWB_QA_SCREEN"] ?? "terminal"
+        if screen.hasPrefix("readme-") {
+            do { try await ReadmeScreenshots.run(workspace: workspace, scene: String(screen.dropFirst(7)), output: URL(fileURLWithPath: output)); NSApp.terminate(nil) }
+            catch { fputs("FAIL · \(error.localizedDescription)\n", stderr); workspace.sessions.forEach { $0.close() }; exit(1) }
+            return
+        }
         if screen == "file-browsing" || screen == "markdown-editor" {
             do { try await FileBrowsingChecks.run(workspace: workspace) }
             catch { fputs("FAIL · \(error.localizedDescription)\n", stderr); exit(1) }
