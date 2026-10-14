@@ -6,6 +6,7 @@ struct TerminalWorkspace: View {
     @ObservedObject var store: AppStore
     let addHost: () -> Void
     @ViewState private var search = ""
+    @FocusState private var searchFocused: Bool
     var body: some View {
         if workspace.sessions.isEmpty {
             VStack(spacing: 0) {
@@ -19,9 +20,11 @@ struct TerminalWorkspace: View {
             }
         } else {
             VStack(spacing: 0) {
+                if workspace.showTerminalSearch {
                 HStack(spacing: 8) {
                     Image(systemName: "magnifyingglass").foregroundStyle(.tertiary)
                     TextField("搜索终端内容", text: $search).textFieldStyle(.plain).onSubmit { _ = workspace.selectedTerminal?.terminal.findNext(search) }
+                        .focused($searchFocused).onAppear { searchFocused = true }
                     Button { _ = workspace.selectedTerminal?.terminal.findPrevious(search) } label: { Image(systemName: "chevron.up") }
                     Button { _ = workspace.selectedTerminal?.terminal.findNext(search) } label: { Image(systemName: "chevron.down") }
                     Spacer()
@@ -31,8 +34,10 @@ struct TerminalWorkspace: View {
                     if let session = workspace.selectedTerminal {
                         TerminalStatus(session: session, showReconnect: true)
                     }
-                }.buttonStyle(.borderless).font(.system(size: 11)).padding(.horizontal, 18).padding(.vertical, 10)
+                    Button { workspace.showTerminalSearch = false; workspace.selectedTerminal?.terminal.clearSearch() } label: { Image(systemName: "xmark") }.help("关闭搜索")
+                }.buttonStyle(.borderless).font(.system(size: 11)).padding(.horizontal, 12).padding(.vertical, 6)
                 Divider()
+                }
                 if workspace.layout.selectedTab != nil {
                     ZStack {
                         ForEach(workspace.layout.tabs) { tab in
@@ -42,7 +47,7 @@ struct TerminalWorkspace: View {
                                 .accessibilityHidden(workspace.layout.selectedTabID != tab.id)
                                 .zIndex(workspace.layout.selectedTabID == tab.id ? 1 : 0)
                         }
-                    }.padding(10)
+                    }.padding(4)
                         .onChange(of: workspace.selectedTerminalID) { _, identifier in
                             DispatchQueue.main.async {
                                 guard workspace.selectedTerminalID == identifier, let session = workspace.selectedTerminal else { return }
@@ -149,6 +154,11 @@ private struct TerminalPane: View {
                 }.buttonStyle(.plain).interactionFrame("pane.\(session.id.uuidString)")
                 Button { workspace.browseFiles(.terminal(session.id)) } label: { Image(systemName: "folder").frame(width: 24, height: 30) }.help("查看此分栏的文件")
                 Menu {
+                    Button(session.restartLabel) {
+                        if session.isLocal && session.connected && !confirm("重新打开本机终端？", "当前 Shell 及其任务可能被结束。") { return }
+                        session.reconnect()
+                    }
+                    Divider()
                     Button("左右分栏 · ⌘D") { workspace.selectTerminal(session); workspace.newTerminal(split: true) }
                     Button("上下分栏 · ⌘⇧D") { workspace.selectTerminal(session); workspace.newTerminal(split: true, axis: .topBottom) }
                     Button(zoomed ? "还原分栏 · ⌘⇧↩" : "最大化分栏 · ⌘⇧↩") { workspace.selectTerminal(session); workspace.togglePaneZoom() }

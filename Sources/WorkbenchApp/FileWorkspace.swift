@@ -16,6 +16,7 @@ struct FileWorkspace: View {
     @ViewState private var editDocument: EditDocument?
     @ViewState private var dropTarget = false
     @ViewState private var showHTMLSource = false
+    @ViewState private var showMarkdownSource = false
     init(model: FileModel, store: AppStore) { self.model = model; self.store = store }
     var body: some View {
         VStack(spacing: 0) {
@@ -91,6 +92,11 @@ struct FileWorkspace: View {
         }
         .sheet(item: $transferSelection) { selection in TransferComposer(sources: selection.sources, store: store) }
         .sheet(item: $editDocument) { document in RemoteEditor(document: document, host: host, store: store) { model.load(); if let file = model.previewFile { model.preview(file) } } }
+        .onChange(of: model.previewData) { _, _ in
+            if store.isTestWorkspace, ProcessInfo.processInfo.environment["SWB_QA_SCREEN"] == "markdown-editor", model.isMarkdown, model.editable, let file = model.previewFile {
+                editDocument = EditDocument(file: file, data: model.previewData)
+            }
+        }
         .task {
             let qaDirectory = store.isTestWorkspace && ProcessInfo.processInfo.environment["SWB_QA_OUTPUT"] != nil && ProcessInfo.processInfo.environment["SWB_QA_SCREEN"] != "device-files"
                 ? (host == nil ? ProcessInfo.processInfo.environment["SWB_QA_LOCAL_DIRECTORY"] : "/home/tester/workspace") : nil
@@ -149,8 +155,19 @@ struct FileWorkspace: View {
                     HStack { Text(bytes(file.attributes.size)); Text("权限 \(file.attributes.permissionText)") }.font(.system(size: 10)).foregroundStyle(.tertiary)
                 }.padding(16)
                 Divider()
-                if file.attributes.isDirectory {
-                    VStack(spacing: 15) { Image(systemName: "folder.fill").font(.system(size: 58)).foregroundStyle(.teal.opacity(0.7)); Button("打开文件夹") { model.load(file.path) } }.frame(maxWidth: .infinity, maxHeight: .infinity)
+                if file.attributes.isDirectory || model.previewTargetIsDirectory {
+                    VStack(spacing: 15) {
+                        Image(systemName: file.attributes.isSymbolicLink ? "folder.badge.questionmark" : "folder.fill").font(.system(size: 58)).foregroundStyle(.teal.opacity(0.7))
+                        if file.attributes.isSymbolicLink { Text("符号链接指向文件夹").font(.caption).foregroundStyle(.secondary) }
+                        Button(file.attributes.isSymbolicLink ? "打开链接目标文件夹" : "打开文件夹") { model.activate(file) }
+                    }.frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else if model.isMarkdown && !showMarkdownSource && !model.binaryPreview {
+                    HStack {
+                        Text("Markdown 预览").foregroundStyle(.secondary)
+                        Spacer(); Button("查看源码") { showMarkdownSource = true }
+                    }.font(.caption).padding(10)
+                    MarkdownPreview(source: model.previewText)
+                    if file.attributes.size > UInt64(model.previewData.count) { Text("当前仅预览前 512 KiB；查看源码可翻页。").font(.caption).foregroundStyle(.secondary).padding(10) }
                 } else if let document = model.previewPDF {
                     PDFDocumentPreview(document: document)
                 } else if model.isHTML && !showHTMLSource {
@@ -176,6 +193,7 @@ struct FileWorkspace: View {
                     Spacer()
                 } else {
                     if model.isHTML { Button("网页预览") { showHTMLSource = false }.font(.caption).padding(10) }
+                    if model.isMarkdown { Button("Markdown 预览") { showMarkdownSource = false }.font(.caption).padding(10) }
                     ScrollView([.horizontal, .vertical]) { Text(model.previewText).font(.system(size: 11, design: .monospaced)).textSelection(.enabled).lineSpacing(5).frame(maxWidth: .infinity, alignment: .topLeading).padding(16) }
                     Divider()
                     HStack {
@@ -197,7 +215,7 @@ struct FileWorkspace: View {
         }.background(.quaternary.opacity(0.09))
     }
     @ViewBuilder private func fileActions(_ file: RemoteFile) -> some View {
-        if file.attributes.isDirectory { Button("打开") { model.load(file.path) } }
+        if file.attributes.isDirectory || file.attributes.isSymbolicLink { Button(file.attributes.isSymbolicLink ? "打开链接目标" : "打开") { model.activate(file) } }
         Button("复制") { copyFiles([file]) }
         Button("传输到…") { transferSelection = FileTransferSelection(sources: [FileEndpoint(hostID: host?.id, path: file.path)]) }
         Button("下载…") {

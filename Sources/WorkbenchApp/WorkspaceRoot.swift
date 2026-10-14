@@ -13,17 +13,13 @@ struct WorkspaceRoot: View {
     init(store: AppStore) { self.store = store; _workspace = StateObject(wrappedValue: Workspace(store: store)) }
     var body: some View {
         HStack(spacing: 0) {
-            sidebar.frame(width: 230)
-            Divider()
+            if !workspace.sidebarCollapsed { sidebar.frame(width: 206); Divider() }
             VStack(spacing: 0) {
-                topBar
-                Divider()
                 pageBar
                 Divider()
                 if [.terminal, .files].contains(workspace.page), !workspace.sessions.isEmpty { SessionTabs(workspace: workspace); Divider() }
                 if let draft = workspace.attachmentDraft {
-                    TerminalAttachmentBanner(draft: draft) { workspace.attachmentDraft = nil }
-                    Divider()
+                    CompactAttachmentNotice(draft: draft) { workspace.attachmentDraft = nil }
                 }
                 if let job = store.pendingConflict { TransferConflictBanner(job: job, store: store); Divider() }
                 content.frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -53,7 +49,7 @@ struct WorkspaceRoot: View {
                     Text("Farport").font(.system(size: 20, weight: .bold, design: .rounded))
                     Text("栖远 · 连接远方，安放工作").font(.system(size: 9, weight: .medium)).foregroundStyle(.secondary)
                 }
-            }.padding(.horizontal, 20).padding(.top, 44).padding(.bottom, 25)
+            }.padding(.horizontal, 16).padding(.top, 16).padding(.bottom, 16)
             HStack(spacing: 7) {
                 Image(systemName: "magnifyingglass").foregroundStyle(.tertiary)
                 TextField("搜索主机", text: $workspace.hostSearch).textFieldStyle(.plain)
@@ -142,45 +138,29 @@ struct WorkspaceRoot: View {
                 }
             }
     }
-    private var topBar: some View {
-        HStack(spacing: 12) {
-            VStack(alignment: .leading, spacing: 4) {
-                HStack(spacing: 8) {
-                    Text(workspace.page == .files ? workspace.fileSourceName : (showingLocalTerminal ? "此 Mac · 本机终端" : (displayHost?.name ?? "你的远程工作空间"))).font(.system(size: 18, weight: .semibold))
-                    if showingLocalTerminal || displayHost != nil || workspace.page == .files {
-                        Text(displayHost == nil ? "LOCAL" : "SSH").font(.system(size: 9, weight: .bold, design: .monospaced)).padding(.horizontal, 6).padding(.vertical, 3).foregroundStyle(.teal).background(.teal.opacity(0.1), in: RoundedRectangle(cornerRadius: 4))
-                    }
-                }
-                Text(workspace.page == .files ? (workspace.fileHost?.subtitle ?? "本机文件系统 · 独立记住浏览位置") : (showingLocalTerminal ? (workspace.selectedTerminal?.subtitle ?? "本机登录 Shell · 无需 SSH 连接") : (displayHost?.subtitle ?? "终端、持久会话与远程文件，一处掌控。"))).font(.system(size: 11, design: .monospaced)).foregroundStyle(.secondary)
-            }
-            Spacer()
-            Button { workspace.showTransferTray.toggle() } label: { Image(systemName: "tray.and.arrow.down") }.help("显示传输队列")
-            Button {
-                if workspace.page == .files {
-                    if let host = workspace.fileHost { workspace.connect(host, split: true) } else { workspace.connectLocal(split: true) }
-                } else { workspace.newTerminal(split: true) }
-            } label: { Image(systemName: "rectangle.split.2x1") }.help("新建此来源的分屏终端")
-            Button {
-                if workspace.page == .files { workspace.openFileSourceTerminal() }
-                else if let host = workspace.host { workspace.connectPreferred(host) } else { workspace.connectLocal() }
-            } label: {
-                Label(workspace.page == .files ? "打开此来源终端" : (workspace.host == nil ? "新建本机终端" : "连接主机"), systemImage: "plus")
-            }.buttonStyle(.borderedProminent).controlSize(.large)
-        }.buttonStyle(.borderless).padding(.horizontal, 26).padding(.top, 23).padding(.bottom, 18)
-    }
     private var pageBar: some View {
-        HStack(spacing: 24) {
+        HStack(spacing: 6) {
+            Button { workspace.toggleSidebar() } label: { Image(systemName: "sidebar.left").frame(width: 30, height: 32) }
+                .help("展开 / 折叠主机侧栏 · ⌘⌥S").interactionFrame("workspace.sidebar")
             ForEach(WorkspacePage.allCases, id: \.self) { page in
                 Button { workspace.page = page } label: {
-                    VStack(spacing: 12) {
-                        Label(page.rawValue, systemImage: page.symbol).font(.system(size: 12, weight: workspace.page == page ? .semibold : .regular)).foregroundStyle(workspace.page == page ? Color.teal : .secondary)
-                        Capsule().fill(workspace.page == page ? Color.teal : .clear).frame(height: 2)
-                    }.padding(.horizontal, 12).padding(.top, 14).frame(maxWidth: .infinity, minHeight: 44).contentShape(Rectangle())
+                    Label(page.rawValue, systemImage: page.symbol).font(.system(size: 11, weight: workspace.page == page ? .semibold : .regular))
+                        .foregroundStyle(workspace.page == page ? Color.teal : .secondary).padding(.horizontal, 10).frame(height: 32)
+                        .background(workspace.page == page ? Color.teal.opacity(0.1) : .clear, in: RoundedRectangle(cornerRadius: 7)).contentShape(Rectangle())
                 }.buttonStyle(.plain).interactionFrame("page.\(page.rawValue)")
             }
             Spacer()
-            Text("⌘ 1–5 切换工作区").font(.system(size: 10)).foregroundStyle(.tertiary).padding(.bottom, 4)
-        }.padding(.horizontal, 26)
+            Menu {
+                Button("新建本机终端") { workspace.connectLocal() }
+                ForEach(store.hosts) { host in Button(host.name) { workspace.connectPreferred(host) } }
+                Divider(); Button("添加 SSH 主机…") { editingHost = HostProfile() }
+            } label: { Label(displayHost?.name ?? "此 Mac", systemImage: "server.rack").lineLimit(1) }.menuStyle(.borderlessButton).frame(maxWidth: 160)
+            Button { workspace.showTransferTray.toggle() } label: { Image(systemName: "tray.and.arrow.down").frame(width: 26, height: 32) }.help("传输队列")
+            if workspace.page == .terminal {
+                Button { workspace.showTerminalSearch.toggle() } label: { Image(systemName: "magnifyingglass").frame(width: 26, height: 32) }.help("查找终端内容 · ⌘F")
+                Button { workspace.chooseAttachments() } label: { Image(systemName: "paperclip").frame(width: 26, height: 32) }.help("发送附件").disabled(workspace.selectedTerminal?.connected != true)
+            }
+        }.font(.system(size: 11)).buttonStyle(.borderless).padding(.horizontal, 10).padding(.vertical, 4)
     }
     @ViewBuilder private var content: some View {
         switch workspace.page {
@@ -209,12 +189,17 @@ struct WorkspaceRoot: View {
                 TerminalStatus(session: terminal, showReconnect: false)
             }
             Text("\(store.hosts.count) 台主机 · \(workspace.sessions.count) 个终端").foregroundStyle(.secondary)
-        }.font(.system(size: 10)).padding(.horizontal, 20).frame(height: 30)
+        }.font(.system(size: 10)).padding(.horizontal, 12).frame(height: 22)
     }
     private func prepareQA() async {
         guard !didPrepareQA, store.isTestWorkspace, let output = ProcessInfo.processInfo.environment["SWB_QA_OUTPUT"] else { return }
         didPrepareQA = true
         let screen = ProcessInfo.processInfo.environment["SWB_QA_SCREEN"] ?? "terminal"
+        if screen == "file-browsing" || screen == "markdown-editor" {
+            do { try await FileBrowsingChecks.run(workspace: workspace) }
+            catch { fputs("FAIL · \(error.localizedDescription)\n", stderr); exit(1) }
+        }
+        if screen == "compact-workspace" { await verifyTabDragging() }
         if screen == "device-files" {
             guard let host = workspace.host else { exit(1) }
             workspace.browseFiles(.host(host.id))
@@ -225,6 +210,19 @@ struct WorkspaceRoot: View {
             }
             guard workspace.currentFileBrowser?.errorMessage == nil else { fputs("FAIL · 设备文件界面仍有错误\n", stderr); exit(1) }
             print("PASS · 真实设备文件界面正常显示，异常文件名计数：\(workspace.currentFileBrowser?.skippedFileNames ?? 0)")
+            if ProcessInfo.processInfo.environment["SWB_QA_DEVICE_LINK"] == "1", let model = workspace.currentFileBrowser {
+                let storage = RemotePath.join(model.path, "storage")
+                model.load(storage)
+                for _ in 0..<100 { if !model.busy { break }; try? await Task.sleep(for: .milliseconds(100)) }
+                guard let shared = model.files.first(where: { $0.name == "shared" && $0.attributes.isSymbolicLink }) else { fputs("FAIL · 缺少 shared 目录链接\n", stderr); exit(1) }
+                model.selection = [shared.path]; model.preview(shared)
+                for _ in 0..<100 { if !model.previewBusy { break }; try? await Task.sleep(for: .milliseconds(100)) }
+                guard model.previewTargetIsDirectory, model.errorMessage == nil else { fputs("FAIL · 设备目录链接预览失败\n", stderr); exit(1) }
+                model.activate(shared)
+                for _ in 0..<100 { if !model.busy && model.path != storage { break }; try? await Task.sleep(for: .milliseconds(100)) }
+                guard model.path == "/storage/emulated/0", model.errorMessage == nil else { fputs("FAIL · 设备共享存储链接打开失败\n", stderr); exit(1) }
+                print("PASS · 真实 Termux shared 符号链接打开到共享存储，未修改远端文件")
+            }
         }
         if screen == "window-titlebar" {
             do { try await WindowTitlebarChecks.run(workspace: workspace) }
@@ -316,7 +314,7 @@ struct WorkspaceRoot: View {
             window.setContentSize(NSSize(width: max(980, width), height: max(640, height)))
         }
         try? await Task.sleep(for: .seconds(ProcessInfo.processInfo.environment["SWB_QA_BATCH_COPY"] == "1" ? 35 : (ProcessInfo.processInfo.environment["SWB_QA_FILE_NAVIGATION"] == "1" ? 15 : 5)))
-        let expected: WorkspacePage = ["files", "local-files", "file-switching", "file-deletion", "html-preview", "pdf-preview", "file-sorting", "device-files"].contains(screen) ? .files : (screen == "tmux" ? .tmux : (["transfers", "transfer-workflow"].contains(screen) ? .transfers : .terminal))
+        let expected: WorkspacePage = ["files", "local-files", "file-switching", "file-deletion", "html-preview", "pdf-preview", "file-sorting", "device-files", "file-browsing", "markdown-editor"].contains(screen) ? .files : (screen == "tmux" ? .tmux : (["transfers", "transfer-workflow"].contains(screen) ? .transfers : .terminal))
         guard workspace.page == expected else {
             fputs("截图验收失败：请求页面与实际工作区不一致。\n", stderr)
             exit(1)
@@ -326,7 +324,7 @@ struct WorkspaceRoot: View {
             exit(1)
         }
         let parentWindow = NSApp.windows.first(where: { $0.isVisible && $0.contentView != nil })
-        if let window = screen == "host-editor" ? (parentWindow?.sheets.first ?? parentWindow) : parentWindow, let view = window.contentView?.superview {
+        if let window = ["host-editor", "markdown-editor"].contains(screen) ? (parentWindow?.sheets.first ?? parentWindow) : parentWindow, let view = window.contentView?.superview {
             window.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true)
             try? await Task.sleep(for: .milliseconds(300))
             window.displayIfNeeded()
@@ -364,11 +362,53 @@ struct WorkspaceRoot: View {
             exit(1)
         }
         if ProcessInfo.processInfo.environment["SWB_QA_EXIT"] == "1" {
+            if screen == "markdown-editor", let sheet = parentWindow?.sheets.first {
+                parentWindow?.endSheet(sheet); sheet.orderOut(nil)
+            }
             if let hold = ProcessInfo.processInfo.environment["SWB_QA_HOLD"], let seconds = Double(hold) { try? await Task.sleep(for: .seconds(min(seconds, 300))) }
-            if ["local-terminal", "local-mixed", "file-switching", "attachment-check", "terminal-zoom", "pane-layout", "tab-management", "window-titlebar"].contains(screen) { workspace.sessions.forEach { $0.close() } }
+            if ["local-terminal", "local-mixed", "file-switching", "attachment-check", "terminal-zoom", "pane-layout", "tab-management", "window-titlebar", "compact-workspace"].contains(screen) { workspace.sessions.forEach { $0.close() } }
             if editingHost != nil { editingHost = nil; try? await Task.sleep(for: .milliseconds(300)) }
             NSApp.terminate(nil)
         }
+    }
+    @MainActor private func verifyTabDragging() async {
+        for _ in 0..<3 { workspace.connectLocal() }
+        try? await Task.sleep(for: .seconds(2))
+        let first = workspace.sessions[0]; let third = workspace.sessions[2]
+        guard let window = first.terminal.window else { exit(1) }
+        window.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true)
+        window.setContentSize(NSSize(width: 1360, height: 860))
+        try? await Task.sleep(for: .milliseconds(500))
+        func drag(_ source: UUID, _ target: UUID) async {
+            guard let start = interactionFrames["terminal.\(source.uuidString)"], let end = interactionFrames["terminal.\(target.uuidString)"] else { exit(1) }
+            await dragInterface(start, window: window, offset: end.midX - start.midX)
+        }
+        for _ in 0..<3 {
+            await drag(first.id, third.id)
+            guard workspace.layout.tabs.last?.id == first.id else { fputs("FAIL · 真实鼠标向后拖动标签未改变顺序\n", stderr); exit(1) }
+            let front = workspace.layout.tabs[0].id
+            await drag(first.id, front)
+            guard workspace.layout.tabs.first?.id == first.id else { fputs("FAIL · 真实鼠标向前拖动标签未改变顺序\n", stderr); exit(1) }
+        }
+        let identities = workspace.sessions.map(\.connectionID)
+        workspace.page = .files
+        try? await Task.sleep(for: .milliseconds(400))
+        let layout = workspace.layout; let source = workspace.fileSource
+        await drag(first.id, third.id)
+        guard workspace.orderedFileSessions.last?.id == first.id, workspace.fileSource == source, workspace.layout == layout else { fputs("FAIL · 文件来源拖动改变了终端分组或选中来源\n", stderr); exit(1) }
+        workspace.selectTerminal(first); workspace.page = .terminal
+        try? await Task.sleep(for: .milliseconds(500))
+        let width = first.terminal.frame.width; let height = first.terminal.frame.height
+        guard let sidebarButton = interactionFrames["workspace.sidebar"] else { exit(1) }
+        await clickInterface(sidebarButton, window: window)
+        guard workspace.sidebarCollapsed, first.terminal.frame.width > width + 190 else { fputs("FAIL · 折叠侧栏未增加终端宽度\n", stderr); exit(1) }
+        workspace.showTerminalSearch = true
+        try? await Task.sleep(for: .milliseconds(300))
+        guard first.terminal.frame.height < height - 20 else { fputs("FAIL · 搜索区未按需展开\n", stderr); exit(1) }
+        workspace.showTerminalSearch = false
+        try? await Task.sleep(for: .milliseconds(300))
+        guard first.terminal.frame.height > window.contentLayoutRect.height * 0.80, workspace.sessions.map(\.connectionID) == identities else { fputs("FAIL · 终端可用高度不足或连接重建：terminal=\(first.terminal.frame) content=\(window.contentLayoutRect) identities=\(workspace.sessions.map(\.connectionID) == identities)\n", stderr); exit(1) }
+        print("PASS · 原生标签拖动 6 次、文件来源独立排序、侧栏按钮折叠、搜索按需显示；1360×860 工作区终端 \(Int(first.terminal.frame.width))×\(Int(first.terminal.frame.height))")
     }
     @MainActor private func verifyTabInteractions() async {
         guard let host = workspace.host else { exit(1) }

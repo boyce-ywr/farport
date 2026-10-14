@@ -21,6 +21,7 @@ final class FileModel: ObservableObject {
     @Published var previewOffset: UInt64 = 0
     @Published var previewImage: NSImage?
     @Published var previewPDF: PDFDocument?
+    @Published var previewTargetIsDirectory = false
     @Published var webURL: URL?
     @Published var webScripts = false
     @Published var previewRatio = 0.38
@@ -39,10 +40,12 @@ final class FileModel: ObservableObject {
     private var navigation = CancellationFlag()
     private var previewCancellation = CancellationFlag()
     private var generation = UUID()
+    private var openingLink: String?
     private var hasLoaded = false
     let previewLimit = 512 * 1024
     init(host: HostProfile?, store: AppStore) { self.host = host; transport = store.transport; self.store = store }
     var isHTML: Bool { ["html", "htm"].contains(((previewFile?.path ?? "") as NSString).pathExtension.lowercased()) }
+    var isMarkdown: Bool { ["md", "markdown"].contains(((previewFile?.path ?? "") as NSString).pathExtension.lowercased()) }
     func stopWebPreview() { webServer?.stop(); webServer = nil; webURL = nil }
     func startWebPreview(allowScripts: Bool = false) {
         guard let file = previewFile, isHTML else { return }
@@ -89,14 +92,17 @@ final class FileModel: ObservableObject {
     }
     func activate(_ file: RemoteFile) {
         followLog = false
+        openingLink = file.attributes.isSymbolicLink ? file.path : nil
         if file.attributes.isDirectory { load(file.path) }
-        else { selection = [file.path]; preview(file) }
+        else { selection = [file.path]; preview(file, openLinkedDirectory: file.attributes.isSymbolicLink) }
     }
-    func preview(_ file: RemoteFile, offset: UInt64 = 0, tail: Bool = false) {
+    func preview(_ file: RemoteFile, offset: UInt64 = 0, tail: Bool = false, openLinkedDirectory: Bool = false) {
+        if openLinkedDirectory { openingLink = file.path }
+        else if openingLink != file.path { openingLink = nil }
         previewCancellation.cancel(); previewCancellation = CancellationFlag(); let cancellation = previewCancellation
         let identifier = UUID(); generation = identifier
         previewFile = file; previewBusy = true
-        previewData = Data(); previewImage = nil; previewPDF = nil; webURL = nil
+        previewData = Data(); previewImage = nil; previewPDF = nil; webURL = nil; previewTargetIsDirectory = false
         if file.attributes.isDirectory { previewData = Data(); previewImage = nil; previewBusy = false; return }
         let transport = transport; let host = host; let limit = previewLimit
         Task {
@@ -104,6 +110,7 @@ final class FileModel: ObservableObject {
                 let result = try await Task.detached { () -> (Data, FileAttributes, UInt64) in
                     let client = try transport.files(host, cancellation: cancellation); defer { client.close() }
                     let attributes = try client.stat(file.path, followLinks: true)
+                    if attributes.isDirectory { return (Data(), attributes, 0) }
                     guard attributes.isRegularFile else { throw WorkbenchError.message("不预览设备、管道或套接字。") }
                     let position = tail ? (attributes.size > UInt64(limit) ? attributes.size - UInt64(limit) : 0) : min(offset, attributes.size)
                     let imageType = ["png", "jpg", "jpeg", "gif", "tiff", "webp", "heic"].contains((file.path as NSString).pathExtension.lowercased())
@@ -125,6 +132,7 @@ final class FileModel: ObservableObject {
                 }.value
                 guard generation == identifier, !cancellation.isCancelled else { return }
                 previewData = result.0; previewOffset = result.2
+                previewTargetIsDirectory = result.1.isDirectory
                 var updated = file; updated.attributes = result.1
                 if file.attributes.isSymbolicLink { updated.attributes.permissions = file.attributes.permissions }
                 previewFile = updated
@@ -134,8 +142,15 @@ final class FileModel: ObservableObject {
                     if previewPDF == nil { errorMessage = "PDF 无法解析，可能已损坏或加密，请下载后查看。" }
                 }
                 previewBusy = false
-                if isHTML { startWebPreview() }
-            } catch { if generation == identifier && !cancellation.isCancelled { errorMessage = errorMessage ?? error.localizedDescription; previewBusy = false } }
+                if result.1.isDirectory, openingLink == file.path { openingLink = nil; load(file.path) }
+                else if isHTML { startWebPreview() }
+            } catch {
+                if generation == identifier && !cancellation.isCancelled {
+                    errorMessage = errorMessage ?? (file.attributes.isSymbolicLink ? "无法打开符号链接目标（可能已失效、循环或没有访问权限）：\(error.localizedDescription)" : error.localizedDescription)
+                    previewBusy = false
+                    openingLink = nil
+                }
+            }
         }
     }
     func deleteFiles(_ targets: [RemoteFile]) {
@@ -192,15 +207,23 @@ struct RemoteEditor: View {
     @ViewState private var text: String
     @ViewState private var busy = false
     @ViewState private var errorMessage: String?
+    @ViewState private var showPreview = false
     @Environment(\.dismiss) private var dismiss
     init(document: EditDocument, host: HostProfile?, store: AppStore, saved: @escaping () -> Void) {
         self.document = document; self.host = host; self.store = store; self.saved = saved; _text = State(initialValue: String(decoding: document.data, as: UTF8.self))
+        _showPreview = State(initialValue: store.isTestWorkspace && ProcessInfo.processInfo.environment["SWB_QA_SCREEN"] == "markdown-editor")
     }
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack { Image(systemName: "doc.text").foregroundStyle(.teal); Text(document.file.name).font(.title3.bold()); Spacer(); Text(host == nil ? "UTF-8 · 本地编辑" : "UTF-8 · 远程编辑").font(.caption).foregroundStyle(.secondary) }
             Text(document.file.path).font(.system(size: 11, design: .monospaced)).foregroundStyle(.secondary)
-            TextEditor(text: $text).font(.system(size: 13, design: .monospaced)).border(.quaternary).disabled(busy)
+            if ["md", "markdown"].contains((document.file.path as NSString).pathExtension.lowercased()) {
+                Toggle("实时 Markdown 预览", isOn: $showPreview).toggleStyle(.checkbox).font(.caption)
+            }
+            HSplitView {
+                TextEditor(text: $text).font(.system(size: 13, design: .monospaced)).border(.quaternary).disabled(busy).frame(minWidth: 260)
+                if showPreview { MarkdownPreview(source: text).frame(minWidth: 240) }
+            }
             if let errorMessage { ErrorBanner(message: errorMessage) { self.errorMessage = nil } }
             HStack {
                 Label("保存前检查文件变化，临时文件写完后原子替换。", systemImage: "lock.shield").font(.caption).foregroundStyle(.secondary)

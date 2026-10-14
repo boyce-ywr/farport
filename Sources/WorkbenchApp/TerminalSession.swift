@@ -220,12 +220,24 @@ final class Workspace: ObservableObject {
     @Published var hostSearch = ""
     @Published var fileSource: FileBrowserSource?
     @Published var attachmentDraft: TerminalAttachmentDraft?
+    @Published var sidebarCollapsed = false
+    @Published var showTerminalSearch = false
+    @Published private var fileTerminalOrder: [UUID] = []
+    var orderedFileSessions: [TerminalSession] { fileTerminalOrder.compactMap { identifier in sessions.first { $0.id == identifier } } }
+    func toggleSidebar() {
+        sidebarCollapsed.toggle()
+        if !store.isTestWorkspace { UserDefaults.standard.set(sidebarCollapsed, forKey: "sidebarCollapsed") }
+    }
+    func reorderFileTab(_ identifier: UUID, onto target: UUID) {
+        guard identifier != target, let source = fileTerminalOrder.firstIndex(of: identifier), let destination = fileTerminalOrder.firstIndex(of: target) else { return }
+        fileTerminalOrder.remove(at: source); fileTerminalOrder.insert(identifier, at: destination)
+    }
     private var focusGeneration: UInt64 = 0
     private var fileBrowsers: [FileBrowserSource: FileModel] = [:]
     private var terminalNumbers: [UUID: Int] = [:]
     private var hostTerminalCounts: [UUID?: Int] = [:]
     let store: AppStore
-    init(store: AppStore) { self.store = store; selectedHostID = store.hosts.first?.id }
+    init(store: AppStore) { self.store = store; selectedHostID = store.hosts.first?.id; sidebarCollapsed = !store.isTestWorkspace && UserDefaults.standard.bool(forKey: "sidebarCollapsed") }
     var host: HostProfile? { store.hosts.first { $0.id == selectedHostID } }
     var selectedTerminalID: UUID? { layout.focused }
     var splitTerminalID: UUID? { layout.secondary }
@@ -269,6 +281,7 @@ final class Workspace: ObservableObject {
         let next = (hostTerminalCounts[session.host?.id] ?? 0) + 1
         hostTerminalCounts[session.host?.id] = next; terminalNumbers[session.id] = next
         sessions.append(session)
+        fileTerminalOrder.append(session.id)
         session.terminal.onFocus = { [weak self, weak session] in
             guard let self, let session, page == .terminal,
                   layout.selectedTab?.terminals.contains(session.id) == true, selectedTerminalID != session.id else { return }
@@ -428,6 +441,7 @@ final class Workspace: ObservableObject {
         fileBrowsers.removeValue(forKey: source)?.stop()
         terminalNumbers.removeValue(forKey: session.id)
         session.close(); sessions.removeAll { $0.id == session.id }
+        fileTerminalOrder.removeAll { $0 == session.id }
         layout.close(session.id, fallback: sessions.last(where: { $0.host?.id == selectedHostID })?.id ?? sessions.last?.id)
         if let selectedTerminal { browsingLocalFiles = selectedTerminal.isLocal; selectedHostID = selectedTerminal.host?.id }
     }

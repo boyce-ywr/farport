@@ -1,14 +1,11 @@
 import SwiftUI
 import WorkbenchCore
-import UniformTypeIdentifiers
-
-private let terminalTabType = UTType(exportedAs: "local.sshworkbench.terminal-tab")
 
 struct SessionTabs: View {
     @ObservedObject var workspace: Workspace
     @ViewState private var showTabList = false
     @ViewState private var query = ""
-    @ViewState private var dropTarget: UUID?
+    @StateObject private var pointer = TabPointerState()
     var body: some View {
         HStack(spacing: 8) {
             Text(workspace.page == .files ? "文件来源" : "标签组").font(.caption).foregroundStyle(.secondary)
@@ -26,18 +23,21 @@ struct SessionTabs: View {
                                         Image(systemName: session.tmuxID == nil ? "terminal" : "square.stack.3d.up").foregroundStyle(markColor)
                                         Text(workspace.sessionLabel(session)).lineLimit(1).truncationMode(.middle)
                                         if let tab, tab.terminals.count > 1 { Text("\(tab.terminals.count) 分栏").font(.system(size: 10)).padding(.horizontal, 5).padding(.vertical, 2).background(markColor.opacity(0.12), in: Capsule()) }
-                                    }.font(.system(size: 11, weight: .medium)).padding(.horizontal, 12).frame(minHeight: 38).frame(minWidth: 110, maxWidth: 230).contentShape(Rectangle())
+                                    }.font(.system(size: 11, weight: .medium)).padding(.horizontal, 10).frame(minHeight: 32).frame(minWidth: 100, maxWidth: 230).contentShape(Rectangle())
                                 }.buttonStyle(.plain).interactionFrame("terminal.\(session.id.uuidString)")
-                                Button { if let tab { workspace.closeTab(tab.id) } else { close(session) } } label: { Image(systemName: "xmark").font(.system(size: 9)).frame(width: 28, height: 38).contentShape(Rectangle()) }.buttonStyle(.plain).help(tab == nil ? "关闭会话" : "关闭此标签的全部分栏")
+                                    .background { GeometryReader { geometry in TabPointerRegion(identifier: identifier, state: pointer, frame: geometry.frame(in: .named("workspace-interactions")), select: {
+                                        if let tab { workspace.chooseTerminalTab(tab.id) } else { workspace.chooseTab(session) }
+                                    }, move: { source, destination in
+                                        if workspace.page == .files { workspace.reorderFileTab(source, onto: destination) }
+                                        else { workspace.reorderTab(payload: "\(workspace.tabDragScope.uuidString):\(source.uuidString)", onto: destination) }
+                                    }).frame(width: geometry.size.width, height: geometry.size.height) } }
+                                Button { if let tab { workspace.closeTab(tab.id) } else { close(session) } } label: { Image(systemName: "xmark").font(.system(size: 9)).frame(width: 28, height: 32).contentShape(Rectangle()) }.buttonStyle(.plain).help(tab == nil ? "关闭会话" : "关闭此标签的全部分栏")
                             }.background(selected ? markColor.opacity(0.14) : .clear, in: RoundedRectangle(cornerRadius: 8))
                                 .overlay(alignment: .bottom) { if selected { Capsule().fill(markColor).frame(height: 2).padding(.horizontal, 10) } }
                                 .id(identifier)
                                 .help(workspace.sessionLabel(session) + "\n" + session.subtitle)
-                                .onDrag { NSItemProvider(item: Data("\(workspace.tabDragScope.uuidString):\((tab?.id ?? workspace.layout.tab(containing: session.id)?.id ?? session.id).uuidString)".utf8) as NSData, typeIdentifier: terminalTabType.identifier) }
-                                .onDrop(of: [terminalTabType], isTargeted: Binding(get: { dropTarget == identifier }, set: { dropTarget = $0 ? identifier : nil })) { providers in
-                                    receiveDrop(providers, before: tab?.id ?? workspace.layout.tab(containing: session.id)?.id)
-                                }
-                                .overlay(alignment: .leading) { if dropTarget == identifier { Capsule().fill(.teal).frame(width: 3).padding(.vertical, 4) } }
+                                .opacity(pointer.dragging == identifier ? 0.55 : 1)
+                                .overlay { if pointer.target == identifier && pointer.dragging != identifier { RoundedRectangle(cornerRadius: 8).strokeBorder(.teal, lineWidth: 2) } }
                                 .contextMenu {
                                     Button("查看此会话的文件") { workspace.browseFiles(.terminal(session.id)) }
                                     Button("回到此终端") { workspace.selectTerminal(session); workspace.page = .terminal }
@@ -45,6 +45,10 @@ struct SessionTabs: View {
                                         Divider()
                                         Button("移到最前") { workspace.layout.moveTab(tab.id, before: workspace.layout.tabs.first?.id) }
                                         Button("移到最后") { workspace.layout.moveTab(tab.id, before: nil) }
+                                    } else {
+                                        Divider()
+                                        Button("移到最前") { if let target = workspace.orderedFileSessions.first?.id { workspace.reorderFileTab(session.id, onto: target) } }
+                                        Button("移到最后") { if let target = workspace.orderedFileSessions.last?.id { workspace.reorderFileTab(session.id, onto: target) } }
                                     }
                                 }
                         }
@@ -63,10 +67,11 @@ struct SessionTabs: View {
                 Button("左右分栏 · ⌘D") { workspace.newTerminal(split: true) }
                 Button("上下分栏 · ⌘⇧D") { workspace.newTerminal(split: true, axis: .topBottom) }
             } label: { Image(systemName: "plus").frame(width: 28, height: 36) }.menuStyle(.borderlessButton).frame(width: 30)
-        }.padding(.horizontal, 16).padding(.vertical, 8)
+        }.padding(.horizontal, 10).padding(.vertical, 3)
+            .onChange(of: workspace.page) { _, _ in pointer.dragging = nil; pointer.target = nil }
     }
     private var displayedSessions: [TerminalSession] {
-        if workspace.page == .files { return workspace.layout.tabs.flatMap(\.terminals).compactMap { identifier in workspace.sessions.first { $0.id == identifier } } }
+        if workspace.page == .files { return workspace.orderedFileSessions }
         return workspace.layout.tabs.compactMap { tab in workspace.sessions.first { $0.id == tab.terminals.first } }
     }
     private var tabList: some View {
@@ -92,18 +97,8 @@ struct SessionTabs: View {
                     }
                 }
             }.frame(height: 320)
-            Text("拖动标签可排序；右键可移到最前或最后。分栏与连接不变。").font(.caption).foregroundStyle(.secondary)
+            Text(workspace.page == .files ? "文件来源独立排序，拖动不会改变终端分栏与连接。" : "拖动标签可排序；右键可移到最前或最后。分栏与连接不变。").font(.caption).foregroundStyle(.secondary)
         }.padding(18).frame(width: 380)
-    }
-    private func receiveDrop(_ providers: [NSItemProvider], before target: UUID?) -> Bool {
-        guard let provider = providers.first else { return false }
-        provider.loadDataRepresentation(forTypeIdentifier: terminalTabType.identifier) { data, _ in
-            guard let data, let value = String(data: data, encoding: .utf8) else { return }
-            DispatchQueue.main.async {
-                workspace.reorderTab(payload: value, onto: target); dropTarget = nil
-            }
-        }
-        return true
     }
     private func close(_ session: TerminalSession) {
         let detail = session.tmuxID != nil ? "只分离此终端，tmux 会话继续运行。" : "当前 Shell 和前台任务可能随连接关闭。"
@@ -118,8 +113,7 @@ struct FileSourceBar: View {
         HStack(spacing: 12) {
             Image(systemName: "folder.badge.person.crop").foregroundStyle(workspace.fileHost?.markColor ?? .teal)
             VStack(alignment: .leading, spacing: 4) {
-                Text("当前文件来源").font(.system(size: 10)).foregroundStyle(.secondary)
-                Text(workspace.fileSourceName).font(.system(size: 13, weight: .semibold)).lineLimit(1)
+                Text(workspace.fileSourceName).font(.system(size: 11, weight: .semibold)).lineLimit(1)
                 Text(workspace.fileHost?.subtitle ?? "本机文件系统").font(.system(size: 10, design: .monospaced)).foregroundStyle(.secondary).lineLimit(1)
             }
             Spacer(minLength: 8)
@@ -133,6 +127,6 @@ struct FileSourceBar: View {
                 }
             } label: { Label("切换文件来源", systemImage: "arrow.left.arrow.right") }.menuStyle(.borderlessButton).frame(maxWidth: 150)
             Button("回到对应终端") { workspace.openFileSourceTerminal() }.disabled(!workspace.fileSourceAvailable)
-        }.padding(.horizontal, 20).padding(.vertical, 12).background(.teal.opacity(0.05))
+        }.font(.system(size: 11)).padding(.horizontal, 12).padding(.vertical, 6).background(.teal.opacity(0.05))
     }
 }

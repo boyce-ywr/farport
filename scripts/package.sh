@@ -21,18 +21,27 @@ mkdir -p .build/AppIcon.iconset dist
 swift scripts/icon.swift "$PWD/.build/AppIcon.iconset"
 iconutil -c icns .build/AppIcon.iconset -o .build/AppIcon.icns
 artifacts=()
-for architecture in "${architectures[@]}"; do
+packages=("${architectures[@]}")
+if [ "${#architectures[@]}" -eq 2 ]; then packages+=(universal); fi
+for architecture in "${packages[@]}"; do
 app="$PWD/dist/$architecture/Farport.app"
 if [ -d "$app" ]; then rm -rf "$app"; fi
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources/ThirdParty"
 cp Resources/Info.plist "$app/Contents/Info.plist"
 cp .build/AppIcon.icns "$app/Contents/Resources/AppIcon.icns"
 for executable in SSHWorkbench workbench-askpass; do
-  cp ".build/$architecture-apple-macosx/$configuration/$executable" "$app/Contents/MacOS/$executable"
-  [ "$(lipo -archs "$app/Contents/MacOS/$executable")" = "$architecture" ]
+  if [ "$architecture" = universal ]; then
+    lipo -create ".build/arm64-apple-macosx/$configuration/$executable" ".build/x86_64-apple-macosx/$configuration/$executable" -output "$app/Contents/MacOS/$executable"
+    for requiredArchitecture in arm64 x86_64; do lipo -verify_arch "$requiredArchitecture" "$app/Contents/MacOS/$executable"; done
+  else
+    cp ".build/$architecture-apple-macosx/$configuration/$executable" "$app/Contents/MacOS/$executable"
+    [ "$(lipo -archs "$app/Contents/MacOS/$executable")" = "$architecture" ]
+  fi
   codesign --force --sign - --timestamp=none "$app/Contents/MacOS/$executable"
 done
-resource=".build/$architecture-apple-macosx/$configuration/SwiftTerm_SwiftTerm.bundle"
+resourceArchitecture="$architecture"
+if [ "$architecture" = universal ]; then resourceArchitecture=arm64; fi
+resource=".build/$resourceArchitecture-apple-macosx/$configuration/SwiftTerm_SwiftTerm.bundle"
 cp -R "$resource" "$app/Contents/Resources/SwiftTerm_SwiftTerm.bundle"
 install -m 644 .build/checkouts/SwiftTerm/LICENSE "$app/Contents/Resources/ThirdParty/SwiftTerm-LICENSE.txt"
 codesign --force --sign - --timestamp=none "$app"

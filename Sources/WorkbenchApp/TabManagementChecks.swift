@@ -17,6 +17,10 @@ enum TabManagementChecks {
         let group = workspace.layout.selectedTab!
         workspace.reorderTab(payload: "\(workspace.tabDragScope.uuidString):\(group.id.uuidString)", onto: workspace.layout.tabs[0].id)
         guard workspace.layout.tabs.first == group else { throw WorkbenchError.message("多分栏标签排序改变布局") }
+        let splitSession = workspace.selectedTerminalID!
+        let layoutBeforeFileMove = workspace.layout
+        workspace.reorderFileTab(splitSession, onto: workspace.orderedFileSessions[0].id)
+        guard workspace.orderedFileSessions.first?.id == splitSession, workspace.layout == layoutBeforeFileMove else { throw WorkbenchError.message("文件来源中的分栏会话排序改变了终端分组") }
         let deadline = Date().addingTimeInterval(20)
         while workspace.sessions.contains(where: { !$0.connected }) {
             guard Date() < deadline else { throw WorkbenchError.message("多终端启动超时") }; try await Task.sleep(for: .milliseconds(100))

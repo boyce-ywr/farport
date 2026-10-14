@@ -71,13 +71,13 @@ struct WorkbenchCommands: Commands {
             Button("下一个标签") { workspace?.selectNextTab() }.keyboardShortcut("]", modifiers: [.command, .shift]).disabled(workspace?.page != .terminal)
         }
         CommandMenu("工作区") {
+            Button("展开 / 折叠主机侧栏") { workspace?.toggleSidebar() }.keyboardShortcut("s", modifiers: [.command, .option]).disabled(workspace == nil)
             ForEach(Array(WorkspacePage.allCases.enumerated()), id: \.element) { index, page in
                 Button(page.rawValue) { workspace?.page = page }.keyboardShortcut(KeyEquivalent(Character(String(index + 1))))
             }
             Divider()
             Button("查找终端内容") {
-                let item = NSMenuItem(); item.tag = Int(NSFindPanelAction.showFindPanel.rawValue)
-                workspace?.selectedTerminal?.terminal.performFindPanelAction(item)
+                workspace?.showTerminalSearch = true
             }.keyboardShortcut("f")
             Button("增大字体") { let store = AppStore.shared; store.fontSize = min(28, store.fontSize + 1); store.savePreferences() }.keyboardShortcut("+")
             Button("减小字体") { let store = AppStore.shared; store.fontSize = max(10, store.fontSize - 1); store.savePreferences() }.keyboardShortcut("-")
