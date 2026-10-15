@@ -10,6 +10,8 @@ macOS 14+ · Apple Silicon / Intel · [MIT license](LICENSE)
 
 ## What you can do
 
+- **Inspect host health.** View CPU, memory, processes, interface rates, ports, and system/user details without installing an agent. Collection stops when you leave. Linux/macOS have live validation; see release notes for Windows/Termux limitations.
+
 - **Work in multiple terminals.** Connect over SSH or open a local shell. Use tabs and nested splits, drag tabs to reorder them, and collapse the sidebar for more space.
 - **Return to your work.** Create, inspect, and attach to local or remote tmux sessions. Closing a terminal tab does not end its tmux session.
 - **Move files between machines.** Copy files and folders between your Mac and SSH hosts, or between two SSH hosts. Multi-selection, verified resume, and overwrite confirmation are included.
@@ -46,13 +48,13 @@ Open HTML reports in your browser, too. A temporary localhost address reads the 
 
 ## Install
 
-Download a DMG from [GitHub Releases](https://github.com/boyce-ywr/farport/releases/latest). Current version: **0.1.7**.
+Download a DMG from [GitHub Releases](https://github.com/boyce-ywr/farport/releases/latest). Current version: **0.1.8**.
 
 | Mac | Download |
 | --- | --- |
-| Apple Silicon, including M-series chips | [Apple Silicon](https://github.com/boyce-ywr/farport/releases/download/v0.1.7/Farport-0.1.7-arm64.dmg) |
-| Intel | [Intel](https://github.com/boyce-ywr/farport/releases/download/v0.1.7/Farport-0.1.7-x86_64.dmg) |
-| Unsure, or need both architectures | [Universal](https://github.com/boyce-ywr/farport/releases/download/v0.1.7/Farport-0.1.7-universal.dmg) |
+| Apple Silicon, including M-series chips | [Apple Silicon](https://github.com/boyce-ywr/farport/releases/download/v0.1.8/Farport-0.1.8-arm64.dmg) |
+| Intel | [Intel](https://github.com/boyce-ywr/farport/releases/download/v0.1.8/Farport-0.1.8-x86_64.dmg) |
+| Unsure, or need both architectures | [Universal](https://github.com/boyce-ywr/farport/releases/download/v0.1.8/Farport-0.1.8-universal.dmg) |
 
 1. Open the DMG and drag **Farport.app** into **Applications**.
 2. Launch Farport from Applications. Save your work and quit the previous version before upgrading.
@@ -81,7 +83,9 @@ Normal SSH use does not require Swift, Docker, or GitHub CLI. To manage tmux ses
 
 ## FAQ
 
-**How do updates work?** Download and replace the app from Releases; GitHub CLI is not required for this. Version 0.1.7’s in-app update checker currently requires an authenticated GitHub CLI installation. It verifies the downloaded package and lets you decide when to install—it does not close your terminals automatically.
+**Can I configure right-clicks and attachments?** The default terminal menu provides copy, paste, and selection. Enable tmux menus in Settings; Shift-right-click always uses the normal menu. Attachment insertion has a global default and per-host override. Automatic insertion still checks the original target and never presses Enter.
+
+**How do updates work?** Download and replace the app from Releases; GitHub CLI is not required for this. Version 0.1.8’s in-app update checker currently requires an authenticated GitHub CLI installation. It verifies the downloaded package and lets you decide when to install—it does not close your terminals automatically.
 
 **Can I use Codex or Claude Code?** You can send images and files to the machine running your agent. The remote Codex + tmux image workflow has been tested; the full Claude Code image-recognition workflow has not been independently verified. Nested SSH, containers, and different users can have separate filesystems, so check that the receiving process can read the uploaded location.
 

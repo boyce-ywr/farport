@@ -130,6 +130,7 @@ struct WorkspaceRoot: View {
                 Button(L10n.text("连接普通终端")) { workspace.connect(host) }
                 Button(L10n.text("管理 tmux")) { workspace.selectedHostID = host.id; workspace.page = .tmux }
                 Button(L10n.text("浏览文件")) { workspace.browseFiles(.host(host.id)) }
+                Button(L10n.text("主机监控")) { workspace.selectedHostID = host.id; workspace.page = .monitor }
                 Divider()
                 Button(L10n.text("编辑主机")) { editingHost = host }
                 Button(L10n.text("清除此主机保存的凭据")) { store.forgetCredentials(host) }
@@ -175,6 +176,7 @@ struct WorkspaceRoot: View {
                 else { Text(L10n.text("请选择有效的文件来源")).foregroundStyle(.secondary).frame(maxWidth: .infinity, maxHeight: .infinity) }
             }
         case .transfers: TransferWorkspace(store: store)
+        case .monitor: HostMonitorWorkspace(workspace: workspace, store: store).id(workspace.host?.connectionKey ?? "local")
         case .tunnels:
             if let host = workspace.host { TunnelWorkspace(host: host, store: store).id(host) }
             else { EmptyWorkspace(symbol: "point.3.connected.trianglepath.dotted", title: L10n.text("安全访问远端服务"), detail: L10n.text("选择主机后创建 SSH 隧道。"), action: L10n.text("添加主机")) { editingHost = HostProfile() } }
@@ -195,6 +197,15 @@ struct WorkspaceRoot: View {
         guard !didPrepareQA, store.isTestWorkspace, let output = ProcessInfo.processInfo.environment["SWB_QA_OUTPUT"] else { return }
         didPrepareQA = true
         let screen = ProcessInfo.processInfo.environment["SWB_QA_SCREEN"] ?? "terminal"
+        if screen == "host-monitor" || screen == "local-monitor" {
+            if screen == "local-monitor" { workspace.selectedHostID = nil }
+            do { try await MonitoringChecks.run(workspace: workspace) }
+            catch { fputs("FAIL · \(error.localizedDescription)\n", stderr); exit(1) }
+        }
+        if screen == "terminal-preferences" {
+            do { try await TerminalPreferencesChecks.run(workspace: workspace) }
+            catch { fputs("FAIL · \(error.localizedDescription)\n", stderr); workspace.sessions.forEach { $0.close() }; exit(1) }
+        }
         if screen == "language-settings" {
             do { try await LanguageChecks.run(store: store, output: URL(fileURLWithPath: output)); NSApp.terminate(nil) }
             catch { fputs("FAIL · \(error.localizedDescription)\n", stderr); exit(1) }
@@ -339,7 +350,7 @@ struct WorkspaceRoot: View {
             window.setContentSize(NSSize(width: max(980, width), height: max(640, height)))
         }
         try? await Task.sleep(for: .seconds(ProcessInfo.processInfo.environment["SWB_QA_BATCH_COPY"] == "1" ? 35 : (ProcessInfo.processInfo.environment["SWB_QA_FILE_NAVIGATION"] == "1" ? 15 : 5)))
-        let expected: WorkspacePage = ["files", "local-files", "file-switching", "file-deletion", "html-preview", "pdf-preview", "file-sorting", "device-files", "file-browsing", "markdown-editor", "navigation-preview", "xml-preview", "media-preview", "java-preview", "python-preview"].contains(screen) ? .files : (screen == "tmux" ? .tmux : (["transfers", "transfer-workflow"].contains(screen) ? .transfers : .terminal))
+        let expected: WorkspacePage = ["host-monitor", "local-monitor"].contains(screen) ? .monitor : (["files", "local-files", "file-switching", "file-deletion", "html-preview", "pdf-preview", "file-sorting", "device-files", "file-browsing", "markdown-editor", "navigation-preview", "xml-preview", "media-preview", "java-preview", "python-preview"].contains(screen) ? .files : (screen == "tmux" ? .tmux : (["transfers", "transfer-workflow"].contains(screen) ? .transfers : .terminal)))
         guard workspace.page == expected else {
             fputs("截图验收失败：请求页面与实际工作区不一致。\n", stderr)
             exit(1)
@@ -391,7 +402,7 @@ struct WorkspaceRoot: View {
                 parentWindow?.endSheet(sheet); sheet.orderOut(nil)
             }
             if let hold = ProcessInfo.processInfo.environment["SWB_QA_HOLD"], let seconds = Double(hold) { try? await Task.sleep(for: .seconds(min(seconds, 300))) }
-            if ["local-terminal", "local-mixed", "file-switching", "attachment-check", "terminal-zoom", "pane-layout", "tab-management", "window-titlebar", "compact-workspace"].contains(screen) { workspace.sessions.forEach { $0.close() } }
+            if ["local-terminal", "local-mixed", "file-switching", "attachment-check", "terminal-zoom", "pane-layout", "tab-management", "window-titlebar", "compact-workspace", "terminal-preferences"].contains(screen) { workspace.sessions.forEach { $0.close() } }
             if editingHost != nil { editingHost = nil; try? await Task.sleep(for: .milliseconds(300)) }
             NSApp.terminate(nil)
         }

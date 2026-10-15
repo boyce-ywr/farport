@@ -37,6 +37,7 @@ final class TerminalAttachmentDraft: ObservableObject, Identifiable {
     let session: TerminalSession
     let payload: TerminalAttachmentPayload
     let identity: AttachmentDeliveryIdentity
+    let automaticallyInsert: Bool
     private weak var workspace: Workspace?
     @Published var directory = ""
     @Published var preparing = true
@@ -54,6 +55,7 @@ final class TerminalAttachmentDraft: ObservableObject, Identifiable {
     init(session: TerminalSession, payload: TerminalAttachmentPayload, workspace: Workspace) {
         self.session = session; self.payload = payload; self.workspace = workspace; transport = workspace.store.transport
         identity = workspace.attachmentIdentity(session)
+        automaticallyInsert = workspace.store.automaticallyInsertAttachments(for: session.host)
         prepare()
     }
     private func prepare() {
@@ -86,7 +88,8 @@ final class TerminalAttachmentDraft: ObservableObject, Identifiable {
                 }.value
                 guard !disposed else { return }
                 running = false; result = uploaded; status = L10n.text("目标机器的 \(uploaded.fileCount) 个文件回读校验通过")
-                if let workspace, workspace.attachmentIdentity(session) == identity, workspace.selectedTerminalID == session.id, workspace.page == .terminal {
+                if !automaticallyInsert { status += L10n.text("；已按设置等待手动插入。") }
+                else if let workspace, workspace.attachmentIdentity(session) == identity, workspace.selectedTerminalID == session.id, workspace.page == .terminal {
                     await insert(requireOriginalFocus: true)
                 } else { status += L10n.text("；会话或焦点已变化，请回原终端后点击插入。") }
             } catch { guard !disposed else { return }; running = false; failure = error.localizedDescription }

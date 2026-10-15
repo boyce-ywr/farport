@@ -10,6 +10,8 @@ macOS 14+ · Apple Silicon / Intel · [MIT 开源](LICENSE)
 
 ## 能做什么
 
+- **查看主机状态**：监控页显示 CPU、内存、进程、网卡速度、端口及系统/用户信息；只读、免安装，离开页面停止。Linux/macOS 已实测，Windows/Termux 的验证与权限限制见版本说明。
+
 - **管理终端**：连接 SSH 或打开本机 Shell，使用多标签、左右/上下分栏；拖动标签排序，折叠侧栏留出更多工作空间。
 - **接着上次的工作**：查看、创建和进入本机或远端 tmux 会话。关闭标签只断开连接，不结束 tmux 中的任务。
 - **在主机之间传文件**：本机与 SSH 主机、两台 SSH 主机之间，都能复制文件和文件夹，支持多选、断点续传和同名覆盖确认。
@@ -46,13 +48,13 @@ HTML 报告也能在浏览器打开。Farport 在 Mac 本机提供临时访问�
 
 ## 安装
 
-从 [GitHub Releases](https://github.com/boyce-ywr/farport/releases/latest) 下载 DMG。当前版本 **0.1.7**：
+从 [GitHub Releases](https://github.com/boyce-ywr/farport/releases/latest) 下载 DMG。当前版本 **0.1.8**：
 
 | 你的 Mac | 下载 |
 | --- | --- |
-| Apple Silicon（M 系列） | [Apple Silicon 版](https://github.com/boyce-ywr/farport/releases/download/v0.1.7/Farport-0.1.7-arm64.dmg) |
-| Intel 芯片 | [Intel 版](https://github.com/boyce-ywr/farport/releases/download/v0.1.7/Farport-0.1.7-x86_64.dmg) |
-| 不确定芯片，或需要两种架构 | [Universal 通用版](https://github.com/boyce-ywr/farport/releases/download/v0.1.7/Farport-0.1.7-universal.dmg) |
+| Apple Silicon（M 系列） | [Apple Silicon 版](https://github.com/boyce-ywr/farport/releases/download/v0.1.8/Farport-0.1.8-arm64.dmg) |
+| Intel 芯片 | [Intel 版](https://github.com/boyce-ywr/farport/releases/download/v0.1.8/Farport-0.1.8-x86_64.dmg) |
+| 不确定芯片，或需要两种架构 | [Universal 通用版](https://github.com/boyce-ywr/farport/releases/download/v0.1.8/Farport-0.1.8-universal.dmg) |
 
 1. 打开 DMG，将 **Farport.app** 拖入 **Applications（应用程序）**。
 2. 从“应用程序”打开 Farport。升级前请先保存工作并退出旧版。
@@ -81,7 +83,9 @@ HTML 报告也能在浏览器打开。Farport 在 Mac 本机提供临时访问�
 
 ## 几个常见问题
 
-**怎么更新？** 重新下载 Release 安装包即可，不需要 GitHub CLI。0.1.7 的应用内“检查更新”目前依赖已登录的 GitHub CLI；下载后会校验安装包，再由你确认安装，不会自动关闭终端。
+**终端右键和附件怎么设置？** 默认右键有复制、粘贴和选择操作；设置中可选 tmux 菜单，Shift＋右键临时返回普通菜单。附件默认安全自动插入，可全局关闭或对单个主机覆盖；目标发生变化时仍需确认，不自动回车。
+
+**怎么更新？** 重新下载 Release 安装包即可，不需要 GitHub CLI。0.1.8 的应用内“检查更新”目前依赖已登录的 GitHub CLI；下载后会校验安装包，再由你确认安装，不会自动关闭终端。
 
 **可以配合 Codex、Claude Code 使用吗？** 可以把图片和文件发送到它们所在的机器。远端 Codex + tmux 的图片流程已验证；Claude Code 的完整图片识别流程尚未单独验证。二次 SSH、容器或不同用户可能隔离文件系统，需要确认接收程序能访问上传位置。
 

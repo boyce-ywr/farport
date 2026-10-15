@@ -63,14 +63,22 @@ final class CapturedOutput: @unchecked Sendable {
 public enum ProcessRunner {
     public static func run(executable: String, arguments: [String], environment: [String: String]? = nil,
                            cancellation: CancellationFlag = CancellationFlag(), timeout: TimeInterval = 45,
-                           outputLimit: Int = 8 * 1024 * 1024) throws -> CommandResult {
+                           outputLimit: Int = 8 * 1024 * 1024, input: Data? = nil) throws -> CommandResult {
         try cancellation.check()
         let process = Process(); process.executableURL = URL(fileURLWithPath: executable); process.arguments = arguments
         if let environment { process.environment = environment }
         let output = Pipe(); let error = Pipe()
-        process.standardOutput = output; process.standardError = error; process.standardInput = FileHandle.nullDevice
+        let inputPipe = input == nil ? nil : Pipe()
+        process.standardOutput = output; process.standardError = error; process.standardInput = inputPipe ?? FileHandle.nullDevice as Any
         let captured = CapturedOutput(); let errors = CapturedOutput(); let readers = DispatchGroup()
         try process.run()
+        if let inputPipe, let input {
+            readers.enter()
+            DispatchQueue.global(qos: .utility).async {
+                defer { try? inputPipe.fileHandleForWriting.close(); readers.leave() }
+                try? inputPipe.fileHandleForWriting.write(contentsOf: input)
+            }
+        }
         for (pipe, destination, limit) in [(output, captured, outputLimit), (error, errors, 64 * 1024)] {
             readers.enter()
             DispatchQueue.global(qos: .utility).async {

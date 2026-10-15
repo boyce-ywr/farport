@@ -13,6 +13,7 @@ public struct HostProfile: Identifiable, Codable, Hashable, Sendable {
     public var lastSession: String
     public var color: String
     public var configFile: String? = nil
+    public var attachmentInsertion: AttachmentInsertionPolicy? = nil
 
     public init(id: UUID = UUID(), name: String = "", address: String = "", port: Int = 22,
                 username: String = "", group: String = "我的主机", identityFile: String = "",

@@ -75,6 +75,9 @@ struct HostEditor: View {
                     }
                     section(L10n.text("工作区偏好"), symbol: "rectangle.3.group") {
                         Toggle(L10n.text("连接时优先打开 tmux 工作区"), isOn: $profile.prefersTmux).font(.system(size: 12))
+                        Picker(L10n.text("附件插入"), selection: Binding(get: { profile.attachmentInsertion ?? .inherit }, set: { profile.attachmentInsertion = $0 == .inherit ? nil : $0 })) {
+                            ForEach(AttachmentInsertionPolicy.allCases, id: \.self) { policy in Text(policy.title).tag(policy) }
+                        }.font(.system(size: 12))
                         HostColorPicker(selection: $profile.color)
                     }
                 }.padding(24).frame(maxWidth: .infinity, alignment: .leading)

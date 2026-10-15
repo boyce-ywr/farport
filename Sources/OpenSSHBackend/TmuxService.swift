@@ -58,6 +58,12 @@ public struct TmuxService: Sendable {
     }
     public func kill(session: String) throws { _ = try execute("kill-session -t \(RemotePath.quote(session))").checked() }
     public func createWindow(session: String) throws { _ = try execute("new-window -t \(RemotePath.quote(session))").checked() }
+    public func mouseEnabled(session: String) throws -> Bool {
+        try execute("show-options -v -t \(RemotePath.quote(session)) mouse").checked().text.trimmingCharacters(in: .whitespacesAndNewlines) == "on"
+    }
+    public func enableMouse(session: String) throws {
+        _ = try execute("set-option -t \(RemotePath.quote(session)) mouse on").checked()
+    }
     public func split(pane: String) throws { _ = try execute("split-window -h -t \(RemotePath.quote(pane))").checked() }
     public func select(pane: TmuxPane) throws {
         _ = try execute("select-window -t \(RemotePath.quote(pane.windowID)) \\; select-pane -t \(RemotePath.quote(pane.id))").checked()

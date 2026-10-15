@@ -4,6 +4,17 @@ import SwiftTerm
 import WorkbenchCore
 import OpenSSHBackend
 
+private final class TmuxRightMouseEvent: NSEvent {
+    let original: NSEvent
+    init(_ original: NSEvent) { self.original = original; super.init() }
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
+    override var buttonNumber: Int { 2 }
+    override var type: NSEvent.EventType { original.type }
+    override var locationInWindow: NSPoint { original.locationInWindow }
+    override var modifierFlags: NSEvent.ModifierFlags { original.modifierFlags }
+    override var clickCount: Int { original.clickCount }
+}
+
 final class SafeTerminalView: LocalProcessTerminalView {
     private var proxy: TerminalSecurityProxy!
     var attachmentStagingRoot: URL?
@@ -13,6 +24,10 @@ final class SafeTerminalView: LocalProcessTerminalView {
     var onFontScale: ((Double, Bool) -> Void)?
     var onFocus: (() -> Void)?
     var shouldRequestFocus = false
+    var onContextFocus: (() -> Void)?
+    var prefersTmuxMenu: (() -> Bool)?
+    var prepareTmuxMenu: (() -> Void)?
+    private var forwardedRightClick = false
     private var magnificationBase: Double?
     private var accumulatedMagnification: Double = 0
     override init(frame: CGRect) {
@@ -22,9 +37,47 @@ final class SafeTerminalView: LocalProcessTerminalView {
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
     override func mouseDown(with event: NSEvent) {
+        if event.modifierFlags.contains(.control) { rightMouseDown(with: event); return }
         super.mouseDown(with: event)
         onFocus?()
     }
+    override func rightMouseDown(with event: NSEvent) {
+        window?.makeFirstResponder(self); onContextFocus?()
+        forwardedRightClick = false
+        if prefersTmuxMenu?() == true && !event.modifierFlags.contains(.shift) && !event.modifierFlags.contains(.control) {
+            if allowMouseReporting && getTerminal().mouseMode != .off {
+                forwardedRightClick = true; super.mouseDown(with: TmuxRightMouseEvent(event))
+                return
+            }
+            prepareTmuxMenu?()
+        }
+        NSMenu.popUpContextMenu(ordinaryContextMenu(), with: event, for: self)
+    }
+    override func rightMouseUp(with event: NSEvent) {
+        if forwardedRightClick { forwardedRightClick = false; super.mouseUp(with: TmuxRightMouseEvent(event)) }
+    }
+    override func mouseUp(with event: NSEvent) {
+        if !event.modifierFlags.contains(.control) { super.mouseUp(with: event) }
+    }
+    override func rightMouseDragged(with event: NSEvent) {
+        if forwardedRightClick { super.mouseDragged(with: TmuxRightMouseEvent(event)) }
+    }
+    func ordinaryContextMenu() -> NSMenu {
+        let menu = NSMenu(); menu.autoenablesItems = false
+        func item(_ title: String, _ action: Selector, enabled: Bool = true) {
+            let entry = NSMenuItem(title: title, action: action, keyEquivalent: ""); entry.target = self; entry.isEnabled = enabled; menu.addItem(entry)
+        }
+        item(L10n.text("复制"), #selector(contextCopy), enabled: selectionActive)
+        item(L10n.text("粘贴"), #selector(contextPaste), enabled: process.running && NSPasteboard.general.availableType(from: [.string, .fileURL, .png, .tiff]) != nil)
+        menu.addItem(.separator())
+        item(L10n.text("全选"), #selector(contextSelectAll))
+        item(L10n.text("清除选择"), #selector(contextSelectNone), enabled: selectionActive)
+        return menu
+    }
+    @objc private func contextCopy() { copy(self) }
+    @objc private func contextPaste() { paste(self) }
+    @objc private func contextSelectAll() { selectAll() }
+    @objc private func contextSelectNone() { selectNone() }
     override func magnify(with event: NSEvent) { applyMagnification(Double(event.magnification), phase: event.phase) }
     func applyMagnification(_ delta: Double, phase: NSEvent.Phase) {
         guard delta.isFinite else { return }
@@ -117,6 +170,7 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable, LocalProc
     private var disposed = false
     private var pendingReconnect = false
     private var probe = CancellationFlag()
+    private var preparingTmuxMenu = false
     private let transport: SSHTransport
     var isLocal: Bool { host == nil }
     var displayName: String { host?.name ?? L10n.text("此 Mac") }
@@ -166,6 +220,23 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable, LocalProc
         probe.cancel(); disposed = false
         if terminal.process.running { pendingReconnect = true; terminal.terminate() }
         else { started = false; start() }
+    }
+    func enableTmuxMenuIfNeeded() {
+        guard let tmuxID, connected, !preparingTmuxMenu else { return }
+        preparingTmuxMenu = true
+        let originalConnection = connectionID; let service = TmuxService(transport: transport, host: host)
+        Task {
+            defer { preparingTmuxMenu = false }
+            do {
+                let enabled = try await Task.detached { try service.mouseEnabled(session: tmuxID) }.value
+                guard connected, connectionID == originalConnection, terminal.prefersTmuxMenu?() == true else { return }
+                if !enabled {
+                    guard confirm(L10n.text("为此 tmux 会话启用鼠标？"), L10n.text("只调整当前会话，不修改全局配置文件；共享这个会话的其他客户端也会受影响。启用后请再次右键。")) else { return }
+                    guard connected, connectionID == originalConnection, terminal.prefersTmuxMenu?() == true else { return }
+                    try await Task.detached { try service.enableMouse(session: tmuxID) }.value
+                }
+            } catch { AppStore.shared.errorMessage = error.localizedDescription }
+        }
     }
     func close() { disposed = true; pendingReconnect = false; probe.cancel(); terminal.terminate(); connected = false; state = isLocal ? L10n.text("已结束") : L10n.text("已断开") }
     nonisolated func sizeChanged(source: LocalProcessTerminalView, newCols: Int, newRows: Int) { DispatchQueue.main.async { [weak self] in self?.dimensions = "\(newCols) × \(newRows)" } }
@@ -281,6 +352,12 @@ final class Workspace: ObservableObject {
         let next = (hostTerminalCounts[session.host?.id] ?? 0) + 1
         hostTerminalCounts[session.host?.id] = next; terminalNumbers[session.id] = next
         sessions.append(session)
+        session.terminal.onContextFocus = { [weak self, weak session] in
+            guard let self, let session, layout.selectedTab?.terminals.contains(session.id) == true else { return }
+            if selectedTerminalID != session.id { selectTerminal(session) }
+        }
+        session.terminal.prefersTmuxMenu = { [weak self, weak session] in self?.store.useTmuxContextMenu == true && session?.tmuxID != nil && session?.connected == true }
+        session.terminal.prepareTmuxMenu = { [weak session] in session?.enableTmuxMenuIfNeeded() }
         fileTerminalOrder.append(session.id)
         session.terminal.onFocus = { [weak self, weak session] in
             guard let self, let session, page == .terminal,
@@ -448,9 +525,9 @@ final class Workspace: ObservableObject {
 }
 
 enum WorkspacePage: String, CaseIterable {
-    case terminal = "终端", tmux = "tmux 会话", files = "文件", transfers = "传输", tunnels = "隧道"
+    case terminal = "终端", tmux = "tmux 会话", files = "文件", transfers = "传输", tunnels = "隧道", monitor = "监控"
     var title: String { L10n.key(rawValue) }
     var symbol: String {
-        switch self { case .terminal: return "terminal"; case .tmux: return "square.stack.3d.up"; case .files: return "folder"; case .transfers: return "arrow.left.arrow.right"; case .tunnels: return "point.3.connected.trianglepath.dotted" }
+        switch self { case .terminal: return "terminal"; case .tmux: return "square.stack.3d.up"; case .files: return "folder"; case .transfers: return "arrow.left.arrow.right"; case .tunnels: return "point.3.connected.trianglepath.dotted"; case .monitor: return "waveform.path.ecg" }
     }
 }

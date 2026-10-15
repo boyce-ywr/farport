@@ -17,7 +17,7 @@ let package = Package(
     ],
     targets: [
         .target(name: "WorkbenchCore", resources: [.copy("Resources/en.json")]),
-        .target(name: "OpenSSHBackend", dependencies: ["WorkbenchCore"]),
+        .target(name: "OpenSSHBackend", dependencies: ["WorkbenchCore"], resources: [.copy("Resources")]),
         .executableTarget(name: "WorkbenchApp", dependencies: ["WorkbenchCore", "OpenSSHBackend", "SwiftTerm"]),
         .executableTarget(name: "WorkbenchAskpass", dependencies: ["WorkbenchCore"]),
         .executableTarget(name: "WorkbenchCheck", dependencies: ["WorkbenchCore", "OpenSSHBackend"]),

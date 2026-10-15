@@ -108,6 +108,10 @@ struct PreferencesView: View {
                 Slider(value: $store.fontSize, in: 10...28, step: 1) { Text(L10n.text("字号 \(Int(store.fontSize))")) }
             }
             Section(L10n.text("隐私与安全")) {
+                Toggle(L10n.text("附件上传后自动插入终端"), isOn: $store.automaticallyInsertAttachments)
+                Text(L10n.text("主机可单独覆盖。仅影响新上传；目标变化时仍需确认，永不自动回车。")).font(.caption).foregroundStyle(.secondary)
+                Toggle(L10n.text("tmux 终端右键使用 tmux 菜单"), isOn: $store.useTmuxContextMenu)
+                Text(L10n.text("默认使用复制、粘贴等普通菜单。Shift＋右键临时使用普通菜单；仅识别应用附着的 tmux。")).font(.caption).foregroundStyle(.secondary)
                 Label(L10n.text("配置和传输记录仅保存在本机"), systemImage: "internaldrive")
                 Label(L10n.text("凭据使用 macOS 钥匙串；不包含在主机配置中"), systemImage: "key")
                 Label(L10n.text("拒绝远端读取剪贴板；多行粘贴需要确认"), systemImage: "lock.shield")
@@ -117,7 +121,7 @@ struct PreferencesView: View {
                 Toggle(L10n.text("启动时检查 GitHub Release"), isOn: $updater.automaticallyCheck)
                 Button(L10n.text("检查更新…")) { openWindow(id: "updates"); updater.check() }
             }
-        }.formStyle(.grouped).padding().frame(width: 560, height: 570)
+        }.formStyle(.grouped).padding().frame(width: 580, height: 680)
             .onChange(of: store.appearance) { _, _ in store.savePreferences() }
             .onChange(of: store.fontSize) { _, _ in store.savePreferences() }
             .onChange(of: store.fontName) { _, _ in store.savePreferences() }

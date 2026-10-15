@@ -17,6 +17,8 @@ func rejects(_ message: String, _ operation: () throws -> Void) throws {
 
 do {
     if CommandLine.arguments.contains("--english-check") { try checkEnglishRuntime(); exit(0) }
+    try checkHostMonitoring()
+    if let index = CommandLine.arguments.firstIndex(of: "--monitor-check") { try checkLiveMonitor(arguments: Array(CommandLine.arguments.dropFirst(index + 1))) }
     try checkNavigationAndPreview()
     try checkCodeHighlighting()
     try checkSFTPNames()

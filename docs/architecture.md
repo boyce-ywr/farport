@@ -2,6 +2,8 @@
 
 ## 当前结构
 
+0.1.8 的 `HostMonitorService` 通过现有 SSH 通道 stdin 发送只读系统脚本，`MonitorSnapshot` 解析标准化行并计算差分，`HostMonitorModel` 负责页面生命周期、取消和有限内存曲线；采集脚本不写远端文件。平台差异留在采集器，UI 明确显示权限/能力限制。终端菜单的鼠标转发和附件插入策略是独立偏好，不改变 Shell 输入协议或全局 tmux 配置。
+
 ```text
 WorkbenchApp（SwiftUI / AppKit）
   ├─ TerminalSession → SwiftTerm / PTY → 系统 OpenSSH 或本机登录 Shell

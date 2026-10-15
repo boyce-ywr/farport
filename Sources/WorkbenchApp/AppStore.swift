@@ -15,6 +15,16 @@ final class AppStore: ObservableObject {
     @Published var errorMessage: String?
     @Published var tunnels: [TunnelSession] = []
     @Published var fileClipboard: [FileEndpoint] = []
+    @Published var automaticallyInsertAttachments = UserDefaults.standard.object(forKey: "automaticallyInsertAttachments") as? Bool ?? true {
+        didSet { UserDefaults.standard.set(automaticallyInsertAttachments, forKey: "automaticallyInsertAttachments") }
+    }
+    @Published var useTmuxContextMenu = UserDefaults.standard.bool(forKey: "useTmuxContextMenu") {
+        didSet { UserDefaults.standard.set(useTmuxContextMenu, forKey: "useTmuxContextMenu") }
+    }
+    func automaticallyInsertAttachments(for host: HostProfile?) -> Bool {
+        let current = host.flatMap { item in hosts.first(where: { $0.id == item.id }) ?? item }
+        return (current?.attachmentInsertion ?? .inherit).automatic(defaultValue: automaticallyInsertAttachments)
+    }
     @Published var fontSize: Double = UserDefaults.standard.double(forKey: "fontSize") == 0 ? 13 : UserDefaults.standard.double(forKey: "fontSize")
     @Published var fontName: String = UserDefaults.standard.string(forKey: "fontName") ?? "SF Mono"
     @Published var appearance: String = UserDefaults.standard.string(forKey: "appearance") ?? "system"

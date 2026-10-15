@@ -18,7 +18,7 @@ final class UpdateController: ObservableObject {
     }
     private var cancellation = CancellationFlag()
     private var generation = UUID()
-    var currentVersion: String { Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.1.7" }
+    var currentVersion: String { Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.1.8" }
     var architecture: String {
         #if arch(arm64)
         return "arm64"

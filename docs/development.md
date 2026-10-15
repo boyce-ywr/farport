@@ -33,6 +33,7 @@ bash scripts/check.sh --integration   # Docker 隔离 SSH 环境与集成检查
 bash scripts/check-workbench-ux.sh    # 实际界面回归，需要先准备隔离主机
 bash scripts/check-attachments.sh    # 附件上传、回读和 tmux
 bash scripts/check-file-preview.sh   # 中英文、目录历史、源码高亮与媒体播放
+bash scripts/check-host-monitor.sh  # 本机/Linux监控、菜单及附件策略
 ```
 
 完整范围和仍未覆盖的项目见 [验证记录](validation.md)。不要把本机 Apple Silicon 的验证结果当成 Intel 或所有 macOS 版本的实测。
