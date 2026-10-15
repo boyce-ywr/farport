@@ -74,6 +74,21 @@ final class HostMonitorModel: ObservableObject {
     }
 }
 
+struct HostMonitorStatusRow: View {
+    let busy: Bool
+    let date: Date?
+    var body: some View {
+        HStack {
+            ZStack {
+                if busy { ProgressView().controlSize(.small) }
+            }.frame(width: 16, height: 16)
+            Text(L10n.text("只读 · 不安装组件 · 不自动提权 · 离开页面停止采集")).font(.caption).foregroundStyle(.secondary)
+            Spacer()
+            if let date { Text(date, style: .time).font(.caption.monospaced()).foregroundStyle(.secondary) }
+        }
+    }
+}
+
 struct HostMonitorWorkspace: View {
     @ObservedObject var workspace: Workspace
     @ObservedObject var store: AppStore
@@ -104,12 +119,7 @@ struct HostMonitorWorkspace: View {
                 Text(error).font(.caption).foregroundStyle(.orange).textSelection(.enabled)
                 if model.snapshot != nil { Text(L10n.text("当前显示上次成功采样，不是实时数据。")).font(.caption).foregroundStyle(.orange) }
             }
-            HStack {
-                if model.busy { ProgressView().controlSize(.small) }
-                Text(L10n.text("只读 · 不安装组件 · 不自动提权 · 离开页面停止采集")).font(.caption).foregroundStyle(.secondary)
-                Spacer()
-                if let snapshot = model.snapshot { Text(snapshot.date, style: .time).font(.caption.monospaced()).foregroundStyle(.secondary) }
-            }
+            HostMonitorStatusRow(busy: model.busy, date: model.snapshot?.date)
             Picker("", selection: $model.section) {
                 Text(L10n.text("概览")).tag("overview")
                 Text(L10n.text("进程")).tag("processes")

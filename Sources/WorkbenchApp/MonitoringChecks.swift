@@ -1,11 +1,13 @@
 import AppKit
 import Foundation
+import SwiftUI
 import WorkbenchCore
 import OpenSSHBackend
 
 @MainActor
 enum MonitoringChecks {
     static func run(workspace: Workspace) async throws {
+        try statusRowLayout()
         let service = HostMonitorService(transport: workspace.store.transport, host: workspace.host)
         if let host = workspace.host {
             guard host.address == "127.0.0.1", [22281, 22282].contains(host.port) else { throw WorkbenchError.message("只测试隔离监控主机") }
@@ -32,5 +34,22 @@ enum MonitoringChecks {
         catch WorkbenchError.cancelled {}
         workspace.page = .monitor
         print("PASS · \(platform.rawValue) 真实只读采集：\(second.processes.count) 进程、\(second.networks.count) 网卡、\(second.disks.count) 挂载点；用户信息、暂停和取消检查")
+    }
+    private static func statusRowLayout() throws {
+        for width in [CGFloat(500), 900] {
+            for date in [nil, Date(timeIntervalSince1970: 1_800_000_000)] as [Date?] {
+                let hosting = NSHostingView(rootView: HostMonitorStatusRow(busy: false, date: date).frame(width: width))
+                let idleHeight = hosting.fittingSize.height
+                for cycle in 0..<20 {
+                    let busy = cycle.isMultiple(of: 2)
+                    hosting.rootView = HostMonitorStatusRow(busy: busy, date: date).frame(width: width)
+                    let height = hosting.fittingSize.height
+                    guard abs(height - idleHeight) < 0.5 else {
+                        throw WorkbenchError.message("监控 loading 改变行高：宽度 \(width)，空闲 \(idleHeight)，loading=\(busy) 时 \(height)")
+                    }
+                }
+            }
+        }
+        print("PASS · 监控状态行首次采集/已有数据、两种宽度、80 次 loading 切换均保持行高")
     }
 }
