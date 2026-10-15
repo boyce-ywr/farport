@@ -7,9 +7,9 @@ public struct SFTPFailure: LocalizedError {
     public let message: String
     public var errorDescription: String? {
         switch code {
-        case 2: return "文件或目录不存在：\(message)"
-        case 3: return "远端拒绝访问，请检查权限：\(message)"
-        case 4: return "远端文件操作失败（可能是磁盘已满、文件已存在或权限不足）：\(message)"
+        case 2: return L10n.text("文件或目录不存在：\(message)")
+        case 3: return L10n.text("远端拒绝访问，请检查权限：\(message)")
+        case 4: return L10n.text("远端文件操作失败（可能是磁盘已满、文件已存在或权限不足）：\(message)")
         default: return "SFTP \(code)：\(message)"
         }
     }
@@ -48,7 +48,7 @@ public final class SFTPClient: @unchecked Sendable {
         do {
             var packet = PacketWriter(); packet.byte(1); packet.uint32(3); try send(packet)
             var response = PacketReader(try receive())
-            guard try response.byte() == 2, try response.uint32() == 3 else { throw WorkbenchError.protocolViolation("服务器未协商 SFTP v3") }
+            guard try response.byte() == 2, try response.uint32() == 3 else { throw WorkbenchError.protocolViolation(L10n.text("服务器未协商 SFTP v3")) }
             while response.remaining > 0 { extensions.insert(try response.string()); _ = try response.string() }
         } catch { close(); throw error }
     }
@@ -64,17 +64,17 @@ public final class SFTPClient: @unchecked Sendable {
     private func wait(_ descriptor: Int32, events: Int16, deadline: Date) throws {
         while true {
             try cancellation.check()
-            if Date() > deadline { throw WorkbenchError.message("SFTP 响应超时；可以在恢复网络后重试或续传。") }
+            if Date() > deadline { throw WorkbenchError.message(L10n.text("SFTP 响应超时；可以在恢复网络后重试或续传。")) }
             var pollDescriptor = pollfd(fd: descriptor, events: events, revents: 0)
             let result = poll(&pollDescriptor, 1, 250)
             if result > 0 { return }
-            if result < 0 && errno != EINTR { throw WorkbenchError.message("SFTP 连接不可用。") }
+            if result < 0 && errno != EINTR { throw WorkbenchError.message(L10n.text("SFTP 连接不可用。")) }
         }
     }
     private func connectionError() -> Error {
         _ = errorReader.wait(timeout: .now() + 0.1)
         let message = String(decoding: errors.data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
-        return WorkbenchError.message(message.isEmpty ? "SSH 连接已关闭，请重新连接。" : message)
+        return WorkbenchError.message(message.isEmpty ? L10n.text("SSH 连接已关闭，请重新连接。") : message)
     }
     private func send(_ packet: PacketWriter) throws {
         let data = packet.framed; let descriptor = input.fileHandleForWriting.fileDescriptor
@@ -106,7 +106,7 @@ public final class SFTPClient: @unchecked Sendable {
     }
     private func receive() throws -> Data {
         var header = PacketReader(try readExactly(4)); let length = try header.uint32()
-        guard length >= 1, length <= 8 * 1024 * 1024 else { throw WorkbenchError.protocolViolation("响应包长度非法") }
+        guard length >= 1, length <= 8 * 1024 * 1024 else { throw WorkbenchError.protocolViolation(L10n.text("响应包长度非法")) }
         return try readExactly(Int(length))
     }
     private func enqueue(_ type: UInt8, _ payload: (inout PacketWriter) -> Void) throws -> UInt32 {
@@ -116,7 +116,7 @@ public final class SFTPClient: @unchecked Sendable {
     }
     private func response(_ expected: UInt32) throws -> (UInt8, PacketReader) {
         var reader = PacketReader(try receive()); let type = try reader.byte()
-        guard try reader.uint32() == expected else { throw WorkbenchError.protocolViolation("请求序号不匹配") }
+        guard try reader.uint32() == expected else { throw WorkbenchError.protocolViolation(L10n.text("请求序号不匹配")) }
         return (type, reader)
     }
     private func status(_ reader: inout PacketReader, allowEOF: Bool = false) throws -> Bool {
@@ -128,18 +128,18 @@ public final class SFTPClient: @unchecked Sendable {
     private func request(_ type: UInt8, expecting expected: UInt8, _ payload: (inout PacketWriter) -> Void) throws -> PacketReader {
         let identifier = try enqueue(type, payload); var (responseType, reader) = try response(identifier)
         if responseType == 101 { _ = try status(&reader) }
-        guard responseType == expected else { throw WorkbenchError.protocolViolation("响应类型 \(responseType) 不符合预期 \(expected)") }
+        guard responseType == expected else { throw WorkbenchError.protocolViolation(L10n.text("响应类型 \(responseType) 不符合预期 \(expected)")) }
         return reader
     }
     private func operation(_ type: UInt8, _ payload: (inout PacketWriter) -> Void) throws {
         lock.lock(); defer { lock.unlock() }
         let identifier = try enqueue(type, payload); var (kind, reader) = try response(identifier)
-        guard kind == 101 else { throw WorkbenchError.protocolViolation("缺少操作结果") }; _ = try status(&reader)
+        guard kind == 101 else { throw WorkbenchError.protocolViolation(L10n.text("缺少操作结果")) }; _ = try status(&reader)
     }
     public func realpath(_ path: String = ".") throws -> String {
         lock.lock(); defer { lock.unlock() }
         var reader = try request(16, expecting: 104) { $0.string(path) }
-        guard try reader.uint32() >= 1 else { throw WorkbenchError.protocolViolation("路径解析结果为空") }
+        guard try reader.uint32() >= 1 else { throw WorkbenchError.protocolViolation(L10n.text("路径解析结果为空")) }
         return try reader.string()
     }
     public func stat(_ path: String, followLinks: Bool = false) throws -> FileAttributes {
@@ -152,7 +152,7 @@ public final class SFTPClient: @unchecked Sendable {
     }
     public func list(_ path: String) throws -> [RemoteFile] {
         let result = try listForBrowsing(path)
-        guard result.skipped == 0 else { throw WorkbenchError.message("目录中有 \(result.skipped) 个非 UTF-8 或含控制字符的文件名。为避免漏传或误删，已停止递归操作；请先在目标主机处理异常文件名。") }
+        guard result.skipped == 0 else { throw WorkbenchError.message(L10n.text("目录中有 \(result.skipped) 个非 UTF-8 或含控制字符的文件名。为避免漏传或误删，已停止递归操作；请先在目标主机处理异常文件名。")) }
         return result.files
     }
     public func listForBrowsing(_ path: String) throws -> (files: [RemoteFile], skipped: Int) {
@@ -163,16 +163,16 @@ public final class SFTPClient: @unchecked Sendable {
         var skipped = 0
         while true {
             let identifier = try enqueue(12) { $0.bytes(handle) }; var (kind, reader) = try response(identifier)
-            if kind == 101 { if try !status(&reader, allowEOF: true) { break }; throw WorkbenchError.protocolViolation("目录返回了空状态") }
-            guard kind == 104 else { throw WorkbenchError.protocolViolation("目录响应格式错误") }
+            if kind == 101 { if try !status(&reader, allowEOF: true) { break }; throw WorkbenchError.protocolViolation(L10n.text("目录返回了空状态")) }
+            guard kind == 104 else { throw WorkbenchError.protocolViolation(L10n.text("目录响应格式错误")) }
             let count = try reader.uint32()
-            guard count <= 100_000 else { throw WorkbenchError.protocolViolation("单批目录条目过多") }
+            guard count <= 100_000 else { throw WorkbenchError.protocolViolation(L10n.text("单批目录条目过多")) }
             for _ in 0..<count {
                 guard let file = try reader.directoryEntry(parent: path) else { skipped += 1; continue }
                 if file.name == "." || file.name == ".." { continue }
                 files.append(file)
             }
-            guard files.count + skipped <= 1_000_000 else { throw WorkbenchError.message("目录超过一百万项，请按子目录浏览。") }
+            guard files.count + skipped <= 1_000_000 else { throw WorkbenchError.message(L10n.text("目录超过一百万项，请按子目录浏览。")) }
         }
         return (files.sorted { left, right in
             if left.attributes.isDirectory != right.attributes.isDirectory { return left.attributes.isDirectory }
@@ -202,9 +202,9 @@ public final class SFTPClient: @unchecked Sendable {
             do {
                 var (kind, reader) = try response(identifier)
                 if kind == 101 { _ = try status(&reader, allowEOF: true); ended = true; continue }
-                guard kind == 103 else { throw WorkbenchError.protocolViolation("读取响应格式错误") }
+                guard kind == 103 else { throw WorkbenchError.protocolViolation(L10n.text("读取响应格式错误")) }
                 let chunk = try reader.bytes()
-                guard chunk.count <= requestedLength else { throw WorkbenchError.protocolViolation("读取返回了过多数据") }
+                guard chunk.count <= requestedLength else { throw WorkbenchError.protocolViolation(L10n.text("读取返回了过多数据")) }
                 if !ended { data.append(chunk) }
                 if chunk.count < requestedLength { ended = true }
             } catch { if firstError == nil { firstError = error } }
@@ -222,7 +222,7 @@ public final class SFTPClient: @unchecked Sendable {
         }
         var firstError: Error?
         for identifier in requests {
-            do { var (kind, reader) = try response(identifier); guard kind == 101 else { throw WorkbenchError.protocolViolation("写入响应格式错误") }; _ = try status(&reader) }
+            do { var (kind, reader) = try response(identifier); guard kind == 101 else { throw WorkbenchError.protocolViolation(L10n.text("写入响应格式错误")) }; _ = try status(&reader) }
             catch { if firstError == nil { firstError = error } }
         }
         if let firstError { throw firstError }
@@ -231,7 +231,7 @@ public final class SFTPClient: @unchecked Sendable {
     public func remove(_ path: String, directory: Bool = false) throws { try operation(directory ? 15 : 13) { $0.string(path) } }
     public func rename(_ source: String, to destination: String, overwrite: Bool = false) throws {
         if overwrite {
-            guard extensions.contains("posix-rename@openssh.com") else { throw WorkbenchError.message("此服务器不支持原子覆盖；请另存为新名称。") }
+            guard extensions.contains("posix-rename@openssh.com") else { throw WorkbenchError.message(L10n.text("此服务器不支持原子覆盖；请另存为新名称。")) }
             try operation(200) { $0.string("posix-rename@openssh.com"); $0.string(source); $0.string(destination) }
         } else { try operation(18) { $0.string(source); $0.string(destination) } }
     }
@@ -241,8 +241,8 @@ public final class SFTPClient: @unchecked Sendable {
         if extensions.contains("fsync@openssh.com") { try operation(200) { $0.string("fsync@openssh.com"); $0.bytes(handle) } }
     }
     public func preview(_ path: String, offset: UInt64 = 0, limit: Int = 512 * 1024) throws -> Data {
-        guard limit >= 0, limit <= 8 * 1024 * 1024 else { throw WorkbenchError.message("预览长度超限。") }
-        guard try stat(path, followLinks: true).isRegularFile else { throw WorkbenchError.message("只预览普通文件，不读取设备、管道或套接字。") }
+        guard limit >= 0, limit <= 8 * 1024 * 1024 else { throw WorkbenchError.message(L10n.text("预览长度超限。")) }
+        guard try stat(path, followLinks: true).isRegularFile else { throw WorkbenchError.message(L10n.text("只预览普通文件，不读取设备、管道或套接字。")) }
         let handle = try openRead(path); defer { try? closeHandle(handle) }
         var data = Data()
         while data.count < limit {
@@ -253,21 +253,21 @@ public final class SFTPClient: @unchecked Sendable {
     }
     public func saveText(_ path: String, data: Data, expected: FileAttributes, original: Data? = nil) throws {
         let current = try stat(path)
-        guard current.size == expected.size, current.modified == expected.modified, !current.isSymbolicLink else { throw WorkbenchError.message("文件已在远端发生变化，或它是符号链接。请重新读取后再保存。") }
-        if let original, try preview(path, limit: original.count + 1) != original { throw WorkbenchError.message("文件内容已在远端发生变化，未覆盖。") }
+        guard current.size == expected.size, current.modified == expected.modified, !current.isSymbolicLink else { throw WorkbenchError.message(L10n.text("文件已在远端发生变化，或它是符号链接。请重新读取后再保存。")) }
+        if let original, try preview(path, limit: original.count + 1) != original { throw WorkbenchError.message(L10n.text("文件内容已在远端发生变化，未覆盖。")) }
         let temporary = path + ".swb-edit-" + UUID().uuidString
         let handle = try openWrite(temporary, exclusive: true)
         do {
             try write(handle, offset: 0, data: data); try sync(handle); try closeHandle(handle)
             try chmod(temporary, permissions: expected.permissions)
             let beforeRename = try stat(path)
-            guard beforeRename.size == expected.size, beforeRename.modified == expected.modified else { throw WorkbenchError.message("保存期间远端文件发生变化，未覆盖。") }
-            if let original, try preview(path, limit: original.count + 1) != original { throw WorkbenchError.message("保存期间远端内容发生变化，未覆盖。") }
+            guard beforeRename.size == expected.size, beforeRename.modified == expected.modified else { throw WorkbenchError.message(L10n.text("保存期间远端文件发生变化，未覆盖。")) }
+            if let original, try preview(path, limit: original.count + 1) != original { throw WorkbenchError.message(L10n.text("保存期间远端内容发生变化，未覆盖。")) }
             try rename(temporary, to: path, overwrite: true)
         } catch { try? closeHandle(handle); try? remove(temporary); throw error }
     }
     public func removeRecursively(_ path: String, depth: Int = 0) throws {
-        guard path != "/", !path.isEmpty, depth < 128 else { throw WorkbenchError.message("拒绝删除根目录或过深的目录树。") }
+        guard path != "/", !path.isEmpty, depth < 128 else { throw WorkbenchError.message(L10n.text("拒绝删除根目录或过深的目录树。")) }
         let attributes = try stat(path)
         if attributes.isDirectory {
             for entry in try list(path) { try removeRecursively(entry.path, depth: depth + 1) }

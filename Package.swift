@@ -16,10 +16,10 @@ let package = Package(
         .package(url: "https://github.com/migueldeicaza/SwiftTerm.git", exact: "1.20.0")
     ],
     targets: [
-        .target(name: "WorkbenchCore"),
+        .target(name: "WorkbenchCore", resources: [.copy("Resources/en.json")]),
         .target(name: "OpenSSHBackend", dependencies: ["WorkbenchCore"]),
         .executableTarget(name: "WorkbenchApp", dependencies: ["WorkbenchCore", "OpenSSHBackend", "SwiftTerm"]),
-        .executableTarget(name: "WorkbenchAskpass"),
+        .executableTarget(name: "WorkbenchAskpass", dependencies: ["WorkbenchCore"]),
         .executableTarget(name: "WorkbenchCheck", dependencies: ["WorkbenchCore", "OpenSSHBackend"]),
         .executableTarget(name: "WorkbenchAttachmentCheck", dependencies: ["WorkbenchCore", "OpenSSHBackend"]),
         .executableTarget(name: "WorkbenchCoreTests", dependencies: ["WorkbenchCore", "OpenSSHBackend"], path: "Tests/WorkbenchCoreTests")

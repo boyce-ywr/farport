@@ -20,16 +20,16 @@ public struct LocalShellConfiguration: Sendable {
         guard shell.hasPrefix("/"), !shell.contains("\0"),
               FileManager.default.fileExists(atPath: shell, isDirectory: &isDirectory), !isDirectory.boolValue,
               FileManager.default.isExecutableFile(atPath: shell) else {
-            throw WorkbenchError.message("本机登录 Shell 不可执行：\(shell)。请检查系统用户的登录 Shell 设置。")
+            throw WorkbenchError.message(L10n.text("本机登录 Shell 不可执行：\(shell)。请检查系统用户的登录 Shell 设置。"))
         }
         guard home.isFileURL, FileManager.default.fileExists(atPath: home.path, isDirectory: &isDirectory), isDirectory.boolValue else {
-            throw WorkbenchError.message("本机用户主目录不可用。")
+            throw WorkbenchError.message(L10n.text("本机用户主目录不可用。"))
         }
         executable = shell
         executableName = "-" + (shell as NSString).lastPathComponent
         directory = home.path
         var environment = inheritedEnvironment
-        for key in environment.keys where key.hasPrefix("SWB_") || ["SSH_ASKPASS", "SSH_ASKPASS_REQUIRE", "SSH_CONNECTION", "SSH_CLIENT", "SSH_TTY"].contains(key) {
+        for key in environment.keys where key.hasPrefix("SWB_") || ["FARPORT_LANGUAGE", "SSH_ASKPASS", "SSH_ASKPASS_REQUIRE", "SSH_CONNECTION", "SSH_CLIENT", "SSH_TTY"].contains(key) {
             environment.removeValue(forKey: key)
         }
         environment["HOME"] = home.path

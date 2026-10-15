@@ -26,7 +26,7 @@ struct HostColorPicker: View {
     @Binding var selection: String
     var body: some View {
         VStack(alignment: .leading, spacing: 9) {
-            Text("标记颜色 · \(HostMarkColor(storedValue: selection).title)").font(.caption).foregroundStyle(.secondary)
+            Text(L10n.text("标记颜色 · \(HostMarkColor(storedValue: selection).title)")).font(.caption).foregroundStyle(.secondary)
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 90), spacing: 8)], alignment: .leading, spacing: 8) {
                 ForEach(HostMarkColor.allCases, id: \.rawValue) { option in
                     Button { selection = option.rawValue } label: {
@@ -37,7 +37,7 @@ struct HostColorPicker: View {
                         }.frame(maxWidth: .infinity, minHeight: 32).background(option.color.opacity(HostMarkColor(storedValue: selection) == option ? 0.16 : 0.04), in: RoundedRectangle(cornerRadius: 7))
                             .overlay { RoundedRectangle(cornerRadius: 7).strokeBorder(option.color.opacity(HostMarkColor(storedValue: selection) == option ? 0.7 : 0.1)) }.contentShape(Rectangle())
                     }.buttonStyle(.plain).help(option.title).accessibilityLabel(option.title)
-                        .accessibilityValue(HostMarkColor(storedValue: selection) == option ? "已选择" : "未选择")
+                        .accessibilityValue(HostMarkColor(storedValue: selection) == option ? L10n.text("已选择") : L10n.text("未选择"))
                 }
             }
         }

@@ -2,6 +2,8 @@ import Foundation
 import WorkbenchCore
 import OpenSSHBackend
 
+setenv("FARPORT_LANGUAGE", "zh-Hans", 0)
+
 var checks = 0
 func expect(_ condition: @autoclosure () throws -> Bool, _ message: String) throws {
     checks += 1
@@ -14,6 +16,9 @@ func rejects(_ message: String, _ operation: () throws -> Void) throws {
 }
 
 do {
+    if CommandLine.arguments.contains("--english-check") { try checkEnglishRuntime(); exit(0) }
+    try checkNavigationAndPreview()
+    try checkCodeHighlighting()
     try checkSFTPNames()
     if let index = CommandLine.arguments.firstIndex(of: "--device-files-check") { try checkDeviceFiles(arguments: Array(CommandLine.arguments.dropFirst(index + 1))) }
     try checkFileSorting()

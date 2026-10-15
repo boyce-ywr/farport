@@ -44,6 +44,7 @@ resourceArchitecture="$architecture"
 if [ "$architecture" = universal ]; then resourceArchitecture=arm64; fi
 resource=".build/$resourceArchitecture-apple-macosx/$configuration/SwiftTerm_SwiftTerm.bundle"
 cp -R "$resource" "$app/Contents/Resources/SwiftTerm_SwiftTerm.bundle"
+cp -R ".build/$resourceArchitecture-apple-macosx/$configuration/SSHWorkbench_WorkbenchCore.bundle" "$app/Contents/Resources/SSHWorkbench_WorkbenchCore.bundle"
 install -m 644 .build/checkouts/SwiftTerm/LICENSE "$app/Contents/Resources/ThirdParty/SwiftTerm-LICENSE.txt"
 codesign --force --sign - --timestamp=none "$app"
 codesign --verify --deep --strict "$app"

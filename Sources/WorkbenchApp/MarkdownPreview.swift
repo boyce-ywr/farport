@@ -1,3 +1,4 @@
+import WorkbenchCore
 import AppKit
 import SwiftUI
 
@@ -74,7 +75,7 @@ struct MarkdownPreview: NSViewRepresentable {
         var source: String?; var scheme: ColorScheme?
         func textView(_ textView: NSTextView, clickedOnLink link: Any, at charIndex: Int) -> Bool {
             guard let url = link as? URL, ["https", "http"].contains(url.scheme?.lowercased() ?? "") else { return true }
-            if confirm("在浏览器中打开链接？", url.absoluteString) { NSWorkspace.shared.open(url) }
+            if confirm(L10n.text("在浏览器中打开链接？"), url.absoluteString) { NSWorkspace.shared.open(url) }
             return true
         }
     }

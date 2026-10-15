@@ -1,3 +1,4 @@
+import WorkbenchCore
 import AppKit
 import SwiftUI
 import PDFKit
@@ -20,13 +21,13 @@ struct PDFDocumentPreview: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack(spacing: 12) {
-                Button { pdfView.goToPreviousPage(nil) } label: { Image(systemName: "chevron.up") }.help("上一页")
-                Button { pdfView.goToNextPage(nil) } label: { Image(systemName: "chevron.down") }.help("下一页")
-                Text("\(document.pageCount) 页").foregroundStyle(.secondary)
+                Button { pdfView.goToPreviousPage(nil) } label: { Image(systemName: "chevron.up") }.help(L10n.text("上一页"))
+                Button { pdfView.goToNextPage(nil) } label: { Image(systemName: "chevron.down") }.help(L10n.text("下一页"))
+                Text(L10n.text("\(document.pageCount) 页")).foregroundStyle(.secondary)
                 Spacer()
-                Button { pdfView.zoomOut(nil) } label: { Image(systemName: "minus.magnifyingglass") }.help("缩小")
-                Button { pdfView.zoomIn(nil) } label: { Image(systemName: "plus.magnifyingglass") }.help("放大")
-                Button("适合宽度") { pdfView.autoScales = true }
+                Button { pdfView.zoomOut(nil) } label: { Image(systemName: "minus.magnifyingglass") }.help(L10n.text("缩小"))
+                Button { pdfView.zoomIn(nil) } label: { Image(systemName: "plus.magnifyingglass") }.help(L10n.text("放大"))
+                Button(L10n.text("适合宽度")) { pdfView.autoScales = true }
             }.font(.caption).buttonStyle(.borderless).padding(10)
             PDFPreview(document: document, view: pdfView)
         }

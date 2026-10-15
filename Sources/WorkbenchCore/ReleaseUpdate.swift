@@ -51,7 +51,7 @@ public struct ReleaseUpdate: Sendable {
     public let asset: GitHubReleaseAsset?
 
     public static func select(from releases: [GitHubRelease], current: String, architecture: String) throws -> ReleaseUpdate? {
-        guard let currentVersion = ReleaseVersion(current) else { throw WorkbenchError.message("当前应用版本格式无法识别，未执行自动版本比较。") }
+        guard let currentVersion = ReleaseVersion(current) else { throw WorkbenchError.message(L10n.text("当前应用版本格式无法识别，未执行自动版本比较。")) }
         let candidates = releases.compactMap { release -> (GitHubRelease, ReleaseVersion)? in
             guard !release.draft, !release.prerelease, release.id > 0, let version = ReleaseVersion(release.tag_name), version > currentVersion else { return nil }
             return (release, version)

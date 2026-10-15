@@ -18,7 +18,7 @@ public struct ApplicationPaths: Sendable {
             let attributes = try FileManager.default.attributesOfItem(atPath: directory.path)
             guard attributes[.type] as? FileAttributeType == .typeDirectory,
                   (attributes[.ownerAccountID] as? NSNumber)?.uint32Value == getuid() else {
-                throw WorkbenchError.message("应用数据目录的所有权不安全：\(directory.lastPathComponent)")
+                throw WorkbenchError.message(L10n.text("应用数据目录的所有权不安全：\(directory.lastPathComponent)"))
             }
             try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: directory.path)
         }
@@ -42,7 +42,7 @@ public struct CommandResult: Sendable {
     public let status: Int32
     public var text: String { String(decoding: output, as: UTF8.self) }
     public func checked() throws -> CommandResult {
-        guard status == 0 else { throw WorkbenchError.message(error.isEmpty ? "远程命令失败（\(status)）。" : error) }
+        guard status == 0 else { throw WorkbenchError.message(error.isEmpty ? L10n.text("远程命令失败（\(status)）。") : error) }
         return self
     }
 }
@@ -93,7 +93,7 @@ public enum ProcessRunner {
         _ = readers.wait(timeout: .now() + 3)
         try? output.fileHandleForReading.close(); try? error.fileHandleForReading.close()
         try cancellation.check()
-        if timedOut { throw WorkbenchError.message("操作超时，连接已关闭。请检查网络、跳板机和远端状态。") }
+        if timedOut { throw WorkbenchError.message(L10n.text("操作超时，连接已关闭。请检查网络、跳板机和远端状态。")) }
         return CommandResult(output: captured.data, error: String(decoding: errors.data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines), status: process.terminationStatus)
     }
 }
@@ -113,6 +113,7 @@ public final class SSHTransport: @unchecked Sendable {
             environment["SSH_ASKPASS"] = askpass; environment["SSH_ASKPASS_REQUIRE"] = "force"
             environment["DISPLAY"] = "ssh-workbench"; environment["SWB_CREDENTIAL_ACCOUNT"] = host.id.uuidString + ":" + connectionDigest(host)
             environment["SWB_HOST_LABEL"] = host.name
+            environment["FARPORT_LANGUAGE"] = L10n.language.rawValue
         }
         return environment
     }
@@ -143,10 +144,10 @@ public final class SSHTransport: @unchecked Sendable {
     public func forwardingArguments(for host: HostProfile, kind: ForwardingKind, port: Int, target: String = "127.0.0.1", targetPort: Int = 80) throws -> [String] {
         guard (1...65535).contains(port), (1...65535).contains(targetPort), !target.isEmpty,
               target.rangeOfCharacter(from: .whitespacesAndNewlines.union(.controlCharacters)) == nil,
-              !target.contains("/"), !target.hasPrefix("-") else { throw WorkbenchError.message("请检查监听端口、目标主机和目标端口。") }
+              !target.contains("/"), !target.hasPrefix("-") else { throw WorkbenchError.message(L10n.text("请检查监听端口、目标主机和目标端口。")) }
         if target.contains(":") {
             var address = in6_addr()
-            guard inet_pton(AF_INET6, target, &address) == 1 else { throw WorkbenchError.message("目标 IPv6 地址格式不正确。") }
+            guard inet_pton(AF_INET6, target, &address) == 1 else { throw WorkbenchError.message(L10n.text("目标 IPv6 地址格式不正确。")) }
         }
         let destination = target.contains(":") ? "[\(target)]" : target
         let binding = kind == .dynamic ? "127.0.0.1:\(port)" : "127.0.0.1:\(port):\(destination):\(targetPort)"
@@ -169,10 +170,10 @@ public final class SSHTransport: @unchecked Sendable {
             defer { client.close() }
             _ = try client.realpath()
             try cancellation.check()
-            return ConnectionTestResult(elapsed: Date().timeIntervalSince(started), sftpAvailable: true, detail: "SSH 认证与 SFTP 文件访问均通过。")
+            return ConnectionTestResult(elapsed: Date().timeIntervalSince(started), sftpAvailable: true, detail: L10n.text("SSH 认证与 SFTP 文件访问均通过。"))
         } catch {
             try cancellation.check()
-            return ConnectionTestResult(elapsed: Date().timeIntervalSince(started), sftpAvailable: false, detail: "SSH 已连接，但 SFTP 不可用：\(error.localizedDescription)")
+            return ConnectionTestResult(elapsed: Date().timeIntervalSince(started), sftpAvailable: false, detail: L10n.text("SSH 已连接，但 SFTP 不可用：\(error.localizedDescription)"))
         }
     }
     public func disconnectMaster(_ host: HostProfile) {

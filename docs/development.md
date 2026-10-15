@@ -32,6 +32,7 @@ bash scripts/check.sh                 # 构建与核心断言
 bash scripts/check.sh --integration   # Docker 隔离 SSH 环境与集成检查
 bash scripts/check-workbench-ux.sh    # 实际界面回归，需要先准备隔离主机
 bash scripts/check-attachments.sh    # 附件上传、回读和 tmux
+bash scripts/check-file-preview.sh   # 中英文、目录历史、源码高亮与媒体播放
 ```
 
 完整范围和仍未覆盖的项目见 [验证记录](validation.md)。不要把本机 Apple Silicon 的验证结果当成 Intel 或所有 macOS 版本的实测。
@@ -50,6 +51,8 @@ bash scripts/capture-readme.sh
 首页图片来自原生视图快照，不是设计稿。现有普通 QA 截图留在 `docs/screenshots/` 或 `.test/`，不要整体取消这些目录的忽略规则。
 
 ## 项目与发布
+
+界面和自有错误使用 `L10n.text`，英文资源位于 `Sources/WorkbenchCore/Resources/en.json`；保留插值占位符，不翻译文件名、路径、枚举存储标识或协议内容。`FARPORT_LANGUAGE=en` 可用于独立英文回归；`workbench-tests --english-check` 验证英文资源，普通测试默认中文以兼容历史断言。
 
 - [模块边界](architecture.md)：核心模型、OpenSSH/SFTP 和 macOS 界面的职责。
 - [问题记录](issues/)：非平凡问题的定位和修复过程。

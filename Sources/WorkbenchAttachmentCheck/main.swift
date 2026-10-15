@@ -5,6 +5,8 @@ import Darwin
 import WorkbenchCore
 import OpenSSHBackend
 
+setenv("FARPORT_LANGUAGE", "zh-Hans", 0)
+
 signal(SIGPIPE, SIG_IGN)
 setbuf(stdout, nil)
 var checks = 0

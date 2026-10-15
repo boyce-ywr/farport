@@ -10,12 +10,12 @@ struct TerminalWorkspace: View {
     var body: some View {
         if workspace.sessions.isEmpty {
             VStack(spacing: 0) {
-                EmptyWorkspace(symbol: "terminal", title: "连接工作，保持心流。", detail: "本机与 SSH，共享同一套原生终端体验。\n多标签、分屏与搜索，让工作随时继续。", action: workspace.host == nil ? "打开本机终端" : "打开 SSH 终端") {
+                EmptyWorkspace(symbol: "terminal", title: L10n.text("连接工作，保持心流。"), detail: L10n.text("本机与 SSH，共享同一套原生终端体验。\n多标签、分屏与搜索，让工作随时继续。"), action: workspace.host == nil ? L10n.text("打开本机终端") : L10n.text("打开 SSH 终端")) {
                     workspace.newTerminal()
                 }
-                if workspace.host == nil { Button("添加 SSH 主机", action: addHost).buttonStyle(.link).padding(.bottom, 20) }
+                if workspace.host == nil { Button(L10n.text("添加 SSH 主机"), action: addHost).buttonStyle(.link).padding(.bottom, 20) }
                 HStack(spacing: 28) {
-                    feature("⌘ T", "新建标签"); feature("⌘ D / ⌘ ⇧ D", "左右 / 上下分栏"); feature("⌘ F", "查找内容")
+                    feature("⌘ T", L10n.text("新建标签")); feature("⌘ D / ⌘ ⇧ D", L10n.text("左右 / 上下分栏")); feature("⌘ F", L10n.text("查找内容"))
                 }.padding(.bottom, 50)
             }
         } else {
@@ -23,18 +23,18 @@ struct TerminalWorkspace: View {
                 if workspace.showTerminalSearch {
                 HStack(spacing: 8) {
                     Image(systemName: "magnifyingglass").foregroundStyle(.tertiary)
-                    TextField("搜索终端内容", text: $search).textFieldStyle(.plain).onSubmit { _ = workspace.selectedTerminal?.terminal.findNext(search) }
+                    TextField(L10n.text("搜索终端内容"), text: $search).textFieldStyle(.plain).onSubmit { _ = workspace.selectedTerminal?.terminal.findNext(search) }
                         .focused($searchFocused).onAppear { searchFocused = true }
                     Button { _ = workspace.selectedTerminal?.terminal.findPrevious(search) } label: { Image(systemName: "chevron.up") }
                     Button { _ = workspace.selectedTerminal?.terminal.findNext(search) } label: { Image(systemName: "chevron.down") }
                     Spacer()
-                    Button { workspace.chooseAttachments() } label: { Label("发送附件", systemImage: "paperclip") }
-                        .help("粘贴剪贴板图片或拖入文件也可发送；校验目标可读后插入路径，不自动回车")
+                    Button { workspace.chooseAttachments() } label: { Label(L10n.text("发送附件"), systemImage: "paperclip") }
+                        .help(L10n.text("粘贴剪贴板图片或拖入文件也可发送；校验目标可读后插入路径，不自动回车"))
                         .disabled(workspace.selectedTerminal?.connected != true)
                     if let session = workspace.selectedTerminal {
                         TerminalStatus(session: session, showReconnect: true)
                     }
-                    Button { workspace.showTerminalSearch = false; workspace.selectedTerminal?.terminal.clearSearch() } label: { Image(systemName: "xmark") }.help("关闭搜索")
+                    Button { workspace.showTerminalSearch = false; workspace.selectedTerminal?.terminal.clearSearch() } label: { Image(systemName: "xmark") }.help(L10n.text("关闭搜索"))
                 }.buttonStyle(.borderless).font(.system(size: 11)).padding(.horizontal, 12).padding(.vertical, 6)
                 Divider()
                 }
@@ -55,7 +55,7 @@ struct TerminalWorkspace: View {
                             }
                         }
                 } else {
-                    EmptyWorkspace(symbol: "terminal", title: "此主机尚未打开终端", detail: "选择终端标签，或打开一个新的终端。", action: workspace.host == nil ? "打开本机终端" : "打开 SSH 终端") { workspace.newTerminal() }
+                    EmptyWorkspace(symbol: "terminal", title: L10n.text("此主机尚未打开终端"), detail: L10n.text("选择终端标签，或打开一个新的终端。"), action: workspace.host == nil ? L10n.text("打开本机终端") : L10n.text("打开 SSH 终端")) { workspace.newTerminal() }
                 }
             }
         }
@@ -152,18 +152,18 @@ private struct TerminalPane: View {
                         Spacer(minLength: 0)
                     }.frame(maxWidth: .infinity, minHeight: 30).contentShape(Rectangle())
                 }.buttonStyle(.plain).interactionFrame("pane.\(session.id.uuidString)")
-                Button { workspace.browseFiles(.terminal(session.id)) } label: { Image(systemName: "folder").frame(width: 24, height: 30) }.help("查看此分栏的文件")
+                Button { workspace.browseFiles(.terminal(session.id)) } label: { Image(systemName: "folder").frame(width: 24, height: 30) }.help(L10n.text("查看此分栏的文件"))
                 Menu {
                     Button(session.restartLabel) {
-                        if session.isLocal && session.connected && !confirm("重新打开本机终端？", "当前 Shell 及其任务可能被结束。") { return }
+                        if session.isLocal && session.connected && !confirm(L10n.text("重新打开本机终端？"), L10n.text("当前 Shell 及其任务可能被结束。")) { return }
                         session.reconnect()
                     }
                     Divider()
-                    Button("左右分栏 · ⌘D") { workspace.selectTerminal(session); workspace.newTerminal(split: true) }
-                    Button("上下分栏 · ⌘⇧D") { workspace.selectTerminal(session); workspace.newTerminal(split: true, axis: .topBottom) }
-                    Button(zoomed ? "还原分栏 · ⌘⇧↩" : "最大化分栏 · ⌘⇧↩") { workspace.selectTerminal(session); workspace.togglePaneZoom() }
+                    Button(L10n.text("左右分栏 · ⌘D")) { workspace.selectTerminal(session); workspace.newTerminal(split: true) }
+                    Button(L10n.text("上下分栏 · ⌘⇧D")) { workspace.selectTerminal(session); workspace.newTerminal(split: true, axis: .topBottom) }
+                    Button(zoomed ? L10n.text("还原分栏 · ⌘⇧↩") : L10n.text("最大化分栏 · ⌘⇧↩")) { workspace.selectTerminal(session); workspace.togglePaneZoom() }
                 } label: { Image(systemName: "rectangle.split.2x1") }.menuStyle(.borderlessButton).frame(width: 24)
-                Button { workspace.confirmClosePane(session) } label: { Image(systemName: "xmark").frame(width: 24, height: 30) }.help("仅关闭此分栏")
+                Button { workspace.confirmClosePane(session) } label: { Image(systemName: "xmark").frame(width: 24, height: 30) }.help(L10n.text("仅关闭此分栏"))
             }.font(.system(size: 10, weight: focused ? .semibold : .regular)).buttonStyle(.borderless).padding(.horizontal, 8)
                 .background(focused ? Color.teal.opacity(0.12) : Color.primary.opacity(0.035))
             TerminalSurface(session: session, store: store, focused: focused)
@@ -179,7 +179,7 @@ struct TerminalStatus: View {
             Label(session.state, systemImage: session.connected ? "circle.fill" : "circle").font(.system(size: 10)).foregroundStyle(session.connected ? .teal : .secondary)
             if showReconnect {
                 Button(session.restartLabel) {
-                    if session.isLocal && session.connected && !confirm("重新打开本机终端？", "当前 Shell 及其任务可能被结束，将从用户主目录启动新的登录 Shell。") { return }
+                    if session.isLocal && session.connected && !confirm(L10n.text("重新打开本机终端？"), L10n.text("当前 Shell 及其任务可能被结束，将从用户主目录启动新的登录 Shell。")) { return }
                     session.reconnect()
                 }.font(.caption)
             }

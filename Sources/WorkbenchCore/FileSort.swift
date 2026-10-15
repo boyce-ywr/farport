@@ -3,7 +3,7 @@ import Foundation
 public enum FileSortColumn: String, CaseIterable, Sendable {
     case name, type, size, modified, permissions
     public var title: String {
-        switch self { case .name: return "名称"; case .type: return "文件类型"; case .size: return "大小"; case .modified: return "修改时间"; case .permissions: return "权限" }
+        switch self { case .name: return L10n.text("名称"); case .type: return L10n.text("文件类型"); case .size: return L10n.text("大小"); case .modified: return L10n.text("修改时间"); case .permissions: return L10n.text("权限") }
     }
 }
 
@@ -16,7 +16,7 @@ public struct FileSort: Equatable, Sendable {
         else if !descending { descending = true }
         else { column = nil; descending = false }
     }
-    public var description: String { column.map { "\($0.title) · \(descending ? "降序" : "升序")" } ?? "默认 · 文件夹优先，名称自然排序" }
+    public var description: String { column.map { "\($0.title) · \(descending ? L10n.text("降序") : L10n.text("升序"))" } ?? L10n.text("默认 · 文件夹优先，名称自然排序") }
     public func sorted(_ files: [RemoteFile]) -> [RemoteFile] {
         files.sorted(using: FileSortComparator(column: column ?? .name, order: descending ? .reverse : .forward))
     }
@@ -46,26 +46,26 @@ public struct FileSortComparator: SortComparator, Sendable {
 
 public extension RemoteFile {
     var typeLabel: String {
-        if attributes.isSymbolicLink { return "符号链接" }
-        if attributes.isDirectory { return "文件夹" }
-        if !attributes.isRegularFile { return "特殊文件" }
+        if attributes.isSymbolicLink { return L10n.text("符号链接") }
+        if attributes.isDirectory { return L10n.text("文件夹") }
+        if !attributes.isRegularFile { return L10n.text("特殊文件") }
         let suffix = (name as NSString).pathExtension.lowercased()
         switch suffix {
-        case "html", "htm": return "HTML 网页"
-        case "pdf": return "PDF 文档"
-        case "txt", "log": return suffix == "log" ? "日志文件" : "文本文件"
-        case "md", "markdown": return "Markdown 文档"
-        case "json": return "JSON 数据"
-        case "csv", "tsv": return "表格数据"
-        case "png", "jpg", "jpeg", "gif", "webp", "heic", "tiff", "svg": return suffix.uppercased() + " 图片"
-        case "py": return "Python 脚本"
-        case "sh", "bash", "zsh": return "Shell 脚本"
-        case "js", "mjs", "ts", "tsx", "jsx", "swift", "rs", "go", "c", "h", "cpp": return suffix.uppercased() + " 源码"
-        case "zip", "tar", "gz", "bz2", "xz", "7z", "rar": return "压缩文件"
-        case "mp4", "mov", "mkv", "webm": return "视频文件"
-        case "mp3", "wav", "flac", "m4a": return "音频文件"
-        case "": return "文件"
-        default: return suffix.uppercased() + " 文件"
+        case "html", "htm": return L10n.text("HTML 网页")
+        case "pdf": return L10n.text("PDF 文档")
+        case "txt", "log": return suffix == "log" ? L10n.text("日志文件") : L10n.text("文本文件")
+        case "md", "markdown": return L10n.text("Markdown 文档")
+        case "json": return L10n.text("JSON 数据")
+        case "csv", "tsv": return L10n.text("表格数据")
+        case "png", "jpg", "jpeg", "gif", "webp", "heic", "tiff", "svg": return suffix.uppercased() + L10n.text(" 图片")
+        case "py", "pyw", "pyi": return L10n.text("Python 脚本")
+        case "sh", "bash", "zsh", "fish": return L10n.text("Shell 脚本")
+        case "java", "js", "mjs", "cjs", "ts", "tsx", "jsx", "swift", "rs", "go", "c", "h", "cpp", "hpp", "cc", "cxx": return suffix.uppercased() + L10n.text(" 源码")
+        case "zip", "tar", "gz", "bz2", "xz", "7z", "rar": return L10n.text("压缩文件")
+        case "mp4", "mov", "mkv", "webm": return L10n.text("视频文件")
+        case "mp3", "wav", "flac", "m4a": return L10n.text("音频文件")
+        case "": return L10n.text("文件")
+        default: return suffix.uppercased() + L10n.text(" 文件")
         }
     }
 }

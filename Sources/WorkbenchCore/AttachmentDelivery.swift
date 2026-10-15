@@ -16,7 +16,7 @@ public struct AttachmentDeliveryIdentity: Equatable, Sendable {
 public enum AttachmentReference {
     public static func text(paths: [String]) throws -> String {
         guard !paths.isEmpty, paths.allSatisfy({ $0.hasPrefix("/") && $0.rangeOfCharacter(from: .controlCharacters) == nil }) else {
-            throw WorkbenchError.message("附件路径无效，未向终端插入。")
+            throw WorkbenchError.message(L10n.text("附件路径无效，未向终端插入。"))
         }
         return paths.map(RemotePath.quote).joined(separator: " ") + " "
     }

@@ -37,7 +37,7 @@ public final class LocalFileClient: FileClient {
         try cancellation.check()
         let input = path == "." ? FileManager.default.homeDirectoryForCurrentUser.path : NSString(string: path).expandingTildeInPath
         let resolved = URL(fileURLWithPath: input).standardizedFileURL.resolvingSymlinksInPath().path
-        guard try stat(resolved, followLinks: true).isDirectory else { throw WorkbenchError.message("所选本地路径不是目录。") }
+        guard try stat(resolved, followLinks: true).isDirectory else { throw WorkbenchError.message(L10n.text("所选本地路径不是目录。")) }
         return resolved
     }
     public func stat(_ path: String, followLinks: Bool = false) throws -> FileAttributes {
@@ -61,8 +61,8 @@ public final class LocalFileClient: FileClient {
         }
     }
     public func preview(_ path: String, offset: UInt64 = 0, limit: Int = 512 * 1024) throws -> Data {
-        guard try stat(path, followLinks: true).isRegularFile else { throw WorkbenchError.message("只预览普通文件。") }
-        guard limit >= 0, limit <= 8 * 1024 * 1024 else { throw WorkbenchError.message("预览长度超限。") }
+        guard try stat(path, followLinks: true).isRegularFile else { throw WorkbenchError.message(L10n.text("只预览普通文件。")) }
+        guard limit >= 0, limit <= 8 * 1024 * 1024 else { throw WorkbenchError.message(L10n.text("预览长度超限。")) }
         let handle = try FileHandle(forReadingFrom: URL(fileURLWithPath: path)); defer { try? handle.close() }
         try handle.seek(toOffset: offset); try cancellation.check()
         return try handle.read(upToCount: limit) ?? Data()
@@ -70,7 +70,7 @@ public final class LocalFileClient: FileClient {
     public func createFile(_ path: String) throws {
         try cancellation.check()
         let descriptor = Darwin.open(path, O_CREAT | O_EXCL | O_WRONLY | O_NOFOLLOW, 0o600)
-        guard descriptor >= 0 else { throw WorkbenchError.message("无法创建文件：\(String(cString: strerror(errno)))") }
+        guard descriptor >= 0 else { throw WorkbenchError.message(L10n.text("无法创建文件：\(String(cString: strerror(errno)))")) }
         try FileHandle(fileDescriptor: descriptor, closeOnDealloc: true).close()
     }
     public func mkdir(_ path: String, permissions: UInt32 = 0o755) throws {
@@ -80,21 +80,21 @@ public final class LocalFileClient: FileClient {
     public func rename(_ source: String, to destination: String, overwrite: Bool = false) throws {
         try cancellation.check()
         let result = overwrite ? Darwin.rename(source, destination) : renamex_np(source, destination, UInt32(RENAME_EXCL))
-        guard result == 0 else { throw WorkbenchError.message("重命名失败，未覆盖现有文件：\(String(cString: strerror(errno)))") }
+        guard result == 0 else { throw WorkbenchError.message(L10n.text("重命名失败，未覆盖现有文件：\(String(cString: strerror(errno)))")) }
     }
     public func chmod(_ path: String, permissions: UInt32) throws {
         try cancellation.check(); try FileManager.default.setAttributes([.posixPermissions: permissions & 0o777], ofItemAtPath: path)
     }
     public func removeRecursively(_ path: String, depth: Int = 0) throws {
         try cancellation.check()
-        guard !path.isEmpty, URL(fileURLWithPath: path).standardizedFileURL.path != "/" else { throw WorkbenchError.message("拒绝删除根目录。") }
+        guard !path.isEmpty, URL(fileURLWithPath: path).standardizedFileURL.path != "/" else { throw WorkbenchError.message(L10n.text("拒绝删除根目录。")) }
         try FileManager.default.removeItem(atPath: path)
     }
     public func saveText(_ path: String, data: Data, expected: FileAttributes, original: Data? = nil) throws {
         func validate() throws {
             let current = try stat(path)
-            guard current.isRegularFile, current.size == expected.size, current.modified == expected.modified else { throw WorkbenchError.message("文件已发生变化，请重新读取。") }
-            if let original, try preview(path, limit: original.count + 1) != original { throw WorkbenchError.message("文件内容已发生变化，未覆盖。") }
+            guard current.isRegularFile, current.size == expected.size, current.modified == expected.modified else { throw WorkbenchError.message(L10n.text("文件已发生变化，请重新读取。")) }
+            if let original, try preview(path, limit: original.count + 1) != original { throw WorkbenchError.message(L10n.text("文件内容已发生变化，未覆盖。")) }
         }
         try validate()
         let temporary = path + ".swb-edit-" + UUID().uuidString

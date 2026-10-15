@@ -13,10 +13,12 @@ macOS 14+ · Apple Silicon / Intel · [MIT 开源](LICENSE)
 - **管理终端**：连接 SSH 或打开本机 Shell，使用多标签、左右/上下分栏；拖动标签排序，折叠侧栏留出更多工作空间。
 - **接着上次的工作**：查看、创建和进入本机或远端 tmux 会话。关闭标签只断开连接，不结束 tmux 中的任务。
 - **在主机之间传文件**：本机与 SSH 主机、两台 SSH 主机之间，都能复制文件和文件夹，支持多选、断点续传和同名覆盖确认。
-- **直接查看远端文件**：预览文本、图片、Markdown、HTML 和 PDF；编辑文本和 Markdown，保存前检查文件是否被其他程序修改。
+- **直接查看远端文件**：预览文本、图片、Markdown、HTML、PDF 和音视频；Java、Python、JSON/XML 等常见文件有语法高亮。编辑保存前检查文件是否被其他程序修改。
 - **把图片交给远端 Agent**：在终端粘贴剪贴板图片，或拖入文件。Farport 会先上传并校验，再插入目标机器能读取的路径，不自动回车。
 
 还有主机分组和颜色标记、SSH 配置导入、跳板机、端口转发、终端搜索、双指缩放字体，以及深浅色外观。
+
+支持简体中文和英文，可在设置中选择，下次启动生效。文件工具栏的返回按钮按访问历史回退，各个来源分别记住路径。
 
 ### tmux 会话
 
@@ -44,13 +46,13 @@ HTML 报告也能在浏览器打开。Farport 在 Mac 本机提供临时访问�
 
 ## 安装
 
-从 [GitHub Releases](https://github.com/boyce-ywr/farport/releases/latest) 下载 DMG。当前版本 **0.1.6**：
+从 [GitHub Releases](https://github.com/boyce-ywr/farport/releases/latest) 下载 DMG。当前版本 **0.1.7**：
 
 | 你的 Mac | 下载 |
 | --- | --- |
-| Apple Silicon（M 系列） | [Apple Silicon 版](https://github.com/boyce-ywr/farport/releases/download/v0.1.6/Farport-0.1.6-arm64.dmg) |
-| Intel 芯片 | [Intel 版](https://github.com/boyce-ywr/farport/releases/download/v0.1.6/Farport-0.1.6-x86_64.dmg) |
-| 不确定芯片，或需要两种架构 | [Universal 通用版](https://github.com/boyce-ywr/farport/releases/download/v0.1.6/Farport-0.1.6-universal.dmg) |
+| Apple Silicon（M 系列） | [Apple Silicon 版](https://github.com/boyce-ywr/farport/releases/download/v0.1.7/Farport-0.1.7-arm64.dmg) |
+| Intel 芯片 | [Intel 版](https://github.com/boyce-ywr/farport/releases/download/v0.1.7/Farport-0.1.7-x86_64.dmg) |
+| 不确定芯片，或需要两种架构 | [Universal 通用版](https://github.com/boyce-ywr/farport/releases/download/v0.1.7/Farport-0.1.7-universal.dmg) |
 
 1. 打开 DMG，将 **Farport.app** 拖入 **Applications（应用程序）**。
 2. 从“应用程序”打开 Farport。升级前请先保存工作并退出旧版。
@@ -79,7 +81,7 @@ HTML 报告也能在浏览器打开。Farport 在 Mac 本机提供临时访问�
 
 ## 几个常见问题
 
-**怎么更新？** 重新下载 Release 安装包即可，不需要 GitHub CLI。0.1.6 的应用内“检查更新”目前依赖已登录的 GitHub CLI；下载后会校验安装包，再由你确认安装，不会自动关闭终端。
+**怎么更新？** 重新下载 Release 安装包即可，不需要 GitHub CLI。0.1.7 的应用内“检查更新”目前依赖已登录的 GitHub CLI；下载后会校验安装包，再由你确认安装，不会自动关闭终端。
 
 **可以配合 Codex、Claude Code 使用吗？** 可以把图片和文件发送到它们所在的机器。远端 Codex + tmux 的图片流程已验证；Claude Code 的完整图片识别流程尚未单独验证。二次 SSH、容器或不同用户可能隔离文件系统，需要确认接收程序能访问上传位置。
 

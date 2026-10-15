@@ -12,6 +12,7 @@ public final class FilePreviewServer: @unchecked Sendable {
     private let token: String
     private let transport: SSHTransport
     private let host: HostProfile?
+    private let fileName: String?
     private let listener: NWListener
     private let queue = DispatchQueue(label: "farport.preview.http")
     private let workers = DispatchSemaphore(value: 4)
@@ -19,14 +20,16 @@ public final class FilePreviewServer: @unchecked Sendable {
     private let lock = NSLock()
     private var connections: [UUID: NWConnection] = [:]
 
-    public init(transport: SSHTransport, host: HostProfile?, directory: String, allowsScripts: Bool = false) throws {
+    public init(transport: SSHTransport, host: HostProfile?, directory: String, allowsScripts: Bool = false, fileName: String? = nil) throws {
+        guard fileName == nil || RemotePath.validName(fileName!) else { throw WorkbenchError.message(L10n.text("预览文件名无效。")) }
         let client = try transport.files(host); defer { client.close() }
         if host == nil, let canonical = Darwin.realpath(directory, nil) { root = String(cString: canonical); free(canonical) }
         else { root = try client.realpath(directory) }
-        guard root != "/" else { throw WorkbenchError.message("不能将文件系统根目录作为网页预览范围。请选择报告所在目录。") }
+        guard root != "/" else { throw WorkbenchError.message(L10n.text("不能将文件系统根目录作为网页预览范围。请选择报告所在目录。")) }
         self.transport = transport; self.host = host; self.allowsScripts = allowsScripts
+        self.fileName = fileName
         var bytes = [UInt8](repeating: 0, count: 32)
-        guard SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes) == errSecSuccess else { throw WorkbenchError.message("无法生成预览访问令牌。") }
+        guard SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes) == errSecSuccess else { throw WorkbenchError.message(L10n.text("无法生成预览访问令牌。")) }
         token = bytes.map { String(format: "%02x", $0) }.joined()
         let parameters = NWParameters.tcp
         parameters.requiredLocalEndpoint = .hostPort(host: "127.0.0.1", port: .any)
@@ -35,13 +38,13 @@ public final class FilePreviewServer: @unchecked Sendable {
         listener.stateUpdateHandler = { state in if case .ready = state { ready.signal() }; if case .failed = state { ready.signal() } }
         listener.newConnectionHandler = { [weak self] connection in self?.accept(connection) }
         listener.start(queue: queue)
-        guard ready.wait(timeout: .now() + 5) == .success, let port = listener.port else { listener.cancel(); throw WorkbenchError.message("无法启动本机文件预览服务。") }
+        guard ready.wait(timeout: .now() + 5) == .success, let port = listener.port else { listener.cancel(); throw WorkbenchError.message(L10n.text("无法启动本机文件预览服务。")) }
         self.port = port.rawValue
     }
     deinit { stop() }
     public var isRunning: Bool { !cancellation.isCancelled }
     public func url(for filename: String) throws -> URL {
-        guard RemotePath.validName(filename), isRunning else { throw WorkbenchError.message("预览服务已停止或文件名无效。") }
+        guard RemotePath.validName(filename), isRunning else { throw WorkbenchError.message(L10n.text("预览服务已停止或文件名无效。")) }
         return URL(string: "http://127.0.0.1:\(port)/\(token)/")!.appendingPathComponent(filename)
     }
     public func stop() {
@@ -100,6 +103,7 @@ public final class FilePreviewServer: @unchecked Sendable {
             var parts = String(decoded.dropFirst(token.count + 2)).split(separator: "/", omittingEmptySubsequences: false).map(String.init)
             if parts.last == "" { parts.removeLast(); parts.append("index.html") }
             guard !parts.isEmpty, parts.allSatisfy({ !$0.isEmpty && $0 != "." && $0 != ".." && !$0.contains("\\") && $0.rangeOfCharacter(from: .controlCharacters) == nil }) else { try respond(403, connection: connection); return }
+            if let fileName, parts != [fileName] { try respond(403, connection: connection); return }
             let client = try transport.files(host, cancellation: cancellation); defer { client.close() }
             var path = ""
             for component in root.split(separator: "/").map(String.init) + parts {
@@ -109,7 +113,7 @@ public final class FilePreviewServer: @unchecked Sendable {
             }
             let attributes = try client.stat(path)
             guard attributes.isRegularFile else { try respond(403, connection: connection); return }
-            guard attributes.size <= 256 * 1024 * 1024 else { try respond(413, connection: connection); return }
+            guard attributes.size <= (fileName == nil ? 256 * 1024 * 1024 : 32 * 1024 * 1024 * 1024) else { try respond(413, connection: connection); return }
             let local = host == nil ? try localReader(parts: parts) : nil
             let remote = client as? SFTPClient
             let remoteHandle = try remote?.openRead(path)
@@ -142,8 +146,8 @@ public final class FilePreviewServer: @unchecked Sendable {
                 let bytes: Data
                 if let local { try local.seek(toOffset: start); bytes = try local.read(upToCount: limit) ?? Data() }
                 else if let remoteHandle, let remote { bytes = try remote.read(remoteHandle, offset: start, length: limit) }
-                else { throw WorkbenchError.message("预览读取通道不可用。") }
-                guard !bytes.isEmpty else { throw WorkbenchError.message("文件在预览期间变化。") }
+                else { throw WorkbenchError.message(L10n.text("预览读取通道不可用。")) }
+                guard !bytes.isEmpty else { throw WorkbenchError.message(L10n.text("文件在预览期间变化。")) }
                 try send(bytes, connection: connection); start += UInt64(bytes.count)
             }
         } catch { if !started { try? respond(404, connection: connection) } }
@@ -156,23 +160,23 @@ public final class FilePreviewServer: @unchecked Sendable {
     private func respond(_ status: Int, connection: NWConnection) throws { try send(Data(responseHeader(status, length: 0).utf8), connection: connection) }
     private func localReader(parts: [String]) throws -> FileHandle {
         var descriptor = Darwin.open(root, O_RDONLY | O_DIRECTORY | O_NOFOLLOW)
-        guard descriptor >= 0 else { throw WorkbenchError.message("预览目录不可读。") }
+        guard descriptor >= 0 else { throw WorkbenchError.message(L10n.text("预览目录不可读。")) }
         for (index, part) in parts.enumerated() {
             let child = openat(descriptor, part, O_RDONLY | O_NOFOLLOW | O_NONBLOCK | (index == parts.count - 1 ? 0 : O_DIRECTORY))
             Darwin.close(descriptor)
-            guard child >= 0 else { throw WorkbenchError.message("预览路径不安全或不可读。") }; descriptor = child
+            guard child >= 0 else { throw WorkbenchError.message(L10n.text("预览路径不安全或不可读。")) }; descriptor = child
         }
         var attributes = stat()
         guard fstat(descriptor, &attributes) == 0, attributes.st_mode & S_IFMT == S_IFREG else {
-            Darwin.close(descriptor); throw WorkbenchError.message("只允许预览普通文件。")
+            Darwin.close(descriptor); throw WorkbenchError.message(L10n.text("只允许预览普通文件。"))
         }
         return FileHandle(fileDescriptor: descriptor, closeOnDealloc: true)
     }
     private func send(_ data: Data, connection: NWConnection) throws {
         let sent = DispatchSemaphore(value: 0)
         connection.send(content: data, completion: .contentProcessed { _ in sent.signal() })
-        guard sent.wait(timeout: .now() + 15) == .success else { throw WorkbenchError.message("浏览器读取超时。") }
+        guard sent.wait(timeout: .now() + 15) == .success else { throw WorkbenchError.message(L10n.text("浏览器读取超时。")) }
         if case .cancelled = connection.state { throw WorkbenchError.cancelled }
-        if case .failed = connection.state { throw WorkbenchError.message("浏览器已断开。") }
+        if case .failed = connection.state { throw WorkbenchError.message(L10n.text("浏览器已断开。")) }
     }
 }

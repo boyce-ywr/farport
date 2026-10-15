@@ -8,7 +8,7 @@ import OpenSSHBackend
 final class AppStore: ObservableObject {
     static let shared: AppStore = {
         do { return try AppStore() }
-        catch { let alert = NSAlert(); alert.messageText = "无法打开工作区"; alert.informativeText = error.localizedDescription; alert.runModal(); exit(1) }
+        catch { let alert = NSAlert(); alert.messageText = L10n.text("无法打开工作区"); alert.informativeText = error.localizedDescription; alert.runModal(); exit(1) }
     }()
     @Published var hosts: [HostProfile] = []
     @Published var transfers: [TransferJob] = []
@@ -18,6 +18,9 @@ final class AppStore: ObservableObject {
     @Published var fontSize: Double = UserDefaults.standard.double(forKey: "fontSize") == 0 ? 13 : UserDefaults.standard.double(forKey: "fontSize")
     @Published var fontName: String = UserDefaults.standard.string(forKey: "fontName") ?? "SF Mono"
     @Published var appearance: String = UserDefaults.standard.string(forKey: "appearance") ?? "system"
+    @Published var languagePreference = UserDefaults.standard.string(forKey: "farport.language") ?? "system" {
+        didSet { UserDefaults.standard.set(languagePreference, forKey: "farport.language") }
+    }
     let paths: ApplicationPaths
     let transport: SSHTransport
     let isTestWorkspace: Bool
@@ -43,7 +46,7 @@ final class AppStore: ObservableObject {
         if FileManager.default.fileExists(atPath: paths.transfers.path) {
             transfers = try paths.load([TransferJob].self, from: paths.transfers).map { original in
                 var job = original
-                if job.status == .running || job.status == .queued { job.status = .paused; job.message = "上次运行已结束；点击继续以校验断点。" }
+                if job.status == .running || job.status == .queued { job.status = .paused; job.message = L10n.text("上次运行已结束；点击继续以校验断点。") }
                 return job
             }
         }
@@ -54,14 +57,14 @@ final class AppStore: ObservableObject {
         try profile.validate()
         if let current = hosts.first(where: { $0.id == profile.id }), current.connectionKey != profile.connectionKey,
            transfers.contains(where: { ($0.source.hostID == profile.id || $0.destination.hostID == profile.id) && ![.completed, .cancelled].contains($0.status) }) {
-            throw WorkbenchError.message("该主机关联未完成的传输任务。请先完成或取消任务，再修改连接地址、端口、用户、密钥或跳板机。")
+            throw WorkbenchError.message(L10n.text("该主机关联未完成的传输任务。请先完成或取消任务，再修改连接地址、端口、用户、密钥或跳板机。"))
         }
         if let index = hosts.firstIndex(where: { $0.id == profile.id }) { hosts[index] = profile } else { hosts.append(profile) }
         try paths.save(hosts, to: paths.hosts)
     }
     func removeHost(_ profile: HostProfile) {
         guard !transfers.contains(where: { ($0.source.hostID == profile.id || $0.destination.hostID == profile.id) && [.running, .queued, .paused, .awaitingConfirmation, .failed].contains($0.status) }) else {
-            errorMessage = "该主机关联未完成的传输任务，请先完成或取消任务。"; return
+            errorMessage = L10n.text("该主机关联未完成的传输任务，请先完成或取消任务。"); return
         }
         hosts.removeAll { $0.id == profile.id }
         do { try paths.save(hosts, to: paths.hosts) } catch { errorMessage = error.localizedDescription }
@@ -117,7 +120,7 @@ final class AppStore: ObservableObject {
     func cancel(_ job: TransferJob) {
         active[job.id]?.cancel()
         if let index = transfers.firstIndex(where: { $0.id == job.id }) {
-            transfers[index].status = .cancelled; transfers[index].message = "已取消。目标目录的 .swb-*.part 断点文件保留，确认不需要后可删除。"
+            transfers[index].status = .cancelled; transfers[index].message = L10n.text("已取消。目标目录的 .swb-*.part 断点文件保留，确认不需要后可删除。")
         }
         persistTransfers(force: true)
     }
@@ -145,7 +148,7 @@ final class AppStore: ObservableObject {
         let snapshot = transfers; let paths = paths
         persistence.async { [weak self] in
             do { try paths.save(snapshot, to: paths.transfers) }
-            catch { DispatchQueue.main.async { self?.errorMessage = "保存传输断点失败：\(error.localizedDescription)" } }
+            catch { DispatchQueue.main.async { self?.errorMessage = L10n.text("保存传输断点失败：\(error.localizedDescription)") } }
         }
     }
     func prepareToQuit() {
@@ -159,7 +162,7 @@ final class AppStore: ObservableObject {
         UserDefaults.standard.set(fontSize, forKey: "fontSize"); UserDefaults.standard.set(fontName, forKey: "fontName"); UserDefaults.standard.set(appearance, forKey: "appearance")
     }
     func importSSHConfig(_ url: URL) {
-        let alert = NSAlert(); alert.messageText = "仅导入可信的 SSH 配置"; alert.informativeText = "SSH 配置中的 ProxyCommand / Match exec 可以执行本地命令。导入后连接将使用所选配置文件；不会复制私钥。"; alert.addButton(withTitle: "信任并导入"); alert.addButton(withTitle: "取消")
+        let alert = NSAlert(); alert.messageText = L10n.text("仅导入可信的 SSH 配置"); alert.informativeText = L10n.text("SSH 配置中的 ProxyCommand / Match exec 可以执行本地命令。导入后连接将使用所选配置文件；不会复制私钥。"); alert.addButton(withTitle: L10n.text("信任并导入")); alert.addButton(withTitle: L10n.text("取消"))
         guard alert.runModal() == .alertFirstButtonReturn else { return }
         Task {
             do {
@@ -173,7 +176,7 @@ final class AppStore: ObservableObject {
                     }
                     var imported: [HostProfile] = []
                     for alias in Array(Set(aliases)).sorted() {
-                        var profile = HostProfile(name: alias, address: alias, group: "SSH 配置")
+                        var profile = HostProfile(name: alias, address: alias, group: L10n.text("SSH 配置"))
                         try profile.validate()
                         let result = try ProcessRunner.run(executable: "/usr/bin/ssh", arguments: ["-F", url.path, "-G", alias], timeout: 10).checked()
                         var values: [String: String] = [:]
@@ -187,7 +190,7 @@ final class AppStore: ObservableObject {
                     return imported
                 }.value
                 for profile in profiles where !hosts.contains(where: { $0.address == profile.address && $0.configFile == profile.configFile }) { try saveHost(profile) }
-                if profiles.isEmpty { errorMessage = "该文件未包含可导入的具体 Host 别名；通配符不会转换为主机。" }
+                if profiles.isEmpty { errorMessage = L10n.text("该文件未包含可导入的具体 Host 别名；通配符不会转换为主机。") }
             } catch { errorMessage = error.localizedDescription }
         }
     }

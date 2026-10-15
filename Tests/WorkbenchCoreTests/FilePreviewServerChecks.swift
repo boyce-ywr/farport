@@ -48,4 +48,15 @@ func checkPreviewServer() throws {
     try expect(trustedResponse.2.contains("script-src 'self' 'unsafe-inline'") && trustedResponse.2.contains("connect-src 'self'"), "信任模式只允许目录内脚本和数据")
     server.stop(); try expect(!server.isRunning, "预览服务可撤销")
     try rejects("服务撤销后不得生成链接") { _ = try server.url(for: "index.html") }
+    let media = try FilePreviewServer(transport: transport, host: nil, directory: folder.path, fileName: "style.css")
+    defer { media.stop() }
+    let mediaURL = try media.url(for: "style.css")
+    try expect(try request(mediaURL.absoluteString, extra: ["-H", "Range: bytes=0-3"]).0 == "206", "单文件媒体模式支持 Range")
+    try expect(try request(mediaURL.deletingLastPathComponent().appendingPathComponent("index.html").absoluteString).0 == "403", "媒体预览不得访问同目录其他文件")
+    let large = folder.appendingPathComponent("large.mp4")
+    FileManager.default.createFile(atPath: large.path, contents: nil)
+    let handle = try FileHandle(forWritingTo: large); try handle.truncate(atOffset: 300 * 1024 * 1024); try handle.close()
+    let largeServer = try FilePreviewServer(transport: transport, host: nil, directory: folder.path, fileName: "large.mp4")
+    defer { largeServer.stop() }
+    try expect(try request(largeServer.url(for: "large.mp4").absoluteString, extra: ["-I"]).0 == "200", "媒体模式大于256MiB文件不需完整下载")
 }

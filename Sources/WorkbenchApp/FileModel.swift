@@ -26,6 +26,10 @@ final class FileModel: ObservableObject {
     @Published var webScripts = false
     @Published var previewRatio = 0.38
     @Published var fileSort = FileSort()
+    @Published private(set) var history = DirectoryHistory()
+    @Published var mediaURL: URL?
+    private var mediaServer: FilePreviewServer?
+    private var previewFailure: String?
     var sortOrder: [FileSortComparator] {
         get { fileSort.column.map { [FileSortComparator(column: $0, order: fileSort.descending ? .reverse : .forward)] } ?? [] }
         set {}
@@ -46,6 +50,20 @@ final class FileModel: ObservableObject {
     init(host: HostProfile?, store: AppStore) { self.host = host; transport = store.transport; self.store = store }
     var isHTML: Bool { ["html", "htm"].contains(((previewFile?.path ?? "") as NSString).pathExtension.lowercased()) }
     var isMarkdown: Bool { ["md", "markdown"].contains(((previewFile?.path ?? "") as NSString).pathExtension.lowercased()) }
+    var isMedia: Bool { ["mp3", "m4a", "aac", "wav", "aif", "aiff", "flac", "mp4", "m4v", "mov", "webm", "mkv", "ogg", "opus"].contains(((previewFile?.path ?? "") as NSString).pathExtension.lowercased()) }
+    func stopMediaPreview() { mediaServer?.stop(); mediaServer = nil; mediaURL = nil }
+    func startMediaPreview() {
+        guard let file = previewFile, isMedia else { return }
+        let identifier = generation; let transport = transport; let host = host
+        stopMediaPreview(); previewBusy = true
+        Task {
+            do {
+                let server = try await Task.detached { try FilePreviewServer(transport: transport, host: host, directory: RemotePath.parent(file.path), fileName: file.name) }.value
+                guard generation == identifier, previewFile?.path == file.path else { server.stop(); return }
+                mediaServer = server; mediaURL = try server.url(for: file.name); previewBusy = false
+            } catch { if generation == identifier { previewFailure = error.localizedDescription; errorMessage = previewFailure; previewBusy = false } }
+        }
+    }
     func stopWebPreview() { webServer?.stop(); webServer = nil; webURL = nil }
     func startWebPreview(allowScripts: Bool = false) {
         guard let file = previewFile, isHTML else { return }
@@ -66,12 +84,15 @@ final class FileModel: ObservableObject {
     var selectedEndpoints: [FileEndpoint] { selectedFiles.map { FileEndpoint(hostID: host?.id, path: $0.path) } }
     var previewText: String { String(decoding: previewData, as: UTF8.self) }
     var binaryPreview: Bool { previewData.contains(0) && previewImage == nil }
-    var editable: Bool { guard let file = previewFile else { return false }; return !file.attributes.isDirectory && !file.attributes.isSymbolicLink && file.attributes.size <= previewLimit && previewOffset == 0 && String(data: previewData, encoding: .utf8) != nil && !binaryPreview && previewImage == nil }
+    var editable: Bool { guard let file = previewFile else { return false }; return !previewBusy && !isMedia && !file.attributes.isDirectory && !file.attributes.isSymbolicLink && file.attributes.size <= previewLimit && previewOffset == 0 && String(data: previewData, encoding: .utf8) != nil && !binaryPreview && previewImage == nil }
     func loadIfNeeded(_ initialPath: String? = nil) {
         if !hasLoaded && !busy { load(initialPath ?? path) }
     }
-    func load(_ target: String? = nil) {
+    func goBack() { if let destination = history.backDestination, !busy { load(destination, returning: true) } }
+    func load(_ target: String? = nil, returning: Bool = false) {
         navigation.cancel(); navigation = CancellationFlag(); let cancellation = navigation
+        previewCancellation.cancel(); generation = UUID(); previewBusy = false; previewFailure = nil; openingLink = nil
+        stopMediaPreview()
         let target = target ?? path; let transport = transport; let host = host
         busy = true; errorMessage = nil
         Task {
@@ -83,6 +104,7 @@ final class FileModel: ObservableObject {
                     return (canonical, try client.list(canonical), 0)
                 }.value
                 guard !cancellation.isCancelled else { return }
+                if returning { history.returned(to: result.0) } else { history.visited(result.0) }
                 if path != result.0 { previewCancellation.cancel(); generation = UUID(); previewBusy = false; filter = ""; selection = [] }
                 path = result.0; pathInput = result.0; files = result.1; skippedFileNames = result.2; busy = false; hasLoaded = true
                 selection.formIntersection(Set(files.map(\.path)))
@@ -97,6 +119,8 @@ final class FileModel: ObservableObject {
         else { selection = [file.path]; preview(file, openLinkedDirectory: file.attributes.isSymbolicLink) }
     }
     func preview(_ file: RemoteFile, offset: UInt64 = 0, tail: Bool = false, openLinkedDirectory: Bool = false) {
+        if let previousFailure = previewFailure, errorMessage == previousFailure { errorMessage = nil }
+        previewFailure = nil; stopMediaPreview()
         if openLinkedDirectory { openingLink = file.path }
         else if openingLink != file.path { openingLink = nil }
         previewCancellation.cancel(); previewCancellation = CancellationFlag(); let cancellation = previewCancellation
@@ -104,23 +128,24 @@ final class FileModel: ObservableObject {
         previewFile = file; previewBusy = true
         previewData = Data(); previewImage = nil; previewPDF = nil; webURL = nil; previewTargetIsDirectory = false
         if file.attributes.isDirectory { previewData = Data(); previewImage = nil; previewBusy = false; return }
-        let transport = transport; let host = host; let limit = previewLimit
+        let transport = transport; let host = host; let limit = previewLimit; let media = isMedia
         Task {
             do {
                 let result = try await Task.detached { () -> (Data, FileAttributes, UInt64) in
                     let client = try transport.files(host, cancellation: cancellation); defer { client.close() }
                     let attributes = try client.stat(file.path, followLinks: true)
                     if attributes.isDirectory { return (Data(), attributes, 0) }
-                    guard attributes.isRegularFile else { throw WorkbenchError.message("不预览设备、管道或套接字。") }
+                    guard attributes.isRegularFile else { throw WorkbenchError.message(L10n.text("不预览设备、管道或套接字。")) }
+                    if media { return (Data(), attributes, 0) }
                     let position = tail ? (attributes.size > UInt64(limit) ? attributes.size - UInt64(limit) : 0) : min(offset, attributes.size)
                     let imageType = ["png", "jpg", "jpeg", "gif", "tiff", "webp", "heic"].contains((file.path as NSString).pathExtension.lowercased())
                     if (file.path as NSString).pathExtension.lowercased() == "pdf" {
-                        guard attributes.size <= 32 * 1024 * 1024 else { throw WorkbenchError.message("PDF 超过 32 MiB，请下载后查看。") }
+                        guard attributes.size <= 32 * 1024 * 1024 else { throw WorkbenchError.message(L10n.text("PDF 超过 32 MiB，请下载后查看。")) }
                         var data = Data()
                         while data.count < Int(attributes.size) {
                             try cancellation.check()
                             let chunk = try client.preview(file.path, offset: UInt64(data.count), limit: min(4 * 1024 * 1024, Int(attributes.size) - data.count))
-                            guard !chunk.isEmpty else { throw WorkbenchError.message("PDF 在读取期间发生变化。") }
+                            guard !chunk.isEmpty else { throw WorkbenchError.message(L10n.text("PDF 在读取期间发生变化。")) }
                             data.append(chunk)
                         }
                         return (data, attributes, 0)
@@ -139,14 +164,16 @@ final class FileModel: ObservableObject {
                 previewImage = NSImage(data: result.0)
                 if (file.path as NSString).pathExtension.lowercased() == "pdf" {
                     previewPDF = PDFDocument(data: result.0); previewImage = nil
-                    if previewPDF == nil { errorMessage = "PDF 无法解析，可能已损坏或加密，请下载后查看。" }
+                    if previewPDF == nil { errorMessage = L10n.text("PDF 无法解析，可能已损坏或加密，请下载后查看。") }
                 }
                 previewBusy = false
                 if result.1.isDirectory, openingLink == file.path { openingLink = nil; load(file.path) }
+                else if media { startMediaPreview() }
                 else if isHTML { startWebPreview() }
             } catch {
                 if generation == identifier && !cancellation.isCancelled {
-                    errorMessage = errorMessage ?? (file.attributes.isSymbolicLink ? "无法打开符号链接目标（可能已失效、循环或没有访问权限）：\(error.localizedDescription)" : error.localizedDescription)
+                    let failure = file.attributes.isSymbolicLink ? L10n.text("无法打开符号链接目标（可能已失效、循环或没有访问权限）：\(error.localizedDescription)") : error.localizedDescription
+                    if errorMessage == nil { errorMessage = failure; previewFailure = failure }
                     previewBusy = false
                     openingLink = nil
                 }
@@ -175,7 +202,7 @@ final class FileModel: ObservableObject {
                 files.removeAll { result.0.contains($0.path) }; selection.subtract(result.0)
                 if let previewFile, result.0.contains(previewFile.path) { self.previewFile = nil; previewData = Data(); previewImage = nil }
                 busy = false
-                if !result.1.isEmpty { errorMessage = "已删除 \(result.0.count) 项，\(result.1.count) 项未能完成（目录可能已部分删除）：\n" + result.1.prefix(5).joined(separator: "\n") }
+                if !result.1.isEmpty { errorMessage = L10n.text("已删除 \(result.0.count) 项，\(result.1.count) 项未能完成（目录可能已部分删除）：\n") + result.1.prefix(5).joined(separator: "\n") }
             } catch { if !cancellation.isCancelled { busy = false; errorMessage = error.localizedDescription } }
         }
     }
@@ -187,6 +214,7 @@ final class FileModel: ObservableObject {
         }
     }
     func stop() {
+        stopMediaPreview()
         if busy { hasLoaded = false }
         navigation.cancel(); previewCancellation.cancel(); generation = UUID()
         busy = false; previewBusy = false; followLog = false
@@ -215,10 +243,10 @@ struct RemoteEditor: View {
     }
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            HStack { Image(systemName: "doc.text").foregroundStyle(.teal); Text(document.file.name).font(.title3.bold()); Spacer(); Text(host == nil ? "UTF-8 · 本地编辑" : "UTF-8 · 远程编辑").font(.caption).foregroundStyle(.secondary) }
+            HStack { Image(systemName: "doc.text").foregroundStyle(.teal); Text(document.file.name).font(.title3.bold()); Spacer(); Text(host == nil ? L10n.text("UTF-8 · 本地编辑") : L10n.text("UTF-8 · 远程编辑")).font(.caption).foregroundStyle(.secondary) }
             Text(document.file.path).font(.system(size: 11, design: .monospaced)).foregroundStyle(.secondary)
             if ["md", "markdown"].contains((document.file.path as NSString).pathExtension.lowercased()) {
-                Toggle("实时 Markdown 预览", isOn: $showPreview).toggleStyle(.checkbox).font(.caption)
+                Toggle(L10n.text("实时 Markdown 预览"), isOn: $showPreview).toggleStyle(.checkbox).font(.caption)
             }
             HSplitView {
                 TextEditor(text: $text).font(.system(size: 13, design: .monospaced)).border(.quaternary).disabled(busy).frame(minWidth: 260)
@@ -226,16 +254,16 @@ struct RemoteEditor: View {
             }
             if let errorMessage { ErrorBanner(message: errorMessage) { self.errorMessage = nil } }
             HStack {
-                Label("保存前检查文件变化，临时文件写完后原子替换。", systemImage: "lock.shield").font(.caption).foregroundStyle(.secondary)
+                Label(L10n.text("保存前检查文件变化，临时文件写完后原子替换。"), systemImage: "lock.shield").font(.caption).foregroundStyle(.secondary)
                 Spacer()
                 if busy { ProgressView().controlSize(.small) }
-                Button("取消") { if text == String(decoding: document.data, as: UTF8.self) || confirm("放弃未保存的修改？", "远端文件尚未修改。") { dismiss() } }.disabled(busy)
-                Button(host == nil ? "保存文件" : "保存到远端") { save() }.buttonStyle(.borderedProminent).keyboardShortcut("s").disabled(busy)
+                Button(L10n.text("取消")) { if text == String(decoding: document.data, as: UTF8.self) || confirm(L10n.text("放弃未保存的修改？"), L10n.text("远端文件尚未修改。")) { dismiss() } }.disabled(busy)
+                Button(host == nil ? L10n.text("保存文件") : L10n.text("保存到远端")) { save() }.buttonStyle(.borderedProminent).keyboardShortcut("s").disabled(busy)
             }
         }.padding(24).frame(width: 850, height: 620).interactiveDismissDisabled()
     }
     private func save() {
-        guard let data = text.data(using: .utf8), data.count <= 512 * 1024 else { errorMessage = "编辑内容超过 512 KiB，请使用终端编辑或上传文件。"; return }
+        guard let data = text.data(using: .utf8), data.count <= 512 * 1024 else { errorMessage = L10n.text("编辑内容超过 512 KiB，请使用终端编辑或上传文件。"); return }
         busy = true; let transport = store.transport; let file = document.file
         Task {
             do {

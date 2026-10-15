@@ -38,7 +38,7 @@ struct WorkspaceRoot: View {
                 workspace.selectedHostID = host.id; editingHost = nil
             }
         }
-        .alert("操作未完成", isPresented: Binding(get: { store.errorMessage != nil }, set: { if !$0 { store.errorMessage = nil } })) { Button("知道了") { store.errorMessage = nil } } message: { Text(store.errorMessage ?? "") }
+        .alert(L10n.text("操作未完成"), isPresented: Binding(get: { store.errorMessage != nil }, set: { if !$0 { store.errorMessage = nil } })) { Button(L10n.text("知道了")) { store.errorMessage = nil } } message: { Text(store.errorMessage ?? "") }
         .task { await prepareQA() }
     }
     private var sidebar: some View {
@@ -47,35 +47,35 @@ struct WorkspaceRoot: View {
                 Image(systemName: "terminal.fill").font(.system(size: 22, weight: .semibold)).foregroundStyle(.teal)
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Farport").font(.system(size: 20, weight: .bold, design: .rounded))
-                    Text("栖远 · 连接远方，安放工作").font(.system(size: 9, weight: .medium)).foregroundStyle(.secondary)
+                    Text(L10n.text("栖远 · 连接远方，安放工作")).font(.system(size: 9, weight: .medium)).foregroundStyle(.secondary)
                 }
             }.padding(.horizontal, 16).padding(.top, 16).padding(.bottom, 16)
             HStack(spacing: 7) {
                 Image(systemName: "magnifyingglass").foregroundStyle(.tertiary)
-                TextField("搜索主机", text: $workspace.hostSearch).textFieldStyle(.plain)
+                TextField(L10n.text("搜索主机"), text: $workspace.hostSearch).textFieldStyle(.plain)
             }.padding(9).background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 8)).padding(.horizontal, 14)
             Button { workspace.openLocalTerminal() } label: {
                 HStack(spacing: 10) {
                     Image(systemName: "laptopcomputer").font(.system(size: 17)).foregroundStyle(.teal)
                         .frame(width: 34, height: 36).background(.teal.opacity(0.1), in: RoundedRectangle(cornerRadius: 8))
                     VStack(alignment: .leading, spacing: 4) {
-                        Text("本机终端").font(.system(size: 12, weight: .semibold))
-                        Text("此 Mac · 登录 Shell").font(.system(size: 10)).foregroundStyle(.secondary)
+                        Text(L10n.text("本机终端")).font(.system(size: 12, weight: .semibold))
+                        Text(L10n.text("此 Mac · 登录 Shell")).font(.system(size: 10)).foregroundStyle(.secondary)
                     }
                     Spacer(minLength: 0)
                     if showingLocalTerminal { RoundedRectangle(cornerRadius: 2).fill(.teal).frame(width: 3, height: 22) }
                 }.padding(8).frame(maxWidth: .infinity).contentShape(Rectangle())
                     .background(showingLocalTerminal ? Color.teal.opacity(scheme == .dark ? 0.16 : 0.09) : .clear, in: RoundedRectangle(cornerRadius: 10))
-            }.buttonStyle(.plain).padding(.horizontal, 10).padding(.top, 14).help("在 Farport 中打开本机登录 Shell")
+            }.buttonStyle(.plain).padding(.horizontal, 10).padding(.top, 14).help(L10n.text("在 Farport 中打开本机登录 Shell"))
                 .interactionFrame("local-terminal")
                 .contextMenu {
-                    Button("新建本机终端") { workspace.connectLocal() }
-                    Button("添加本机分屏") { workspace.connectLocal(split: true) }
+                    Button(L10n.text("新建本机终端")) { workspace.connectLocal() }
+                    Button(L10n.text("添加本机分屏")) { workspace.connectLocal(split: true) }
                 }
             HStack {
-                Text("我的主机").font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary)
+                Text(L10n.text("我的主机")).font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary)
                 Spacer()
-                Button { editingHost = HostProfile() } label: { Image(systemName: "plus") }.buttonStyle(.plain).help("添加主机")
+                Button { editingHost = HostProfile() } label: { Image(systemName: "plus") }.buttonStyle(.plain).help(L10n.text("添加主机"))
             }.padding(.horizontal, 20).padding(.top, 24).padding(.bottom, 10)
             ScrollView {
                 VStack(alignment: .leading, spacing: 5) {
@@ -84,25 +84,25 @@ struct WorkspaceRoot: View {
                         ForEach(filteredHosts.filter { $0.group == group }) { host in hostRow(host) }
                     }
                     if filteredHosts.isEmpty {
-                        Text(store.hosts.isEmpty ? "还没有主机\n添加一个连接，开始工作。" : "没有匹配的主机").font(.system(size: 12)).foregroundStyle(.secondary).lineSpacing(5).padding(12)
+                        Text(store.hosts.isEmpty ? L10n.text("还没有主机\n添加一个连接，开始工作。") : L10n.text("没有匹配的主机")).font(.system(size: 12)).foregroundStyle(.secondary).lineSpacing(5).padding(12)
                     }
                 }.padding(.horizontal, 10)
             }
             Divider().padding(.horizontal, 16)
             VStack(spacing: 6) {
                 Button { workspace.browseFiles(.local) } label: {
-                    HStack { Image(systemName: "internaldrive"); Text("此 Mac 的文件"); Spacer() }.padding(10).contentShape(Rectangle())
+                    HStack { Image(systemName: "internaldrive"); Text(L10n.text("此 Mac 的文件")); Spacer() }.padding(10).contentShape(Rectangle())
                 }.buttonStyle(.plain)
                 Button { workspace.page = .transfers } label: {
-                    HStack { Image(systemName: "arrow.left.arrow.right"); Text("传输中心"); Spacer(); if store.activeCount > 0 { Text("\(store.activeCount)").font(.caption).padding(.horizontal, 6).background(.teal.opacity(0.15), in: Capsule()) } }.padding(10)
+                    HStack { Image(systemName: "arrow.left.arrow.right"); Text(L10n.text("传输中心")); Spacer(); if store.activeCount > 0 { Text("\(store.activeCount)").font(.caption).padding(.horizontal, 6).background(.teal.opacity(0.15), in: Capsule()) } }.padding(10)
                 }.buttonStyle(.plain)
                 Button { let panel = NSOpenPanel(); panel.directoryURL = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".ssh"); if panel.runModal() == .OK, let url = panel.url { store.importSSHConfig(url) } } label: {
-                    HStack { Image(systemName: "square.and.arrow.down"); Text("导入 SSH 配置"); Spacer() }.padding(10)
+                    HStack { Image(systemName: "square.and.arrow.down"); Text(L10n.text("导入 SSH 配置")); Spacer() }.padding(10)
                 }.buttonStyle(.plain).foregroundStyle(.secondary)
             }.font(.system(size: 12)).padding(10)
             HStack(spacing: 7) {
                 Image(systemName: store.isTestWorkspace ? "testtube.2" : "lock.shield").foregroundStyle(.teal)
-                Text(store.isTestWorkspace ? "隔离测试工作区" : "本地优先 · 安全连接").foregroundStyle(.secondary)
+                Text(store.isTestWorkspace ? L10n.text("隔离测试工作区") : L10n.text("本地优先 · 安全连接")).foregroundStyle(.secondary)
                 Spacer()
                 SettingsLink { Image(systemName: "gearshape") }.buttonStyle(.plain)
             }.font(.system(size: 10)).padding(17)
@@ -127,38 +127,38 @@ struct WorkspaceRoot: View {
             .contentShape(Rectangle()).onTapGesture { workspace.selectHost(host) }
             .onTapGesture(count: 2) { workspace.connectPreferred(host) }
             .contextMenu {
-                Button("连接普通终端") { workspace.connect(host) }
-                Button("管理 tmux") { workspace.selectedHostID = host.id; workspace.page = .tmux }
-                Button("浏览文件") { workspace.browseFiles(.host(host.id)) }
+                Button(L10n.text("连接普通终端")) { workspace.connect(host) }
+                Button(L10n.text("管理 tmux")) { workspace.selectedHostID = host.id; workspace.page = .tmux }
+                Button(L10n.text("浏览文件")) { workspace.browseFiles(.host(host.id)) }
                 Divider()
-                Button("编辑主机") { editingHost = host }
-                Button("清除此主机保存的凭据") { store.forgetCredentials(host) }
-                Button("移除主机", role: .destructive) {
-                    if confirm("移除“\(host.name)”？", "仅移除本地配置，不删除远端文件或 tmux 会话。") { store.removeHost(host) }
+                Button(L10n.text("编辑主机")) { editingHost = host }
+                Button(L10n.text("清除此主机保存的凭据")) { store.forgetCredentials(host) }
+                Button(L10n.text("移除主机"), role: .destructive) {
+                    if confirm(L10n.text("移除“\(host.name)”？"), L10n.text("仅移除本地配置，不删除远端文件或 tmux 会话。")) { store.removeHost(host) }
                 }
             }
     }
     private var pageBar: some View {
         HStack(spacing: 6) {
             Button { workspace.toggleSidebar() } label: { Image(systemName: "sidebar.left").frame(width: 30, height: 32) }
-                .help("展开 / 折叠主机侧栏 · ⌘⌥S").interactionFrame("workspace.sidebar")
+                .help(L10n.text("展开 / 折叠主机侧栏 · ⌘⌥S")).interactionFrame("workspace.sidebar")
             ForEach(WorkspacePage.allCases, id: \.self) { page in
                 Button { workspace.page = page } label: {
-                    Label(page.rawValue, systemImage: page.symbol).font(.system(size: 11, weight: workspace.page == page ? .semibold : .regular))
+                    Label(page.title, systemImage: page.symbol).font(.system(size: 11, weight: workspace.page == page ? .semibold : .regular))
                         .foregroundStyle(workspace.page == page ? Color.teal : .secondary).padding(.horizontal, 10).frame(height: 32)
                         .background(workspace.page == page ? Color.teal.opacity(0.1) : .clear, in: RoundedRectangle(cornerRadius: 7)).contentShape(Rectangle())
                 }.buttonStyle(.plain).interactionFrame("page.\(page.rawValue)")
             }
             Spacer()
             Menu {
-                Button("新建本机终端") { workspace.connectLocal() }
+                Button(L10n.text("新建本机终端")) { workspace.connectLocal() }
                 ForEach(store.hosts) { host in Button(host.name) { workspace.connectPreferred(host) } }
-                Divider(); Button("添加 SSH 主机…") { editingHost = HostProfile() }
-            } label: { Label(displayHost?.name ?? "此 Mac", systemImage: "server.rack").lineLimit(1) }.menuStyle(.borderlessButton).frame(maxWidth: 160)
-            Button { workspace.showTransferTray.toggle() } label: { Image(systemName: "tray.and.arrow.down").frame(width: 26, height: 32) }.help("传输队列")
+                Divider(); Button(L10n.text("添加 SSH 主机…")) { editingHost = HostProfile() }
+            } label: { Label(displayHost?.name ?? L10n.text("此 Mac"), systemImage: "server.rack").lineLimit(1) }.menuStyle(.borderlessButton).frame(maxWidth: 160)
+            Button { workspace.showTransferTray.toggle() } label: { Image(systemName: "tray.and.arrow.down").frame(width: 26, height: 32) }.help(L10n.text("传输队列"))
             if workspace.page == .terminal {
-                Button { workspace.showTerminalSearch.toggle() } label: { Image(systemName: "magnifyingglass").frame(width: 26, height: 32) }.help("查找终端内容 · ⌘F")
-                Button { workspace.chooseAttachments() } label: { Image(systemName: "paperclip").frame(width: 26, height: 32) }.help("发送附件").disabled(workspace.selectedTerminal?.connected != true)
+                Button { workspace.showTerminalSearch.toggle() } label: { Image(systemName: "magnifyingglass").frame(width: 26, height: 32) }.help(L10n.text("查找终端内容 · ⌘F"))
+                Button { workspace.chooseAttachments() } label: { Image(systemName: "paperclip").frame(width: 26, height: 32) }.help(L10n.text("发送附件")).disabled(workspace.selectedTerminal?.connected != true)
             }
         }.font(.system(size: 11)).buttonStyle(.borderless).padding(.horizontal, 10).padding(.vertical, 4)
     }
@@ -172,29 +172,49 @@ struct WorkspaceRoot: View {
                 FileSourceBar(workspace: workspace)
                 Divider()
                 if let browser = workspace.currentFileBrowser { FileWorkspace(model: browser, store: store).id(browser.id) }
-                else { Text("请选择有效的文件来源").foregroundStyle(.secondary).frame(maxWidth: .infinity, maxHeight: .infinity) }
+                else { Text(L10n.text("请选择有效的文件来源")).foregroundStyle(.secondary).frame(maxWidth: .infinity, maxHeight: .infinity) }
             }
         case .transfers: TransferWorkspace(store: store)
         case .tunnels:
             if let host = workspace.host { TunnelWorkspace(host: host, store: store).id(host) }
-            else { EmptyWorkspace(symbol: "point.3.connected.trianglepath.dotted", title: "安全访问远端服务", detail: "选择主机后创建 SSH 隧道。", action: "添加主机") { editingHost = HostProfile() } }
+            else { EmptyWorkspace(symbol: "point.3.connected.trianglepath.dotted", title: L10n.text("安全访问远端服务"), detail: L10n.text("选择主机后创建 SSH 隧道。"), action: L10n.text("添加主机")) { editingHost = HostProfile() } }
         }
     }
     private var statusBar: some View {
         HStack(spacing: 15) {
-            Label(workspace.page == .files ? (workspace.fileHost == nil ? "本机文件" : "SFTP") : (showingLocalTerminal ? "本机 Shell" : "OpenSSH"), systemImage: showingLocalTerminal ? "terminal" : "lock.shield").foregroundStyle(.secondary)
+            Label(workspace.page == .files ? (workspace.fileHost == nil ? L10n.text("本机文件") : "SFTP") : (showingLocalTerminal ? L10n.text("本机 Shell") : "OpenSSH"), systemImage: showingLocalTerminal ? "terminal" : "lock.shield").foregroundStyle(.secondary)
             Text("UTF-8").foregroundStyle(.tertiary)
             Spacer()
             if let terminal = workspace.selectedTerminal, workspace.page == .terminal {
                 TerminalStatus(session: terminal, showReconnect: false)
             }
-            Text("\(store.hosts.count) 台主机 · \(workspace.sessions.count) 个终端").foregroundStyle(.secondary)
+            Text(L10n.text("\(store.hosts.count) 台主机 · \(workspace.sessions.count) 个终端")).foregroundStyle(.secondary)
         }.font(.system(size: 10)).padding(.horizontal, 12).frame(height: 22)
     }
     private func prepareQA() async {
         guard !didPrepareQA, store.isTestWorkspace, let output = ProcessInfo.processInfo.environment["SWB_QA_OUTPUT"] else { return }
         didPrepareQA = true
         let screen = ProcessInfo.processInfo.environment["SWB_QA_SCREEN"] ?? "terminal"
+        if screen == "language-settings" {
+            do { try await LanguageChecks.run(store: store, output: URL(fileURLWithPath: output)); NSApp.terminate(nil) }
+            catch { fputs("FAIL · \(error.localizedDescription)\n", stderr); exit(1) }
+            return
+        }
+        if ["navigation-preview", "xml-preview", "media-preview", "java-preview", "python-preview"].contains(screen) {
+            do {
+                try await FileNavigationMediaChecks.run(workspace: workspace, scene: screen)
+                if let model = workspace.currentFileBrowser, let target = model.history.backDestination,
+                   let frame = interactionFrames["file.goBack"], let window = NSApp.windows.first(where: { $0.isVisible }), screen == "navigation-preview" {
+                    await clickInterface(frame, window: window)
+                    for _ in 0..<100 { if !model.busy { break }; try? await Task.sleep(for: .milliseconds(100)) }
+                    guard model.path == target else { throw WorkbenchError.message("返回按钮点击无效") }
+                    model.load(RemotePath.parent(target))
+                    for _ in 0..<100 { if !model.busy { break }; try? await Task.sleep(for: .milliseconds(100)) }
+                    if let file = model.files.first(where: { $0.name == "settings.json" }) { model.selection = [file.path]; model.preview(file) }
+                    print("PASS · 返回按钮真实点击")
+                }
+            } catch { fputs("FAIL · \(error.localizedDescription)\n", stderr); exit(1) }
+        }
         if screen.hasPrefix("readme-") {
             do { try await ReadmeScreenshots.run(workspace: workspace, scene: String(screen.dropFirst(7)), output: URL(fileURLWithPath: output)); NSApp.terminate(nil) }
             catch { fputs("FAIL · \(error.localizedDescription)\n", stderr); workspace.sessions.forEach { $0.close() }; exit(1) }
@@ -319,7 +339,7 @@ struct WorkspaceRoot: View {
             window.setContentSize(NSSize(width: max(980, width), height: max(640, height)))
         }
         try? await Task.sleep(for: .seconds(ProcessInfo.processInfo.environment["SWB_QA_BATCH_COPY"] == "1" ? 35 : (ProcessInfo.processInfo.environment["SWB_QA_FILE_NAVIGATION"] == "1" ? 15 : 5)))
-        let expected: WorkspacePage = ["files", "local-files", "file-switching", "file-deletion", "html-preview", "pdf-preview", "file-sorting", "device-files", "file-browsing", "markdown-editor"].contains(screen) ? .files : (screen == "tmux" ? .tmux : (["transfers", "transfer-workflow"].contains(screen) ? .transfers : .terminal))
+        let expected: WorkspacePage = ["files", "local-files", "file-switching", "file-deletion", "html-preview", "pdf-preview", "file-sorting", "device-files", "file-browsing", "markdown-editor", "navigation-preview", "xml-preview", "media-preview", "java-preview", "python-preview"].contains(screen) ? .files : (screen == "tmux" ? .tmux : (["transfers", "transfer-workflow"].contains(screen) ? .transfers : .terminal))
         guard workspace.page == expected else {
             fputs("截图验收失败：请求页面与实际工作区不一致。\n", stderr)
             exit(1)
@@ -495,6 +515,6 @@ struct EmptyWorkspace: View {
 
 func confirm(_ title: String, _ detail: String) -> Bool {
     let alert = NSAlert(); alert.messageText = title; alert.informativeText = detail; alert.alertStyle = .warning
-    alert.addButton(withTitle: "确认"); alert.addButton(withTitle: "取消")
+    alert.addButton(withTitle: L10n.text("确认")); alert.addButton(withTitle: L10n.text("取消"))
     return alert.runModal() == .alertFirstButtonReturn
 }

@@ -13,10 +13,12 @@ macOS 14+ · Apple Silicon / Intel · [MIT license](LICENSE)
 - **Work in multiple terminals.** Connect over SSH or open a local shell. Use tabs and nested splits, drag tabs to reorder them, and collapse the sidebar for more space.
 - **Return to your work.** Create, inspect, and attach to local or remote tmux sessions. Closing a terminal tab does not end its tmux session.
 - **Move files between machines.** Copy files and folders between your Mac and SSH hosts, or between two SSH hosts. Multi-selection, verified resume, and overwrite confirmation are included.
-- **Read and edit remote files.** Preview text, images, Markdown, HTML, and PDF. Edit text and Markdown with conflict checks before saving.
+- **Read and edit remote files.** Preview text, images, Markdown, HTML, PDF, and audio/video. Common source files such as Java, Python, and JSON/XML have syntax highlighting. Edits check for conflicts before saving.
 - **Send images to a remote coding agent.** Paste a clipboard image or drag in files. Farport uploads and verifies them, then inserts a path the target machine can read. It does not press Enter for you.
 
 Also included: host groups and colors, SSH config import, jump hosts, port forwarding, terminal search, pinch-to-zoom fonts, and light/dark appearance.
+
+Choose English or Simplified Chinese in Settings; the change applies next launch. The file browser's Back button follows the visit history of each file source.
 
 ### tmux sessions
 
@@ -40,17 +42,17 @@ Open HTML reports in your browser, too. A temporary localhost address reads the 
 
 ![A remote HTML report displayed inside Farport](docs/images/html.png)
 
-<sub>Real application screenshots using isolated demo hosts and files. The current interface is in Chinese.</sub>
+<sub>Real application screenshots using isolated demo hosts and files, shown in Simplified Chinese. An English interface is also available.</sub>
 
 ## Install
 
-Download a DMG from [GitHub Releases](https://github.com/boyce-ywr/farport/releases/latest). Current version: **0.1.6**.
+Download a DMG from [GitHub Releases](https://github.com/boyce-ywr/farport/releases/latest). Current version: **0.1.7**.
 
 | Mac | Download |
 | --- | --- |
-| Apple Silicon, including M-series chips | [Apple Silicon](https://github.com/boyce-ywr/farport/releases/download/v0.1.6/Farport-0.1.6-arm64.dmg) |
-| Intel | [Intel](https://github.com/boyce-ywr/farport/releases/download/v0.1.6/Farport-0.1.6-x86_64.dmg) |
-| Unsure, or need both architectures | [Universal](https://github.com/boyce-ywr/farport/releases/download/v0.1.6/Farport-0.1.6-universal.dmg) |
+| Apple Silicon, including M-series chips | [Apple Silicon](https://github.com/boyce-ywr/farport/releases/download/v0.1.7/Farport-0.1.7-arm64.dmg) |
+| Intel | [Intel](https://github.com/boyce-ywr/farport/releases/download/v0.1.7/Farport-0.1.7-x86_64.dmg) |
+| Unsure, or need both architectures | [Universal](https://github.com/boyce-ywr/farport/releases/download/v0.1.7/Farport-0.1.7-universal.dmg) |
 
 1. Open the DMG and drag **Farport.app** into **Applications**.
 2. Launch Farport from Applications. Save your work and quit the previous version before upgrading.
@@ -64,9 +66,9 @@ Normal SSH use does not require Swift, Docker, or GitHub CLI. To manage tmux ses
 
 ## Get started
 
-1. Click **+** beside “我的主机” in the sidebar. Add a host address, username, and authentication details, or import an SSH config.
-2. Use **测试连接** to check SSH and SFTP, then save and connect. Verify the server fingerprint on first connection.
-3. Open **tmux 会话** for persistent sessions or **文件** for files. A local terminal is available directly from the sidebar.
+1. Click **+** beside **My hosts** in the sidebar. Add a host address, username, and authentication details, or import an SSH config.
+2. Use **Test connection** to check SSH and SFTP, then save and connect. Verify the server fingerprint on first connection.
+3. Open **tmux sessions** for persistent sessions or **Files** for files. A local terminal is available directly from the sidebar.
 
 | Action | Shortcut |
 | --- | --- |
@@ -79,7 +81,7 @@ Normal SSH use does not require Swift, Docker, or GitHub CLI. To manage tmux ses
 
 ## FAQ
 
-**How do updates work?** Download and replace the app from Releases; GitHub CLI is not required for this. Version 0.1.6’s in-app update checker currently requires an authenticated GitHub CLI installation. It verifies the downloaded package and lets you decide when to install—it does not close your terminals automatically.
+**How do updates work?** Download and replace the app from Releases; GitHub CLI is not required for this. Version 0.1.7’s in-app update checker currently requires an authenticated GitHub CLI installation. It verifies the downloaded package and lets you decide when to install—it does not close your terminals automatically.
 
 **Can I use Codex or Claude Code?** You can send images and files to the machine running your agent. The remote Codex + tmux image workflow has been tested; the full Claude Code image-recognition workflow has not been independently verified. Nested SSH, containers, and different users can have separate filesystems, so check that the receiving process can read the uploaded location.
 

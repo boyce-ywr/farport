@@ -43,38 +43,38 @@ struct HostEditor: View {
                 Image(systemName: "server.rack").font(.system(size: 23)).foregroundStyle(profile.markColor)
                     .frame(width: 48, height: 48).background(profile.markColor.opacity(0.12), in: RoundedRectangle(cornerRadius: 12))
                 VStack(alignment: .leading, spacing: 5) {
-                    Text("配置 SSH 主机").font(.system(size: 21, weight: .semibold))
-                    Text("连接远方，从一个可靠的入口开始。").font(.system(size: 12)).foregroundStyle(.secondary)
+                    Text(L10n.text("配置 SSH 主机")).font(.system(size: 21, weight: .semibold))
+                    Text(L10n.text("连接远方，从一个可靠的入口开始。")).font(.system(size: 12)).foregroundStyle(.secondary)
                 }
                 Spacer(minLength: 0)
             }.padding(24)
             Divider()
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
-                    section("连接信息", symbol: "network") {
+                    section(L10n.text("连接信息"), symbol: "network") {
                         HStack(alignment: .top, spacing: 16) {
-                            field("显示名称") { TextField("例如：开发服务器", text: $profile.name).accessibilityIdentifier("host.name") }
-                            field("分组") { TextField("我的主机", text: $profile.group) }
+                            field(L10n.text("显示名称")) { TextField(L10n.text("例如：开发服务器"), text: $profile.name).accessibilityIdentifier("host.name") }
+                            field(L10n.text("分组")) { TextField(L10n.text("我的主机"), text: $profile.group) }
                         }
-                        field("地址 / SSH 别名") { TextField("hostname 或 192.168.1.10", text: $profile.address).accessibilityIdentifier("host.address") }
+                        field(L10n.text("地址 / SSH 别名")) { TextField(L10n.text("hostname 或 192.168.1.10"), text: $profile.address).accessibilityIdentifier("host.address") }
                         HStack(alignment: .top, spacing: 16) {
-                            field("用户名") { TextField("留空使用 SSH 默认用户", text: $profile.username).accessibilityIdentifier("host.username") }
-                            field("端口") { TextField("22", value: $profile.port, format: .number.grouping(.never)).accessibilityIdentifier("host.port") }.frame(width: 110)
+                            field(L10n.text("用户名")) { TextField(L10n.text("留空使用 SSH 默认用户"), text: $profile.username).accessibilityIdentifier("host.username") }
+                            field(L10n.text("端口")) { TextField("22", value: $profile.port, format: .number.grouping(.never)).accessibilityIdentifier("host.port") }.frame(width: 110)
                         }
                     }
-                    section("认证与跳转", symbol: "key") {
-                        field("私钥文件") {
+                    section(L10n.text("认证与跳转"), symbol: "key") {
+                        field(L10n.text("私钥文件")) {
                             HStack(spacing: 8) {
-                                TextField("留空使用 SSH Agent 或默认密钥", text: $profile.identityFile)
-                                Button("选择…") { let panel = NSOpenPanel(); panel.showsHiddenFiles = true; panel.directoryURL = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".ssh"); if panel.runModal() == .OK { profile.identityFile = panel.url?.path ?? "" } }
+                                TextField(L10n.text("留空使用 SSH Agent 或默认密钥"), text: $profile.identityFile)
+                                Button(L10n.text("选择…")) { let panel = NSOpenPanel(); panel.showsHiddenFiles = true; panel.directoryURL = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".ssh"); if panel.runModal() == .OK { profile.identityFile = panel.url?.path ?? "" } }
                             }
                         }
-                        field("跳板机 / ProxyJump") { TextField("可选，例如 user@jump:22", text: $profile.jumpHost) }
-                        Label("密码与私钥口令在连接时输入，不写入主机配置。", systemImage: "lock.shield").font(.system(size: 11)).foregroundStyle(.secondary)
-                        if let config = profile.configFile { Text("SSH 配置：\(config)").font(.caption).foregroundStyle(.secondary).lineLimit(2).truncationMode(.middle).help(config) }
+                        field(L10n.text("跳板机 / ProxyJump")) { TextField(L10n.text("可选，例如 user@jump:22"), text: $profile.jumpHost) }
+                        Label(L10n.text("密码与私钥口令在连接时输入，不写入主机配置。"), systemImage: "lock.shield").font(.system(size: 11)).foregroundStyle(.secondary)
+                        if let config = profile.configFile { Text(L10n.text("SSH 配置：\(config)")).font(.caption).foregroundStyle(.secondary).lineLimit(2).truncationMode(.middle).help(config) }
                     }
-                    section("工作区偏好", symbol: "rectangle.3.group") {
-                        Toggle("连接时优先打开 tmux 工作区", isOn: $profile.prefersTmux).font(.system(size: 12))
+                    section(L10n.text("工作区偏好"), symbol: "rectangle.3.group") {
+                        Toggle(L10n.text("连接时优先打开 tmux 工作区"), isOn: $profile.prefersTmux).font(.system(size: 12))
                         HostColorPicker(selection: $profile.color)
                     }
                 }.padding(24).frame(maxWidth: .infinity, alignment: .leading)
@@ -83,22 +83,22 @@ struct HostEditor: View {
             VStack(alignment: .leading, spacing: 10) {
                 if !errorMessage.isEmpty { Text(errorMessage).font(.caption).foregroundStyle(.red).fixedSize(horizontal: false, vertical: true) }
                 if let result = connectionTest.result {
-                    Label("\(result.detail) 用时 \(String(format: "%.1f", result.elapsed)) 秒。", systemImage: result.sftpAvailable ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
+                    Label(L10n.text("\(result.detail) 用时 \(String(format: "%.1f", result.elapsed)) 秒。"), systemImage: result.sftpAvailable ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
                         .font(.caption).foregroundStyle(result.sftpAvailable ? Color.teal : .orange).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
                 }
-                if let failure = connectionTest.failure { Text("连接失败：\(failure)").font(.caption).foregroundStyle(.red).textSelection(.enabled).lineLimit(3).help(failure) }
+                if let failure = connectionTest.failure { Text(L10n.text("连接失败：\(failure)")).font(.caption).foregroundStyle(.red).textSelection(.enabled).lineLimit(3).help(failure) }
             HStack {
                 if connectionTest.running {
                     ProgressView().controlSize(.small)
-                    Text("正在验证 SSH / SFTP…").font(.caption).foregroundStyle(.secondary)
-                    Button("停止测试") { connectionTest.reset() }
+                    Text(L10n.text("正在验证 SSH / SFTP…")).font(.caption).foregroundStyle(.secondary)
+                    Button(L10n.text("停止测试")) { connectionTest.reset() }
                 } else {
-                    Button { connectionTest.start(profile: profile, transport: store.transport) } label: { Label("测试连接", systemImage: "network") }
+                    Button { connectionTest.start(profile: profile, transport: store.transport) } label: { Label(L10n.text("测试连接"), systemImage: "network") }
                         .accessibilityIdentifier("host.testConnection")
                 }
                 Spacer()
-                Button("取消") { connectionTest.reset(); dismiss() }.keyboardShortcut(.cancelAction)
-                Button("保存主机") { do { try store.saveHost(profile); saved(profile) } catch { errorMessage = error.localizedDescription } }
+                Button(L10n.text("取消")) { connectionTest.reset(); dismiss() }.keyboardShortcut(.cancelAction)
+                Button(L10n.text("保存主机")) { do { try store.saveHost(profile); saved(profile) } catch { errorMessage = error.localizedDescription } }
                     .keyboardShortcut(.defaultAction).buttonStyle(.borderedProminent).disabled(connectionTest.running)
             }
             }.padding(.horizontal, 24).padding(.vertical, 18)
@@ -109,7 +109,7 @@ struct HostEditor: View {
                 if store.isTestWorkspace && ProcessInfo.processInfo.environment["SWB_QA_SCREEN"] == "host-editor" {
                     connectionTest.start(profile: profile, transport: store.transport)
                     for _ in 0..<100 { if !connectionTest.running { break }; try? await Task.sleep(for: .milliseconds(100)) }
-                    guard connectionTest.result?.sftpAvailable == true else { fputs("FAIL · 主机弹窗测试连接未通过：\(connectionTest.failure ?? connectionTest.result?.detail ?? "测试尚未完成")\n", stderr); exit(1) }
+                    guard connectionTest.result?.sftpAvailable == true else { fputs("FAIL · 主机弹窗测试连接未通过：\(connectionTest.failure ?? connectionTest.result?.detail ?? L10n.text("测试尚未完成"))\n", stderr); exit(1) }
                     print("PASS · 主机弹窗显示 SSH / SFTP 测试连接成功")
                 }
             }

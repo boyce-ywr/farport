@@ -16,7 +16,7 @@ public struct TmuxService: Sendable {
     public static func localExecutable() throws -> String {
         let directories = (ProcessInfo.processInfo.environment["PATH"] ?? "").split(separator: ":").map(String.init) + ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin"]
         guard let executable = directories.map({ $0 + "/tmux" }).first(where: { $0.hasPrefix("/") && FileManager.default.isExecutableFile(atPath: $0) }) else {
-            throw WorkbenchError.message("本机未找到 tmux，安装后重试。不会自动修改 Shell 或 tmux 配置。")
+            throw WorkbenchError.message(L10n.text("本机未找到 tmux，安装后重试。不会自动修改 Shell 或 tmux 配置。"))
         }
         return executable
     }
@@ -65,12 +65,12 @@ public struct TmuxService: Sendable {
     public func target(session: String) throws -> TmuxTarget {
         let result = try execute("display-message -p -t \(RemotePath.quote(session)) '#{pane_id}\t#{pane_pid}\t#{pane_current_command}\t#{pane_current_path}\t#{pane_in_mode}\t#{pane_dead}'").checked()
         let parts = result.text.trimmingCharacters(in: .newlines).split(separator: "\t", omittingEmptySubsequences: false).map(String.init)
-        guard parts.count == 6, parts[4] == "0", parts[5] == "0" else { throw WorkbenchError.message("tmux 窗格处于复制模式、已退出或不可识别，未发送附件。") }
-        guard !["ssh", "mosh", "docker", "podman", "su", "sudo"].contains(parts[2]) else { throw WorkbenchError.message("窗格可能处于嵌套主机、容器或其他用户环境，请配置实际目标，不会自动发送附件。") }
+        guard parts.count == 6, parts[4] == "0", parts[5] == "0" else { throw WorkbenchError.message(L10n.text("tmux 窗格处于复制模式、已退出或不可识别，未发送附件。")) }
+        guard !["ssh", "mosh", "docker", "podman", "su", "sudo"].contains(parts[2]) else { throw WorkbenchError.message(L10n.text("窗格可能处于嵌套主机、容器或其他用户环境，请配置实际目标，不会自动发送附件。")) }
         return TmuxTarget(paneID: parts[0], processID: parts[1], command: parts[2], directory: parts[3])
     }
     public func paste(_ text: String, session: String, expected: TmuxTarget) throws {
-        guard try target(session: session) == expected else { throw WorkbenchError.message("tmux 窗格或前台程序发生变化，附件未插入。") }
+        guard try target(session: session) == expected else { throw WorkbenchError.message(L10n.text("tmux 窗格或前台程序发生变化，附件未插入。")) }
         let buffer = "farport-" + UUID().uuidString
         let tmux = try prefix
         let fingerprint = [expected.paneID, expected.processID, expected.command, expected.directory, "0", "0"].joined(separator: "\t")
@@ -81,6 +81,6 @@ public struct TmuxService: Sendable {
     }
     private func validateName(_ name: String) throws {
         guard !name.isEmpty, name.count <= 80, !name.contains(":"), !name.contains("."),
-              name.rangeOfCharacter(from: .controlCharacters) == nil else { throw WorkbenchError.message("tmux 会话名称限 1–80 个字符，不能包含句点、冒号或控制字符。") }
+              name.rangeOfCharacter(from: .controlCharacters) == nil else { throw WorkbenchError.message(L10n.text("tmux 会话名称限 1–80 个字符，不能包含句点、冒号或控制字符。")) }
     }
 }

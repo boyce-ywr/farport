@@ -41,22 +41,22 @@ struct TmuxWorkspace: View {
         VStack(alignment: .leading, spacing: 20) {
             HStack {
                 VStack(alignment: .leading, spacing: 5) {
-                    Text("让工作持续在线").font(.system(size: 23, weight: .semibold))
-                    Text(host == nil ? "管理此 Mac 的 tmux，会话不会随终端标签关闭。" : "管理远端 tmux，会话与终端连接各自独立。").font(.system(size: 12)).foregroundStyle(.secondary)
+                    Text(L10n.text("让工作持续在线")).font(.system(size: 23, weight: .semibold))
+                    Text(host == nil ? L10n.text("管理此 Mac 的 tmux，会话不会随终端标签关闭。") : L10n.text("管理远端 tmux，会话与终端连接各自独立。")).font(.system(size: 12)).foregroundStyle(.secondary)
                 }
                 Spacer()
                 if model.busy { ProgressView().controlSize(.small) }
-                Button { Task { await model.refresh() } } label: { Image(systemName: "arrow.clockwise") }.help("刷新远端会话")
-                Button { if let name = promptText("新建 tmux 会话", detail: "会话在当前机器创建，关闭标签不会结束它。", initial: "work") { model.perform { try $0.create(name: name) } } } label: { Label("新建会话", systemImage: "plus") }.buttonStyle(.borderedProminent)
+                Button { Task { await model.refresh() } } label: { Image(systemName: "arrow.clockwise") }.help(L10n.text("刷新远端会话"))
+                Button { if let name = promptText(L10n.text("新建 tmux 会话"), detail: L10n.text("会话在当前机器创建，关闭标签不会结束它。"), initial: "work") { model.perform { try $0.create(name: name) } } } label: { Label(L10n.text("新建会话"), systemImage: "plus") }.buttonStyle(.borderedProminent)
             }
             HStack(spacing: 14) {
-                metric("持久会话", value: model.sessions.count, symbol: "square.stack.3d.up", caption: "保留工作现场")
-                metric("终端窗格", value: model.panes.count, symbol: "rectangle.split.2x1", caption: "查看进程与工作目录")
-                metric("已附着客户端", value: model.sessions.reduce(0) { $0 + $1.attached }, symbol: "link", caption: "tmux 返回的实时状态")
+                metric(L10n.text("持久会话"), value: model.sessions.count, symbol: "square.stack.3d.up", caption: L10n.text("保留工作现场"))
+                metric(L10n.text("终端窗格"), value: model.panes.count, symbol: "rectangle.split.2x1", caption: L10n.text("查看进程与工作目录"))
+                metric(L10n.text("已附着客户端"), value: model.sessions.reduce(0) { $0 + $1.attached }, symbol: "link", caption: L10n.text("tmux 返回的实时状态"))
             }
             if let error = model.errorMessage { ErrorBanner(message: error) { model.errorMessage = nil } }
             if model.sessions.isEmpty && !model.busy {
-                EmptyWorkspace(symbol: "square.stack.3d.up", title: model.errorMessage == nil ? "还没有 tmux 会话" : "暂时无法读取 tmux", detail: "没有 tmux 时仍可使用普通终端。\n不会擅自安装或修改配置。", action: "打开普通终端") { if let host { workspace.connect(host) } else { workspace.connectLocal() } }
+                EmptyWorkspace(symbol: "square.stack.3d.up", title: model.errorMessage == nil ? L10n.text("还没有 tmux 会话") : L10n.text("暂时无法读取 tmux"), detail: L10n.text("没有 tmux 时仍可使用普通终端。\n不会擅自安装或修改配置。"), action: L10n.text("打开普通终端")) { if let host { workspace.connect(host) } else { workspace.connectLocal() } }
             } else {
                 ScrollView {
                     LazyVGrid(columns: [GridItem(.adaptive(minimum: 340), spacing: 16)], alignment: .leading, spacing: 16) {
@@ -64,7 +64,7 @@ struct TmuxWorkspace: View {
                     }
                 }
             }
-            HStack(spacing: 8) { Image(systemName: "info.circle"); Text("关闭终端标签只会断开连接。“结束会话”才会终止会话中的任务。") }.font(.system(size: 11)).foregroundStyle(.secondary)
+            HStack(spacing: 8) { Image(systemName: "info.circle"); Text(L10n.text("关闭终端标签只会断开连接。“结束会话”才会终止会话中的任务。")) }.font(.system(size: 11)).foregroundStyle(.secondary)
         }.padding(26)
             .task { await model.refresh(); while !Task.isCancelled { try? await Task.sleep(for: .seconds(8)); if !Task.isCancelled { await model.refresh() } } }
     }
@@ -78,13 +78,13 @@ struct TmuxWorkspace: View {
         VStack(alignment: .leading, spacing: 15) {
             HStack(spacing: 10) {
                 Image(systemName: "terminal").font(.title3).foregroundStyle(.teal)
-                VStack(alignment: .leading, spacing: 4) { Text(session.name).font(.system(size: 15, weight: .semibold)); Text("\(session.windows) 个窗口 · \(session.attached) 个客户端").font(.system(size: 10)).foregroundStyle(.secondary) }
+                VStack(alignment: .leading, spacing: 4) { Text(session.name).font(.system(size: 15, weight: .semibold)); Text(L10n.text("\(session.windows) 个窗口 · \(session.attached) 个客户端")).font(.system(size: 10)).foregroundStyle(.secondary) }
                 Spacer()
                 Menu {
-                    Button("新建窗口") { model.perform { try $0.createWindow(session: session.id) } }
-                    Button("重命名会话") { if let name = promptText("重命名会话", initial: session.name) { model.perform { try $0.rename(session: session.id, name: name) } } }
+                    Button(L10n.text("新建窗口")) { model.perform { try $0.createWindow(session: session.id) } }
+                    Button(L10n.text("重命名会话")) { if let name = promptText(L10n.text("重命名会话"), initial: session.name) { model.perform { try $0.rename(session: session.id, name: name) } } }
                     Divider()
-                    Button("结束会话…", role: .destructive) { if confirm("结束“\(session.name)”？", "这会终止此远端会话中的全部窗口、窗格和正在运行的任务，无法撤销。") { model.perform { try $0.kill(session: session.id) } } }
+                    Button(L10n.text("结束会话…"), role: .destructive) { if confirm(L10n.text("结束“\(session.name)”？"), L10n.text("这会终止此远端会话中的全部窗口、窗格和正在运行的任务，无法撤销。")) { model.perform { try $0.kill(session: session.id) } } }
                 } label: { Image(systemName: "ellipsis") }.menuStyle(.borderlessButton).frame(width: 24)
             }
             Divider()
@@ -96,10 +96,10 @@ struct TmuxWorkspace: View {
                         Text(pane.directory).font(.system(size: 10, design: .monospaced)).foregroundStyle(.tertiary).lineLimit(1)
                     }
                     Spacer()
-                    Button { model.perform { try $0.select(pane: pane) }; workspace.attachTmux(host, session: session) } label: { Image(systemName: "arrow.up.right") }.buttonStyle(.plain).help("进入此窗格")
-                }.contextMenu { Button("横向分割窗格") { model.perform { try $0.split(pane: pane.id) } } }
+                    Button { model.perform { try $0.select(pane: pane) }; workspace.attachTmux(host, session: session) } label: { Image(systemName: "arrow.up.right") }.buttonStyle(.plain).help(L10n.text("进入此窗格"))
+                }.contextMenu { Button(L10n.text("横向分割窗格")) { model.perform { try $0.split(pane: pane.id) } } }
             }
-            HStack { Text(session.created, style: .date).font(.system(size: 10)).foregroundStyle(.tertiary); Spacer(); Button("进入会话") { workspace.attachTmux(host, session: session) }.buttonStyle(.bordered).tint(.teal) }
+            HStack { Text(session.created, style: .date).font(.system(size: 10)).foregroundStyle(.tertiary); Spacer(); Button(L10n.text("进入会话")) { workspace.attachTmux(host, session: session) }.buttonStyle(.bordered).tint(.teal) }
         }.padding(18).background(Color(nsColor: .controlBackgroundColor).opacity(0.65), in: RoundedRectangle(cornerRadius: 13))
             .overlay(RoundedRectangle(cornerRadius: 13).strokeBorder(.quaternary.opacity(0.65)))
     }
@@ -108,7 +108,7 @@ struct TmuxWorkspace: View {
 func promptText(_ title: String, detail: String = "", initial: String = "") -> String? {
     let alert = NSAlert(); alert.messageText = title; alert.informativeText = detail
     let field = NSTextField(string: initial); field.frame = NSRect(x: 0, y: 0, width: 360, height: 25); alert.accessoryView = field; alert.window.initialFirstResponder = field
-    alert.addButton(withTitle: "确定"); alert.addButton(withTitle: "取消")
+    alert.addButton(withTitle: L10n.text("确定")); alert.addButton(withTitle: L10n.text("取消"))
     return alert.runModal() == .alertFirstButtonReturn ? field.stringValue : nil
 }
 

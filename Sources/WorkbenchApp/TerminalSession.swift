@@ -41,7 +41,7 @@ final class SafeTerminalView: LocalProcessTerminalView {
     override func paste(_ sender: Any) {
         if receiveAttachments(from: NSPasteboard.general) { return }
         if let text = NSPasteboard.general.string(forType: .string), text.contains("\n") || text.contains("\r") {
-            let alert = NSAlert(); alert.messageText = "粘贴多行内容？"; alert.informativeText = "内容可能包含会立即执行的命令。\n\n" + String(text.prefix(700)); alert.addButton(withTitle: "粘贴"); alert.addButton(withTitle: "取消")
+            let alert = NSAlert(); alert.messageText = L10n.text("粘贴多行内容？"); alert.informativeText = L10n.text("内容可能包含会立即执行的命令。\n\n") + String(text.prefix(700)); alert.addButton(withTitle: L10n.text("粘贴")); alert.addButton(withTitle: L10n.text("取消"))
             guard alert.runModal() == .alertFirstButtonReturn else { return }
         }
         super.paste(sender)
@@ -72,7 +72,7 @@ final class SafeTerminalView: LocalProcessTerminalView {
     }
     override func requestOpenLink(source: TerminalView, link: String, params: [String: String]) {
         guard let url = URL(string: link), ["https", "http"].contains(url.scheme?.lowercased() ?? "") else { return }
-        let alert = NSAlert(); alert.messageText = "在浏览器中打开链接？"; alert.informativeText = url.absoluteString; alert.addButton(withTitle: "打开"); alert.addButton(withTitle: "取消")
+        let alert = NSAlert(); alert.messageText = L10n.text("在浏览器中打开链接？"); alert.informativeText = url.absoluteString; alert.addButton(withTitle: L10n.text("打开")); alert.addButton(withTitle: L10n.text("取消"))
         if alert.runModal() == .alertFirstButtonReturn { NSWorkspace.shared.open(url) }
     }
 }
@@ -92,7 +92,7 @@ private final class TerminalSecurityProxy: TerminalViewDelegate {
     func clipboardCopy(source: TerminalView, content: Data) {
         guard content.count <= 1024 * 1024 else { return }
         if clipboardDecision == nil {
-            let alert = NSAlert(); alert.messageText = "允许此终端写入 Mac 剪贴板？"; alert.informativeText = "终端程序请求复制内容（例如 tmux 复制模式）。通过终端协议读取剪贴板的请求始终被拒绝。"; alert.addButton(withTitle: "允许本终端写入"); alert.addButton(withTitle: "拒绝")
+            let alert = NSAlert(); alert.messageText = L10n.text("允许此终端写入 Mac 剪贴板？"); alert.informativeText = L10n.text("终端程序请求复制内容（例如 tmux 复制模式）。通过终端协议读取剪贴板的请求始终被拒绝。"); alert.addButton(withTitle: L10n.text("允许本终端写入")); alert.addButton(withTitle: L10n.text("拒绝"))
             clipboardDecision = alert.runModal() == .alertFirstButtonReturn
         }
         if clipboardDecision == true { owner?.clipboardCopy(source: source, content: content) }
@@ -108,7 +108,7 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable, LocalProc
     let tmuxID: String?
     let terminal = SafeTerminalView(frame: NSRect(x: 0, y: 0, width: 900, height: 560))
     @Published var title: String
-    @Published var state = "待连接"
+    @Published var state = L10n.text("待连接")
     @Published var connected = false
     @Published var dimensions = ""
     private(set) var connectionID = UUID()
@@ -119,21 +119,21 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable, LocalProc
     private var probe = CancellationFlag()
     private let transport: SSHTransport
     var isLocal: Bool { host == nil }
-    var displayName: String { host?.name ?? "此 Mac" }
-    var subtitle: String { host?.subtitle ?? "\(NSUserName()) · \(LocalShellConfiguration.userShell) · 登录 Shell" }
-    var restartLabel: String { isLocal ? "重新打开" : "重连" }
+    var displayName: String { host?.name ?? L10n.text("此 Mac") }
+    var subtitle: String { host?.subtitle ?? L10n.text("\(NSUserName()) · \(LocalShellConfiguration.userShell) · 登录 Shell") }
+    var restartLabel: String { isLocal ? L10n.text("重新打开") : L10n.text("重连") }
     init(host: HostProfile? = nil, tmuxID: String? = nil, transport: SSHTransport) {
         self.host = host; self.tmuxID = tmuxID; self.transport = transport
-        title = tmuxID == nil ? (host?.name ?? "此 Mac") : "tmux · \(host?.name ?? "此 Mac")"
+        title = tmuxID == nil ? (host?.name ?? L10n.text("此 Mac")) : "tmux · \(host?.name ?? L10n.text("此 Mac"))"
         super.init()
-        state = isLocal ? "待启动" : "待连接"
+        state = isLocal ? L10n.text("待启动") : L10n.text("待连接")
         terminal.processDelegate = self; terminal.optionAsMetaKey = true
         terminal.font = NSFont.monospacedSystemFont(ofSize: 13, weight: .regular)
         terminal.getTerminal().changeScrollback(10000)
         terminal.onInputActivity = { [weak self] in self?.inputGeneration &+= 1 }
     }
     func start() {
-        guard !started, !disposed else { return }; started = true; state = isLocal ? "正在启动…" : "正在验证连接…"; probe = CancellationFlag()
+        guard !started, !disposed else { return }; started = true; state = isLocal ? L10n.text("正在启动…") : L10n.text("正在验证连接…"); probe = CancellationFlag()
         connectionID = UUID()
         let transport = transport; let host = host; let cancellation = probe
         Task {
@@ -153,11 +153,11 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable, LocalProc
                         terminal.startProcess(executable: configuration.executable, environment: environment.map { "\($0.key)=\($0.value)" }, execName: configuration.executableName, currentDirectory: configuration.directory)
                     }
                 }
-                guard terminal.process.running else { throw WorkbenchError.message("无法启动终端进程，请重新打开终端。") }
-                connected = true; state = isLocal ? "运行中" : "已连接"
+                guard terminal.process.running else { throw WorkbenchError.message(L10n.text("无法启动终端进程，请重新打开终端。")) }
+                connected = true; state = isLocal ? L10n.text("运行中") : L10n.text("已连接")
                 if terminal.shouldRequestFocus { terminal.window?.makeFirstResponder(terminal) }
             } catch {
-                guard !disposed, !cancellation.isCancelled else { return }; state = isLocal ? "启动失败" : "连接失败"; connected = false
+                guard !disposed, !cancellation.isCancelled else { return }; state = isLocal ? L10n.text("启动失败") : L10n.text("连接失败"); connected = false
                 terminal.feed(text: "\r\n\u{1b}[31m\(error.localizedDescription.replacingOccurrences(of: "\n", with: "\r\n"))\u{1b}[0m\r\n")
             }
         }
@@ -167,7 +167,7 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable, LocalProc
         if terminal.process.running { pendingReconnect = true; terminal.terminate() }
         else { started = false; start() }
     }
-    func close() { disposed = true; pendingReconnect = false; probe.cancel(); terminal.terminate(); connected = false; state = isLocal ? "已结束" : "已断开" }
+    func close() { disposed = true; pendingReconnect = false; probe.cancel(); terminal.terminate(); connected = false; state = isLocal ? L10n.text("已结束") : L10n.text("已断开") }
     nonisolated func sizeChanged(source: LocalProcessTerminalView, newCols: Int, newRows: Int) { DispatchQueue.main.async { [weak self] in self?.dimensions = "\(newCols) × \(newRows)" } }
     nonisolated func setTerminalTitle(source: TerminalView, title: String) { DispatchQueue.main.async { [weak self] in if !title.isEmpty { self?.title = String(title.prefix(100)) } } }
     nonisolated func setTerminalTitle(source: LocalProcessTerminalView, title: String) { DispatchQueue.main.async { [weak self] in if !title.isEmpty { self?.title = String(title.prefix(100)) } } }
@@ -175,7 +175,7 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable, LocalProc
     nonisolated func processTerminated(source: TerminalView, exitCode: Int32?) {
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }; connected = false
-            state = isLocal ? (exitCode == 0 || disposed ? "已结束" : "进程已退出") : (exitCode == 0 ? "已断开" : "连接已中断")
+            state = isLocal ? (exitCode == 0 || disposed ? L10n.text("已结束") : L10n.text("进程已退出")) : (exitCode == 0 ? L10n.text("已断开") : L10n.text("连接已中断"))
             if pendingReconnect && !disposed { pendingReconnect = false; started = false; start() }
         }
     }
@@ -261,7 +261,7 @@ final class Workspace: ObservableObject {
     var activeTabID: UUID? { page == .files ? fileSource?.terminalID : selectedTerminalID }
     var fileSourceName: String {
         if let identifier = fileSource?.terminalID, let session = sessions.first(where: { $0.id == identifier }) { return sessionLabel(session) }
-        return fileHost.map { "\($0.name) · 主机文件" } ?? "此 Mac · 本地文件"
+        return fileHost.map { L10n.text("\($0.name) · 主机文件") } ?? L10n.text("此 Mac · 本地文件")
     }
     var currentFileBrowser: FileModel? {
         guard fileSourceAvailable, let source = fileSource else { return nil }
@@ -275,7 +275,7 @@ final class Workspace: ObservableObject {
         return browser
     }
     func sessionLabel(_ session: TerminalSession) -> String {
-        "\(session.displayName) · \(session.isLocal ? "本机" : (session.tmuxID == nil ? "终端" : "tmux")) \(terminalNumbers[session.id] ?? 1)"
+        "\(session.displayName) · \(session.isLocal ? L10n.text("本机") : (session.tmuxID == nil ? L10n.text("终端") : "tmux")) \(terminalNumbers[session.id] ?? 1)"
     }
     private func register(_ session: TerminalSession) {
         let next = (hostTerminalCounts[session.host?.id] ?? 0) + 1
@@ -310,7 +310,7 @@ final class Workspace: ObservableObject {
     func requestAttachments(session: TerminalSession, payload: TerminalAttachmentPayload) {
         guard session.connected, sessions.contains(where: { $0.id == session.id }), attachmentDraft?.busy != true else {
             if let temporary = payload.temporaryDirectory { try? FileManager.default.removeItem(at: temporary) }
-            store.errorMessage = "终端未连接或已有附件任务，请先完成当前操作。"; return
+            store.errorMessage = L10n.text("终端未连接或已有附件任务，请先完成当前操作。"); return
         }
         attachmentDraft?.dispose(); attachmentDraft = nil
         selectTerminal(session); page = .terminal
@@ -318,7 +318,7 @@ final class Workspace: ObservableObject {
     }
     func chooseAttachments() {
         guard let session = selectedTerminal, session.connected else { return }
-        let panel = NSOpenPanel(); panel.allowsMultipleSelection = true; panel.canChooseDirectories = true; panel.prompt = "发送到此终端"
+        let panel = NSOpenPanel(); panel.allowsMultipleSelection = true; panel.canChooseDirectories = true; panel.prompt = L10n.text("发送到此终端")
         if panel.runModal() == .OK { requestAttachments(session: session, payload: TerminalAttachmentPayload(files: panel.urls, temporaryDirectory: nil)) }
     }
     func chooseTab(_ session: TerminalSession) {
@@ -408,14 +408,14 @@ final class Workspace: ObservableObject {
     }
     func togglePaneZoom() { layout.toggleZoom() }
     func confirmClosePane(_ session: TerminalSession) {
-        let detail = session.tmuxID != nil ? "只分离此终端，tmux 会话继续运行。" : "当前 Shell 和前台任务可能随连接关闭。"
-        if session.connected && !confirm("关闭此分栏？", detail) { return }
+        let detail = session.tmuxID != nil ? L10n.text("只分离此终端，tmux 会话继续运行。") : L10n.text("当前 Shell 和前台任务可能随连接关闭。")
+        if session.connected && !confirm(L10n.text("关闭此分栏？"), detail) { return }
         close(session)
     }
     func closeTab(_ identifier: UUID) {
         guard let tab = layout.tabs.first(where: { $0.id == identifier }) else { return }
         let closing = sessions.filter { tab.terminals.contains($0.id) }
-        if closing.contains(where: \.connected) && !confirm("关闭此标签的 \(closing.count) 个终端？", "普通 Shell 和前台任务可能结束；tmux 只分离，不结束远端会话。其他标签不受影响。") { return }
+        if closing.contains(where: \.connected) && !confirm(L10n.text("关闭此标签的 \(closing.count) 个终端？"), L10n.text("普通 Shell 和前台任务可能结束；tmux 只分离，不结束远端会话。其他标签不受影响。")) { return }
         closing.forEach { close($0) }
     }
     func connectPreferred(_ host: HostProfile) {
@@ -449,6 +449,7 @@ final class Workspace: ObservableObject {
 
 enum WorkspacePage: String, CaseIterable {
     case terminal = "终端", tmux = "tmux 会话", files = "文件", transfers = "传输", tunnels = "隧道"
+    var title: String { L10n.key(rawValue) }
     var symbol: String {
         switch self { case .terminal: return "terminal"; case .tmux: return "square.stack.3d.up"; case .files: return "folder"; case .transfers: return "arrow.left.arrow.right"; case .tunnels: return "point.3.connected.trianglepath.dotted" }
     }

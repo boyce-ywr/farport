@@ -26,16 +26,16 @@ public struct HostProfile: Identifiable, Codable, Hashable, Sendable {
     public var connectionKey: String { [address, String(port), username, identityFile, jumpHost, configFile ?? ""].joined(separator: "\0") }
 
     public func validate() throws {
-        guard !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw WorkbenchError.message("请输入主机名称。") }
+        guard !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw WorkbenchError.message(L10n.text("请输入主机名称。")) }
         guard !address.isEmpty, !address.hasPrefix("-"),
               address.rangeOfCharacter(from: .whitespacesAndNewlines.union(.controlCharacters)) == nil,
-              !address.contains("@"), !address.contains("/") else { throw WorkbenchError.message("主机地址应为 IP、域名或 SSH 配置别名，不能包含空格、@ 或 /。") }
-        guard (1...65535).contains(port) else { throw WorkbenchError.message("端口必须在 1–65535 之间。") }
+              !address.contains("@"), !address.contains("/") else { throw WorkbenchError.message(L10n.text("主机地址应为 IP、域名或 SSH 配置别名，不能包含空格、@ 或 /。")) }
+        guard (1...65535).contains(port) else { throw WorkbenchError.message(L10n.text("端口必须在 1–65535 之间。")) }
         guard username.rangeOfCharacter(from: .whitespacesAndNewlines.union(.controlCharacters)) == nil,
-              !username.hasPrefix("-") else { throw WorkbenchError.message("用户名格式不正确。") }
+              !username.hasPrefix("-") else { throw WorkbenchError.message(L10n.text("用户名格式不正确。")) }
         guard !identityFile.contains("\0"), !identityFile.contains("\n"),
               !jumpHost.hasPrefix("-"), jumpHost.rangeOfCharacter(from: .whitespacesAndNewlines.union(.controlCharacters)) == nil else {
-            throw WorkbenchError.message("密钥路径或跳板机格式不正确。")
+            throw WorkbenchError.message(L10n.text("密钥路径或跳板机格式不正确。"))
         }
     }
 }
@@ -47,8 +47,8 @@ public enum WorkbenchError: LocalizedError {
     public var errorDescription: String? {
         switch self {
         case .message(let text): return text
-        case .cancelled: return "操作已暂停或取消。"
-        case .protocolViolation(let text): return "SFTP 协议错误：\(text)"
+        case .cancelled: return L10n.text("操作已暂停或取消。")
+        case .protocolViolation(let text): return L10n.text("SFTP 协议错误：\(text)")
         }
     }
 }
@@ -131,13 +131,13 @@ public enum TransferStatus: String, Codable, Sendable {
     public var canClearRecord: Bool { [.completed, .failed, .cancelled].contains(self) }
     public var title: String {
         switch self {
-        case .queued: return "等待中"
-        case .running: return "传输中"
-        case .paused: return "已暂停"
-        case .awaitingConfirmation: return "等待覆盖确认"
-        case .completed: return "已完成"
-        case .failed: return "传输失败"
-        case .cancelled: return "已取消"
+        case .queued: return L10n.text("等待中")
+        case .running: return L10n.text("传输中")
+        case .paused: return L10n.text("已暂停")
+        case .awaitingConfirmation: return L10n.text("等待覆盖确认")
+        case .completed: return L10n.text("已完成")
+        case .failed: return L10n.text("传输失败")
+        case .cancelled: return L10n.text("已取消")
         }
     }
 }
