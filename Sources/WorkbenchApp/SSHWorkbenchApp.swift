@@ -99,7 +99,7 @@ struct PreferencesView: View {
                     Text("简体中文").tag("zh-Hans")
                     Text("English").tag("en")
                 }
-                Text(L10n.text("下次启动生效。请先保存工作并自行重启，当前 SSH 和传输不会被自动中断。"))
+                Text(L10n.text("选择后立即生效并自动保存，无需重启；不会中断终端、传输或编辑。"))
                     .font(.caption).foregroundStyle(.secondary)
             }
             Section(L10n.text("外观")) {

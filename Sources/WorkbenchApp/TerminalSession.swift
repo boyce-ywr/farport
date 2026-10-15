@@ -11,7 +11,7 @@ private final class TmuxRightMouseEvent: NSEvent {
     override var buttonNumber: Int { 2 }
     override var type: NSEvent.EventType { original.type }
     override var locationInWindow: NSPoint { original.locationInWindow }
-    override var modifierFlags: NSEvent.ModifierFlags { original.modifierFlags }
+    override var modifierFlags: NSEvent.ModifierFlags { original.modifierFlags.union(.option) }
     override var clickCount: Int { original.clickCount }
 }
 
@@ -161,7 +161,8 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable, LocalProc
     let tmuxID: String?
     let terminal = SafeTerminalView(frame: NSRect(x: 0, y: 0, width: 900, height: 560))
     @Published var title: String
-    @Published var state = L10n.text("待连接")
+    @Published private var stateKey = "待连接"
+    var state: String { L10n.key(stateKey) }
     @Published var connected = false
     @Published var dimensions = ""
     private(set) var connectionID = UUID()
@@ -180,14 +181,14 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable, LocalProc
         self.host = host; self.tmuxID = tmuxID; self.transport = transport
         title = tmuxID == nil ? (host?.name ?? L10n.text("此 Mac")) : "tmux · \(host?.name ?? L10n.text("此 Mac"))"
         super.init()
-        state = isLocal ? L10n.text("待启动") : L10n.text("待连接")
+        stateKey = isLocal ? "待启动" : "待连接"
         terminal.processDelegate = self; terminal.optionAsMetaKey = true
         terminal.font = NSFont.monospacedSystemFont(ofSize: 13, weight: .regular)
         terminal.getTerminal().changeScrollback(10000)
         terminal.onInputActivity = { [weak self] in self?.inputGeneration &+= 1 }
     }
     func start() {
-        guard !started, !disposed else { return }; started = true; state = isLocal ? L10n.text("正在启动…") : L10n.text("正在验证连接…"); probe = CancellationFlag()
+        guard !started, !disposed else { return }; started = true; stateKey = isLocal ? "正在启动…" : "正在验证连接…"; probe = CancellationFlag()
         connectionID = UUID()
         let transport = transport; let host = host; let cancellation = probe
         Task {
@@ -208,10 +209,10 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable, LocalProc
                     }
                 }
                 guard terminal.process.running else { throw WorkbenchError.message(L10n.text("无法启动终端进程，请重新打开终端。")) }
-                connected = true; state = isLocal ? L10n.text("运行中") : L10n.text("已连接")
+                connected = true; stateKey = isLocal ? "运行中" : "已连接"
                 if terminal.shouldRequestFocus { terminal.window?.makeFirstResponder(terminal) }
             } catch {
-                guard !disposed, !cancellation.isCancelled else { return }; state = isLocal ? L10n.text("启动失败") : L10n.text("连接失败"); connected = false
+                guard !disposed, !cancellation.isCancelled else { return }; stateKey = isLocal ? "启动失败" : "连接失败"; connected = false
                 terminal.feed(text: "\r\n\u{1b}[31m\(error.localizedDescription.replacingOccurrences(of: "\n", with: "\r\n"))\u{1b}[0m\r\n")
             }
         }
@@ -238,7 +239,7 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable, LocalProc
             } catch { AppStore.shared.errorMessage = error.localizedDescription }
         }
     }
-    func close() { disposed = true; pendingReconnect = false; probe.cancel(); terminal.terminate(); connected = false; state = isLocal ? L10n.text("已结束") : L10n.text("已断开") }
+    func close() { disposed = true; pendingReconnect = false; probe.cancel(); terminal.terminate(); connected = false; stateKey = isLocal ? "已结束" : "已断开" }
     nonisolated func sizeChanged(source: LocalProcessTerminalView, newCols: Int, newRows: Int) { DispatchQueue.main.async { [weak self] in self?.dimensions = "\(newCols) × \(newRows)" } }
     nonisolated func setTerminalTitle(source: TerminalView, title: String) { DispatchQueue.main.async { [weak self] in if !title.isEmpty { self?.title = String(title.prefix(100)) } } }
     nonisolated func setTerminalTitle(source: LocalProcessTerminalView, title: String) { DispatchQueue.main.async { [weak self] in if !title.isEmpty { self?.title = String(title.prefix(100)) } } }
@@ -246,7 +247,7 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable, LocalProc
     nonisolated func processTerminated(source: TerminalView, exitCode: Int32?) {
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }; connected = false
-            state = isLocal ? (exitCode == 0 || disposed ? L10n.text("已结束") : L10n.text("进程已退出")) : (exitCode == 0 ? L10n.text("已断开") : L10n.text("连接已中断"))
+            stateKey = isLocal ? (exitCode == 0 || disposed ? "已结束" : "进程已退出") : (exitCode == 0 ? "已断开" : "连接已中断")
             if pendingReconnect && !disposed { pendingReconnect = false; started = false; start() }
         }
     }

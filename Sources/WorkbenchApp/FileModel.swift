@@ -232,45 +232,92 @@ struct RemoteEditor: View {
     let host: HostProfile?
     @ObservedObject var store: AppStore
     let saved: () -> Void
-    @ViewState private var text: String
+    @StateObject private var buffer: FileEditorBuffer
+    @ViewState private var savedData: Data
+    @ViewState private var savedAttributes: FileAttributes
     @ViewState private var busy = false
     @ViewState private var errorMessage: String?
     @ViewState private var showPreview = false
+    @ViewState private var savedAt: Date?
+    @ViewState private var showSaved = false
     @Environment(\.dismiss) private var dismiss
     init(document: EditDocument, host: HostProfile?, store: AppStore, saved: @escaping () -> Void) {
-        self.document = document; self.host = host; self.store = store; self.saved = saved; _text = State(initialValue: String(decoding: document.data, as: UTF8.self))
+        self.document = document; self.host = host; self.store = store; self.saved = saved
+        _buffer = StateObject(wrappedValue: FileEditorBuffer(text: String(decoding: document.data, as: UTF8.self)))
+        _savedData = State(initialValue: document.data); _savedAttributes = State(initialValue: document.file.attributes)
         _showPreview = State(initialValue: store.isTestWorkspace && ProcessInfo.processInfo.environment["SWB_QA_SCREEN"] == "markdown-editor")
     }
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack { Image(systemName: "doc.text").foregroundStyle(.teal); Text(document.file.name).font(.title3.bold()); Spacer(); Text(host == nil ? L10n.text("UTF-8 · 本地编辑") : L10n.text("UTF-8 · 远程编辑")).font(.caption).foregroundStyle(.secondary) }
             Text(document.file.path).font(.system(size: 11, design: .monospaced)).foregroundStyle(.secondary)
-            if ["md", "markdown"].contains((document.file.path as NSString).pathExtension.lowercased()) {
-                Toggle(L10n.text("实时 Markdown 预览"), isOn: $showPreview).toggleStyle(.checkbox).font(.caption)
+            HStack(spacing: 10) {
+                Button { save() } label: { Label(L10n.text("保存"), systemImage: "square.and.arrow.down") }
+                    .keyboardShortcut("s").disabled(busy).help(L10n.text("保存（⌘S），不关闭编辑器"))
+                    .accessibilityIdentifier("editor.save").interactionFrame("editor.save")
+                Divider().frame(height: 18)
+                Button { buffer.undo() } label: { Label(L10n.text("撤销"), systemImage: "arrow.uturn.backward") }
+                    .keyboardShortcut("z")
+                    .disabled(busy || !buffer.canUndo).help(L10n.text("撤销（⌘Z）")).accessibilityIdentifier("editor.undo").interactionFrame("editor.undo")
+                Button { buffer.redo() } label: { Label(L10n.text("重做"), systemImage: "arrow.uturn.forward") }
+                    .keyboardShortcut("z", modifiers: [.command, .shift])
+                    .disabled(busy || !buffer.canRedo).help(L10n.text("重做（⇧⌘Z）")).accessibilityIdentifier("editor.redo").interactionFrame("editor.redo")
+                Button { buffer.cut() } label: { Label(L10n.text("剪切"), systemImage: "scissors").labelStyle(.iconOnly) }
+                    .disabled(busy || !buffer.hasSelection).help(L10n.text("剪切（⌘X）")).accessibilityIdentifier("editor.cut").interactionFrame("editor.cut")
+                Button { buffer.copy() } label: { Label(L10n.text("复制"), systemImage: "doc.on.doc").labelStyle(.iconOnly) }
+                    .disabled(!buffer.hasSelection).help(L10n.text("复制（⌘C）")).accessibilityIdentifier("editor.copy").interactionFrame("editor.copy")
+                Button { buffer.paste() } label: { Label(L10n.text("粘贴"), systemImage: "doc.on.clipboard").labelStyle(.iconOnly) }
+                    .disabled(busy).help(L10n.text("粘贴（⌘V）")).accessibilityIdentifier("editor.paste").interactionFrame("editor.paste")
+                Button { buffer.selectAll() } label: { Label(L10n.text("全选"), systemImage: "selection.pin.in.out").labelStyle(.iconOnly) }
+                    .help(L10n.text("全选（⌘A）")).accessibilityIdentifier("editor.selectAll").interactionFrame("editor.selectAll")
+                Spacer()
+                if ["md", "markdown"].contains((document.file.path as NSString).pathExtension.lowercased()) {
+                    Toggle(L10n.text("实时 Markdown 预览"), isOn: $showPreview).toggleStyle(.checkbox).font(.caption)
+                }
             }
             HSplitView {
-                TextEditor(text: $text).font(.system(size: 13, design: .monospaced)).border(.quaternary).disabled(busy).frame(minWidth: 260)
-                if showPreview { MarkdownPreview(source: text).frame(minWidth: 240) }
+                FileEditorTextView(buffer: buffer, editable: !busy).border(.quaternary).frame(minWidth: 260)
+                if showPreview { MarkdownPreview(source: buffer.text).frame(minWidth: 240) }
             }
-            if let errorMessage { ErrorBanner(message: errorMessage) { self.errorMessage = nil } }
+            if let errorMessage { ErrorBanner(message: errorMessage) { self.errorMessage = nil }.interactionFrame("editor.error") }
             HStack {
                 Label(L10n.text("保存前检查文件变化，临时文件写完后原子替换。"), systemImage: "lock.shield").font(.caption).foregroundStyle(.secondary)
                 Spacer()
-                if busy { ProgressView().controlSize(.small) }
-                Button(L10n.text("取消")) { if text == String(decoding: document.data, as: UTF8.self) || confirm(L10n.text("放弃未保存的修改？"), L10n.text("远端文件尚未修改。")) { dismiss() } }.disabled(busy)
-                Button(host == nil ? L10n.text("保存文件") : L10n.text("保存到远端")) { save() }.buttonStyle(.borderedProminent).keyboardShortcut("s").disabled(busy)
+                HStack(spacing: 6) {
+                    ZStack { if busy { ProgressView().controlSize(.small) } }.frame(width: 16, height: 16)
+                    Text(busy ? L10n.text("正在保存…") : (showSaved ? L10n.text("已保存") : (isDirty ? L10n.text("未保存的修改") : "")))
+                        .font(.caption).foregroundStyle(showSaved ? .green : .secondary)
+                        .accessibilityIdentifier("editor.status").interactionFrame(showSaved ? "editor.saved" : "editor.status")
+                }.frame(minWidth: 110, alignment: .leading)
+                Button(L10n.text("关闭")) {
+                    if !isDirty || confirm(L10n.text("放弃未保存的修改？"), L10n.text("关闭会丢弃自上次保存以来的修改，已保存的内容不受影响。")) { dismiss() }
+                }.keyboardShortcut(.cancelAction).disabled(busy).accessibilityIdentifier("editor.close").interactionFrame("editor.close")
             }
         }.padding(24).frame(width: 850, height: 620).interactiveDismissDisabled()
+            .onChange(of: buffer.text) { _, _ in showSaved = false }
+            .task(id: savedAt) {
+                guard savedAt != nil else { return }
+                do { try await Task.sleep(for: .seconds(2)); showSaved = false } catch {}
+            }
     }
+    private var isDirty: Bool { buffer.text != String(decoding: savedData, as: UTF8.self) }
     private func save() {
-        guard let data = text.data(using: .utf8), data.count <= 512 * 1024 else { errorMessage = L10n.text("编辑内容超过 512 KiB，请使用终端编辑或上传文件。"); return }
-        busy = true; let transport = store.transport; let file = document.file
+        guard !busy else { return }
+        guard let data = buffer.text.data(using: .utf8), data.count <= 512 * 1024 else { errorMessage = L10n.text("编辑内容超过 512 KiB，请使用终端编辑或上传文件。"); return }
+        buffer.textView?.breakUndoCoalescing()
+        busy = true; errorMessage = nil; showSaved = false
+        let transport = store.transport; let file = document.file; let original = savedData; let expected = savedAttributes
         Task {
+            defer { busy = false; buffer.focus() }
             do {
-                let original = document.data
-                try await Task.detached { let client = try transport.files(host); defer { client.close() }; try client.saveText(file.path, data: data, expected: file.attributes, original: original) }.value
-                saved(); dismiss()
-            } catch { busy = false; errorMessage = error.localizedDescription }
+                let attributes = try await Task.detached {
+                    let client = try transport.files(host); defer { client.close() }
+                    try client.saveText(file.path, data: data, expected: expected, original: original)
+                    return try client.stat(file.path)
+                }.value
+                savedData = data; savedAttributes = attributes; savedAt = Date(); showSaved = true
+                saved()
+            } catch { errorMessage = error.localizedDescription }
         }
     }
 }

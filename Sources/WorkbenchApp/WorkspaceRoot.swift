@@ -187,6 +187,7 @@ struct WorkspaceRoot: View {
             Label(workspace.page == .files ? (workspace.fileHost == nil ? L10n.text("本机文件") : "SFTP") : (showingLocalTerminal ? L10n.text("本机 Shell") : "OpenSSH"), systemImage: showingLocalTerminal ? "terminal" : "lock.shield").foregroundStyle(.secondary)
             Text("UTF-8").foregroundStyle(.tertiary)
             Spacer()
+            StatusClock()
             if let terminal = workspace.selectedTerminal, workspace.page == .terminal {
                 TerminalStatus(session: terminal, showReconnect: false)
             }
@@ -197,6 +198,11 @@ struct WorkspaceRoot: View {
         guard !didPrepareQA, store.isTestWorkspace, let output = ProcessInfo.processInfo.environment["SWB_QA_OUTPUT"] else { return }
         didPrepareQA = true
         let screen = ProcessInfo.processInfo.environment["SWB_QA_SCREEN"] ?? "terminal"
+        if screen == "editor-actions" {
+            do { try await EditorChecks.run(store: store, output: URL(fileURLWithPath: output)); NSApp.terminate(nil) }
+            catch { fputs("FAIL · \(error.localizedDescription)\n", stderr); exit(1) }
+            return
+        }
         if screen == "host-monitor" || screen == "local-monitor" {
             if screen == "local-monitor" { workspace.selectedHostID = nil }
             do { try await MonitoringChecks.run(workspace: workspace) }
@@ -207,7 +213,7 @@ struct WorkspaceRoot: View {
             catch { fputs("FAIL · \(error.localizedDescription)\n", stderr); workspace.sessions.forEach { $0.close() }; exit(1) }
         }
         if screen == "language-settings" {
-            do { try await LanguageChecks.run(store: store, output: URL(fileURLWithPath: output)); NSApp.terminate(nil) }
+            do { try await LanguageChecks.run(workspace: workspace, output: URL(fileURLWithPath: output)); NSApp.terminate(nil) }
             catch { fputs("FAIL · \(error.localizedDescription)\n", stderr); exit(1) }
             return
         }

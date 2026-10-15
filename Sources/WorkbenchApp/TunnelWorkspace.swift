@@ -10,14 +10,15 @@ final class TunnelSession: ObservableObject, Identifiable {
     let mode: String
     let port: Int
     let destination: String
-    @Published var state = L10n.text("正在连接…")
+    @Published private var stateKey = "正在连接…"
+    var state: String { L10n.key(stateKey) }
     @Published var running = false
     private let process = Process()
     private let stderrPipe = Pipe()
     init(host: HostProfile, mode: String, port: Int, target: String, targetPort: Int, transport: SSHTransport) throws {
         self.host = host; self.mode = mode; self.port = port
-        destination = mode == "SOCKS5" ? L10n.text("动态代理") : "\(target):\(targetPort)"
-        let kind: ForwardingKind = mode == L10n.text("本地转发") ? .local : (mode == L10n.text("远程转发") ? .remote : .dynamic)
+        destination = mode == "SOCKS5" ? "动态代理" : "\(target):\(targetPort)"
+        let kind: ForwardingKind = mode == "本地转发" ? .local : (mode == "远程转发" ? .remote : .dynamic)
         process.executableURL = URL(fileURLWithPath: "/usr/bin/ssh")
         process.arguments = try transport.forwardingArguments(for: host, kind: kind, port: port, target: target, targetPort: targetPort)
         process.environment = transport.environment(for: host); process.standardInput = FileHandle.nullDevice
@@ -27,19 +28,19 @@ final class TunnelSession: ObservableObject, Identifiable {
             let data = (try? errorHandle.readToEnd()) ?? Data()
             DispatchQueue.main.async {
                 guard let self else { return }
-                self.running = false; self.state = child.terminationStatus == 0 ? L10n.text("已停止") : String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
-                if self.state.isEmpty { self.state = L10n.text("隧道已停止") }
+                self.running = false; self.stateKey = child.terminationStatus == 0 ? "已停止" : String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+                if self.stateKey.isEmpty { self.stateKey = "隧道已停止" }
             }
         }
-        try process.run(); running = true; state = L10n.text("隧道进程运行中")
+        try process.run(); running = true; stateKey = "隧道进程运行中"
     }
-    func stop() { if process.isRunning { process.terminate() }; running = false; state = L10n.text("已停止") }
+    func stop() { if process.isRunning { process.terminate() }; running = false; stateKey = "已停止" }
 }
 
 struct TunnelWorkspace: View {
     let host: HostProfile
     @ObservedObject var store: AppStore
-    @ViewState private var mode = L10n.text("本地转发")
+    @ViewState private var mode = "本地转发"
     @ViewState private var port = 8080
     @ViewState private var target = "127.0.0.1"
     @ViewState private var targetPort = 80
@@ -47,12 +48,12 @@ struct TunnelWorkspace: View {
         VStack(alignment: .leading, spacing: 22) {
             VStack(alignment: .leading, spacing: 6) { Text(L10n.text("把服务安全地带到身边")).font(.system(size: 23, weight: .semibold)); Text(L10n.text("通过 SSH 加密通道访问服务；与终端会话相互独立。")).font(.system(size: 12)).foregroundStyle(.secondary) }
             VStack(alignment: .leading, spacing: 17) {
-                Picker(L10n.text("转发模式"), selection: $mode) { Text(L10n.text("本地转发")).tag(L10n.text("本地转发")); Text(L10n.text("远程转发")).tag(L10n.text("远程转发")); Text("SOCKS5").tag("SOCKS5") }.pickerStyle(.segmented)
+                Picker(L10n.text("转发模式"), selection: $mode) { Text(L10n.text("本地转发")).tag("本地转发"); Text(L10n.text("远程转发")).tag("远程转发"); Text("SOCKS5").tag("SOCKS5") }.pickerStyle(.segmented)
                 HStack(spacing: 14) {
-                    VStack(alignment: .leading) { Text(mode == L10n.text("远程转发") ? L10n.text("远端监听端口") : L10n.text("本机监听端口")).font(.caption).foregroundStyle(.secondary); TextField(L10n.text("端口"), value: $port, format: .number.grouping(.never)) }.frame(width: 160)
+                    VStack(alignment: .leading) { Text(mode == "远程转发" ? L10n.text("远端监听端口") : L10n.text("本机监听端口")).font(.caption).foregroundStyle(.secondary); TextField(L10n.text("端口"), value: $port, format: .number.grouping(.never)) }.frame(width: 160)
                     if mode != "SOCKS5" {
                         Image(systemName: "arrow.right").foregroundStyle(.teal)
-                        VStack(alignment: .leading) { Text(mode == L10n.text("远程转发") ? L10n.text("本机可访问的目标") : L10n.text("远端可访问的目标")).font(.caption).foregroundStyle(.secondary); TextField(L10n.text("目标主机"), text: $target) }
+                        VStack(alignment: .leading) { Text(mode == "远程转发" ? L10n.text("本机可访问的目标") : L10n.text("远端可访问的目标")).font(.caption).foregroundStyle(.secondary); TextField(L10n.text("目标主机"), text: $target) }
                         VStack(alignment: .leading) { Text(L10n.text("目标端口")).font(.caption).foregroundStyle(.secondary); TextField(L10n.text("端口"), value: $targetPort, format: .number.grouping(.never)) }.frame(width: 130)
                     }
                     Spacer(minLength: 0)
@@ -71,7 +72,7 @@ struct TunnelRow: View {
     var body: some View {
         HStack(spacing: 14) {
             Image(systemName: "point.3.connected.trianglepath.dotted").font(.title2).foregroundStyle(.teal)
-            VStack(alignment: .leading, spacing: 5) { Text("\(tunnel.mode) · 127.0.0.1:\(tunnel.port) → \(tunnel.destination)").font(.system(size: 12, design: .monospaced)); Text(tunnel.state).font(.system(size: 10)).foregroundStyle(tunnel.running ? .secondary : Color.orange).textSelection(.enabled) }
+            VStack(alignment: .leading, spacing: 5) { Text("\(L10n.key(tunnel.mode)) · 127.0.0.1:\(tunnel.port) → \(tunnel.mode == "SOCKS5" ? L10n.text("动态代理") : tunnel.destination)").font(.system(size: 12, design: .monospaced)); Text(tunnel.state).font(.system(size: 10)).foregroundStyle(tunnel.running ? .secondary : Color.orange).textSelection(.enabled) }
             Spacer(); if tunnel.running { Button(L10n.text("停止")) { tunnel.stop() } }
         }.padding(18).background(.quaternary.opacity(0.17), in: RoundedRectangle(cornerRadius: 10))
     }

@@ -28,8 +28,8 @@ final class AppStore: ObservableObject {
     @Published var fontSize: Double = UserDefaults.standard.double(forKey: "fontSize") == 0 ? 13 : UserDefaults.standard.double(forKey: "fontSize")
     @Published var fontName: String = UserDefaults.standard.string(forKey: "fontName") ?? "SF Mono"
     @Published var appearance: String = UserDefaults.standard.string(forKey: "appearance") ?? "system"
-    @Published var languagePreference = UserDefaults.standard.string(forKey: "farport.language") ?? "system" {
-        didSet { UserDefaults.standard.set(languagePreference, forKey: "farport.language") }
+    @Published var languagePreference = L10n.preferenceDefaults.string(forKey: "farport.language") ?? "system" {
+        didSet { L10n.preferenceDefaults.set(languagePreference, forKey: "farport.language"); L10n.setPreference(languagePreference) }
     }
     let paths: ApplicationPaths
     let transport: SSHTransport

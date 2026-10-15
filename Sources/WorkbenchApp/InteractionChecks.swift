@@ -9,7 +9,7 @@ struct InteractionFrames: PreferenceKey {
 extension View {
     func interactionFrame(_ identifier: String) -> some View {
         background {
-            if ProcessInfo.processInfo.environment["SWB_QA_INTERACTIONS"] == "1" || ["file-switching", "html-preview", "pdf-preview", "compact-workspace", "navigation-preview"].contains(ProcessInfo.processInfo.environment["SWB_QA_SCREEN"] ?? "") {
+            if ProcessInfo.processInfo.environment["SWB_QA_INTERACTIONS"] == "1" || ["file-switching", "html-preview", "pdf-preview", "compact-workspace", "navigation-preview", "editor-actions"].contains(ProcessInfo.processInfo.environment["SWB_QA_SCREEN"] ?? "") {
                 GeometryReader { geometry in Color.clear.preference(key: InteractionFrames.self, value: [identifier: geometry.frame(in: .named("workspace-interactions"))]) }
             }
         }

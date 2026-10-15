@@ -18,9 +18,9 @@ macOS 14+ · Apple Silicon / Intel · [MIT license](LICENSE)
 - **Read and edit remote files.** Preview text, images, Markdown, HTML, PDF, and audio/video. Common source files such as Java, Python, and JSON/XML have syntax highlighting. Edits check for conflicts before saving.
 - **Send images to a remote coding agent.** Paste a clipboard image or drag in files. Farport uploads and verifies them, then inserts a path the target machine can read. It does not press Enter for you.
 
-Also included: host groups and colors, SSH config import, jump hosts, port forwarding, terminal search, pinch-to-zoom fonts, and light/dark appearance.
+Also included: host groups and colors, SSH config import, jump hosts, port forwarding, terminal search, pinch-to-zoom fonts, and light/dark appearance. The bottom-right status bar shows your Mac's local time in 24-hour format, updated every minute.
 
-Choose English or Simplified Chinese in Settings; the change applies next launch. The file browser's Back button follows the visit history of each file source.
+Choose English or Simplified Chinese in Settings; it applies and saves immediately, without restarting terminals, transfers, or open edits. Remote output, file contents, and custom host names stay unchanged. The file browser's Back button follows the visit history of each file source.
 
 ### tmux sessions
 
@@ -38,6 +38,8 @@ Copy selected items to another file source, or use “Transfer to.” Existing f
 
 Read files without downloading them first. Switch Markdown between formatted view and source, use a side-by-side preview while editing, and navigate or zoom PDFs.
 
+The editor toolbar has Save, Undo, Redo, Cut, Copy, Paste, and Select All. **⌘S** saves without closing the editor; a brief “Saved” message lets you keep working. Closing only prompts for unsaved changes. This works for local and remote files, with conflict checks before saving.
+
 ![Remote file browser with a formatted Markdown preview](docs/images/markdown.png)
 
 Open HTML reports in your browser, too. A temporary localhost address reads the report and relative assets over SFTP—no web server needs to be installed on the remote host. Scripts are disabled by default and can be enabled for a trusted report.
@@ -47,6 +49,8 @@ Open HTML reports in your browser, too. A temporary localhost address reads the 
 <sub>Real application screenshots using isolated demo hosts and files, shown in Simplified Chinese. An English interface is also available.</sub>
 
 ## Install
+
+This README describes the main branch. Check each release's notes for the features included in its downloads.
 
 Download a DMG from [GitHub Releases](https://github.com/boyce-ywr/farport/releases/latest). Current version: **0.1.8**.
 
@@ -80,10 +84,13 @@ Normal SSH use does not require Swift, Docker, or GitHub CLI. To manage tmux ses
 | Maximize or restore a pane | ⌘⇧Enter |
 | Toggle sidebar | ⌘⌥S |
 | Search terminal output | ⌘F |
+| Save in the editor (keep it open) | ⌘S |
+| Undo / redo in the editor | ⌘Z / ⌘⇧Z |
+| Cut / copy / paste / select all in the editor | ⌘X / ⌘C / ⌘V / ⌘A |
 
 ## FAQ
 
-**Can I configure right-clicks and attachments?** The default terminal menu provides copy, paste, and selection. Enable tmux menus in Settings; Shift-right-click always uses the normal menu. Attachment insertion has a global default and per-host override. Automatic insertion still checks the original target and never presses Enter.
+**Can I configure right-clicks and attachments?** The default terminal menu provides copy, paste, and selection. Enable tmux menus in Settings for sessions opened from the app's tmux page. Farport uses tmux's dedicated menu event even when the foreground program captures the mouse; Shift-right-click uses the normal menu. Remote key bindings are not modified. Attachment insertion has a global default and per-host override. Automatic insertion still checks the original target and never presses Enter.
 
 **How do updates work?** Download and replace the app from Releases; GitHub CLI is not required for this. Version 0.1.8’s in-app update checker currently requires an authenticated GitHub CLI installation. It verifies the downloaded package and lets you decide when to install—it does not close your terminals automatically.
 

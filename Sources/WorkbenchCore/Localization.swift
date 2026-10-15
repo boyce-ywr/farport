@@ -1,4 +1,5 @@
 import Foundation
+import Observation
 
 public enum AppLanguage: String, CaseIterable, Sendable {
     case system, simplifiedChinese = "zh-Hans", english = "en"
@@ -22,12 +23,30 @@ public struct LocalizedMessage: ExpressibleByStringLiteral, ExpressibleByStringI
     }
 }
 
+private final class RuntimeLanguage: Observable, @unchecked Sendable {
+    private let registrar = ObservationRegistrar()
+    private let lock = NSLock()
+    private var stored: AppLanguage
+    init(_ language: AppLanguage) { stored = language }
+    var value: AppLanguage {
+        get { registrar.access(self, keyPath: \.value); return lock.withLock { stored } }
+        set { registrar.withMutation(of: self, keyPath: \.value) { lock.withLock { stored = newValue } } }
+    }
+}
+
 public enum L10n {
-    public static let language: AppLanguage = {
+    public static let preferenceDefaults: UserDefaults = ProcessInfo.processInfo.environment["SWB_HOME"] == nil
+        ? .standard : UserDefaults(suiteName: "local.sshworkbench.qa.language")!
+    private static let runtime: RuntimeLanguage = {
         let environment = ProcessInfo.processInfo.environment
-        let choice = environment["FARPORT_LANGUAGE"] ?? (environment["SWB_HOME"] == nil ? UserDefaults.standard.string(forKey: "farport.language") ?? "system" : "zh-Hans")
-        return AppLanguage.resolve(choice, preferred: Locale.preferredLanguages)
+        let choice = environment["FARPORT_LANGUAGE"] ?? (environment["SWB_HOME"] == nil ? preferenceDefaults.string(forKey: "farport.language") ?? "system" : "zh-Hans")
+        return RuntimeLanguage(AppLanguage.resolve(choice, preferred: Locale.preferredLanguages))
     }()
+    public static var language: AppLanguage { runtime.value }
+    public static func setPreference(_ choice: String) {
+        let resolved = AppLanguage.resolve(choice, preferred: Locale.preferredLanguages)
+        if runtime.value != resolved { runtime.value = resolved }
+    }
     public static let translations: [String: String] = {
         let executable = URL(fileURLWithPath: CommandLine.arguments[0]).standardizedFileURL
         let packaged = [Bundle.main.resourceURL?.appendingPathComponent("SSHWorkbench_WorkbenchCore.bundle"),

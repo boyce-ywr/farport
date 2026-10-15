@@ -69,12 +69,13 @@ enum TerminalPreferencesChecks {
             NSApp.postEvent(event, atStart: false)
         }
         try await wait { menuOpened }
-        try await checkTmuxMouse(workspace: workspace)
+        try await checkTmuxMouse(workspace: workspace, host: nil)
+        if let host = store.hosts.first(where: { $0.address == "127.0.0.1" && [22281, 22282].contains($0.port) }) { try await checkTmuxMouse(workspace: workspace, host: host) }
         workspace.selectTerminal(session)
         print("PASS · 附件策略快照、手动上传/插入、主机覆盖；普通菜单复制/粘贴/选择；tmux 会话级鼠标与右键转发")
     }
-    private static func checkTmuxMouse(workspace: Workspace) async throws {
-        let service = TmuxService(transport: workspace.store.transport, host: nil)
+    private static func checkTmuxMouse(workspace: Workspace, host: HostProfile?) async throws {
+        let service = TmuxService(transport: workspace.store.transport, host: host)
         let name = "farport-context-" + UUID().uuidString.prefix(8)
         let other = name + "-other"
         try service.create(name: name); try service.create(name: other)
@@ -87,7 +88,7 @@ enum TerminalPreferencesChecks {
         guard try service.mouseEnabled(session: name), try service.mouseEnabled(session: other) == otherBefore,
               try service.execute("show-options -gv mouse").checked().text == globalBefore else { throw WorkbenchError.message("启用鼠标改变了其他会话或全局设置") }
         guard let tmux = try service.sessions().first(where: { $0.name == name }) else { throw WorkbenchError.message("缺少 tmux 测试会话") }
-        workspace.attachTmux(nil, session: tmux)
+        workspace.attachTmux(host, session: tmux)
         guard let terminal = workspace.selectedTerminal else { throw WorkbenchError.message("tmux 附着失败") }
         try await wait { terminal.connected && terminal.terminal.getTerminal().mouseMode != .off }
         guard terminal.terminal.prefersTmuxMenu?() == true else { throw WorkbenchError.message("tmux 右键选项未生效") }
@@ -107,7 +108,31 @@ enum TerminalPreferencesChecks {
             }
         }
         try await wait { terminal.inputGeneration > inputBefore }
+        try await wait {
+            let screen = terminal.terminal.getTerminal()
+            return !(0..<screen.rows).contains { screen.getLine(row: $0)?.translateToString(trimRight: true, skipNullCellsFollowingWide: true).contains("Horizontal Split") == true }
+        }
+        print("PASS · tmux 普通 Shell 右键菜单实际弹出")
+        _ = try service.execute("respawn-pane -k -t \(RemotePath.quote(name)) \(RemotePath.quote("printf '\\033[2J\\033[HFARPORT_MOUSE_APP\\033[?1000h\\033[?1006h'; exec sleep 60"))").checked()
+        try await wait {
+            (try? service.execute("display-message -p -t \(RemotePath.quote(name)) '#{mouse_any_flag}'").checked().text.trimmingCharacters(in: .whitespacesAndNewlines)) == "1"
+        }
+        try await wait {
+            let screen = terminal.terminal.getTerminal()
+            let lines = (0..<screen.rows).map { screen.getLine(row: $0)?.translateToString(trimRight: true, skipNullCellsFollowingWide: true) ?? "" }.joined(separator: "\n")
+            return lines.contains("FARPORT_MOUSE_APP") && !lines.contains("Horizontal Split")
+        }
+        print("PASS · tmux 前台程序已开启鼠标模式，开始验证菜单")
+        guard let event = NSEvent.mouseEvent(with: .rightMouseDown, location: point, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber, context: nil, eventNumber: 2, clickCount: 1, pressure: 1) else { throw WorkbenchError.message("无法创建 TUI 右键事件") }
+        terminal.terminal.rightMouseDown(with: event)
+        try await wait {
+            let screen = terminal.terminal.getTerminal()
+            return (0..<screen.rows).contains { screen.getLine(row: $0)?.translateToString(trimRight: true, skipNullCellsFollowingWide: true).contains("Horizontal Split") == true }
+        }
         terminal.terminal.process.send(data: [27][...])
+        if let release = NSEvent.mouseEvent(with: .rightMouseUp, location: point, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber, context: nil, eventNumber: 2, clickCount: 1, pressure: 0) { terminal.terminal.rightMouseUp(with: release) }
+        guard try service.mouseEnabled(session: other) == otherBefore, try service.execute("show-options -gv mouse").checked().text == globalBefore else { throw WorkbenchError.message("TUI 右键改变了其他会话或全局设置") }
+        print("PASS · \(host == nil ? "本机" : "隔离 SSH") tmux 前台程序鼠标模式下，右键仍实际弹出菜单；不修改其他会话或全局设置")
         workspace.close(terminal)
     }
     private static func wait(_ condition: () -> Bool) async throws {
