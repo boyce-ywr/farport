@@ -148,9 +148,10 @@ public final class SSHTransport: @unchecked Sendable {
         return arguments
     }
     private func connectionDigest(_ host: HostProfile) -> String { SHA256.hash(data: Data((host.id.uuidString + host.connectionKey).utf8)).map { String(format: "%02x", $0) }.joined() }
-    public func terminalArguments(for host: HostProfile, tmuxSession: String? = nil) throws -> [String] {
+    public func terminalArguments(for host: HostProfile, tmuxSession: String? = nil, graphicsCompatible: Bool = false) throws -> [String] {
         var result = try options(for: host) + ["-tt", host.address]
         if let tmuxSession { result += [RemoteTmuxCommand.attach(session: tmuxSession)] }
+        else if graphicsCompatible { result += [TerminalGraphics.loginCommand] }
         return result
     }
     public func forwardingArguments(for host: HostProfile, kind: ForwardingKind, port: Int, target: String = "127.0.0.1", targetPort: Int = 80) throws -> [String] {
@@ -170,23 +171,30 @@ public final class SSHTransport: @unchecked Sendable {
         try ProcessRunner.run(executable: "/usr/bin/ssh", arguments: options(for: host) + [host.address, command], environment: environment(for: host), cancellation: cancellation, timeout: timeout)
     }
     public func requirePosixShell(_ host: HostProfile, cancellation: CancellationFlag = CancellationFlag()) throws {
+        guard try supportsPosixShell(host, cancellation: cancellation) else {
+            guard shellLock.withLock({ windowsHosts.contains(connectionDigest(host)) }) else {
+                throw WorkbenchError.message(L10n.text("目标 SSH 没有可用的 /bin/sh，无法执行 tmux 管理；普通终端仍可使用。"))
+            }
+            throw WorkbenchError.message(L10n.text("当前 SSH 使用 Windows 原生 Shell，不能直接管理 tmux。请打开普通终端；如需 tmux，请连接已配置的 Linux 或 WSL SSH 服务。"))
+        }
+    }
+    public func supportsPosixShell(_ host: HostProfile, cancellation: CancellationFlag = CancellationFlag()) throws -> Bool {
         try cancellation.check()
         let key = connectionDigest(host)
-        if shellLock.withLock({ posixHosts.contains(key) }) { return }
-        let unsupported = L10n.text("当前 SSH 使用 Windows 原生 Shell，不能直接管理 tmux。请打开普通终端；如需 tmux，请连接已配置的 Linux 或 WSL SSH 服务。")
-        if shellLock.withLock({ windowsHosts.contains(key) }) { throw WorkbenchError.message(unsupported) }
+        if shellLock.withLock({ posixHosts.contains(key) }) { return true }
+        if shellLock.withLock({ windowsHosts.contains(key) }) { return false }
         let posix = try run(host, command: "/bin/sh -c 'printf FARPORT_POSIX_SHELL'", cancellation: cancellation, timeout: 15)
         if posix.status == 255 { _ = try posix.checked() }
         if posix.status == 0, posix.text.contains("FARPORT_POSIX_SHELL") {
-            _ = shellLock.withLock { posixHosts.insert(key) }; return
+            _ = shellLock.withLock { posixHosts.insert(key) }; return true
         }
         let windows = try run(host, command: HostMonitorService.powershell("[Console]::Write('FARPORT_WINDOWS_SHELL')"), cancellation: cancellation, timeout: 15)
         if windows.status == 255 { _ = try windows.checked() }
         if windows.status == 0, windows.text.contains("FARPORT_WINDOWS_SHELL") {
             _ = shellLock.withLock { windowsHosts.insert(key) }
-            throw WorkbenchError.message(unsupported)
+            return false
         }
-        throw WorkbenchError.message(L10n.text("目标 SSH 没有可用的 /bin/sh，无法执行 tmux 管理；普通终端仍可使用。"))
+        return false
     }
     public func sftp(_ host: HostProfile, cancellation: CancellationFlag = CancellationFlag()) throws -> SFTPClient { try SFTPClient(transport: self, host: host, cancellation: cancellation) }
     public func testConnection(_ draft: HostProfile, cancellation: CancellationFlag = CancellationFlag()) throws -> ConnectionTestResult {

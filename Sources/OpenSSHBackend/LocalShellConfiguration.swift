@@ -39,7 +39,8 @@ public struct LocalShellConfiguration: Sendable {
         environment["LOGNAME"] = NSUserName()
         environment["TERM"] = "xterm-256color"
         environment["COLORTERM"] = "truecolor"
-        environment["TERM_PROGRAM"] = "Farport"
+        environment["TERM_PROGRAM"] = TerminalGraphics.program
+        for key in TerminalGraphics.environmentKeys { environment.removeValue(forKey: key) }
         if environment["PATH"]?.isEmpty != false { environment["PATH"] = "/usr/bin:/bin:/usr/sbin:/sbin" }
         if environment["LANG"]?.isEmpty != false { environment["LANG"] = "en_US.UTF-8" }
         self.environment = environment

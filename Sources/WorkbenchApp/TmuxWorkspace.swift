@@ -49,6 +49,14 @@ struct TmuxWorkspace: View {
                 Button { Task { await model.refresh() } } label: { Image(systemName: "arrow.clockwise") }.help(L10n.text("刷新远端会话"))
                 Button { if let name = promptText(L10n.text("新建 tmux 会话"), detail: L10n.text("会话在当前机器创建，关闭标签不会结束它。"), initial: "work") { model.perform { try $0.create(name: name) } } } label: { Label(L10n.text("新建会话"), systemImage: "plus") }.buttonStyle(.borderedProminent)
             }
+            HStack(spacing: 8) {
+                Image(systemName: "info.circle").foregroundStyle(.secondary)
+                Text(L10n.text("Codex 宠物需在普通终端运行，Codex 暂不支持 tmux 内显示。"))
+                    .font(.caption).foregroundStyle(.secondary)
+                Spacer()
+                Button(L10n.text("打开普通终端")) { if let host { workspace.connect(host) } else { workspace.connectLocal() } }
+                    .font(.caption)
+            }
             HStack(spacing: 14) {
                 metric(L10n.text("持久会话"), value: model.sessions.count, symbol: "square.stack.3d.up", caption: L10n.text("保留工作现场"))
                 metric(L10n.text("终端窗格"), value: model.panes.count, symbol: "rectangle.split.2x1", caption: L10n.text("查看进程与工作目录"))

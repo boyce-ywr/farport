@@ -198,6 +198,11 @@ struct WorkspaceRoot: View {
         guard !didPrepareQA, store.isTestWorkspace, let output = ProcessInfo.processInfo.environment["SWB_QA_OUTPUT"] else { return }
         didPrepareQA = true
         let screen = ProcessInfo.processInfo.environment["SWB_QA_SCREEN"] ?? "terminal"
+        if screen == "terminal-graphics" {
+            do { try await TerminalGraphicsChecks.run(workspace: workspace, output: URL(fileURLWithPath: output)); NSApp.terminate(nil) }
+            catch { fputs("FAIL · \(error.localizedDescription)\n", stderr); workspace.sessions.forEach { $0.close() }; exit(1) }
+            return
+        }
         if screen == "windows-ssh" {
             do { try await WindowsSSHChecks.run(workspace: workspace, output: URL(fileURLWithPath: output)); NSApp.terminate(nil) }
             catch { fputs("FAIL · \(error.localizedDescription)\n", stderr); workspace.sessions.forEach { $0.close() }; exit(1) }

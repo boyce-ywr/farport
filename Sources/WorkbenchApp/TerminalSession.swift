@@ -31,8 +31,12 @@ final class SafeTerminalView: LocalProcessTerminalView {
     private var magnificationBase: Double?
     private var accumulatedMagnification: Double = 0
     private var scrollMonitor: Any?
+    private var graphicsInput = TerminalGraphicsInput()
+    var displayedGraphicsImages: Int { graphicsInput.displayedImages }
     override init(frame: CGRect) {
-        super.init(frame: frame)
+        var options = SwiftTerm.TerminalOptions.default
+        options.kittyImageCacheLimitBytes = 64 * 1024 * 1024
+        super.init(frame: frame, options: options)
         proxy = TerminalSecurityProxy(owner: self); terminalDelegate = proxy
         registerForDraggedTypes([.fileURL, .png, .tiff])
         scrollMonitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { [weak self] event in
@@ -42,6 +46,11 @@ final class SafeTerminalView: LocalProcessTerminalView {
         }
     }
     deinit { if let scrollMonitor { NSEvent.removeMonitor(scrollMonitor) } }
+    override func dataReceived(slice: ArraySlice<UInt8>) {
+        let filtered = graphicsInput.filter(slice)
+        if !filtered.isEmpty { super.dataReceived(slice: filtered[...]) }
+    }
+    func resetGraphicsInput() { graphicsInput = TerminalGraphicsInput() }
     required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
     override func mouseDown(with event: NSEvent) {
         if event.modifierFlags.contains(.control) { rightMouseDown(with: event); return }
@@ -205,19 +214,20 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable, LocalProc
     func start() {
         guard !started, !disposed else { return }; started = true; stateKey = isLocal ? "正在启动…" : "正在验证连接…"; probe = CancellationFlag()
         connectionID = UUID()
+        terminal.resetGraphicsInput()
         let transport = transport; let host = host; let cancellation = probe
         Task {
             do {
                 guard !disposed, !cancellation.isCancelled else { return }
                 if let host {
                     let tmux = tmuxID != nil
-                    _ = try await Task.detached {
-                        let result = try transport.run(host, command: SSHTransport.connectionProbe, cancellation: cancellation, timeout: 120).checked()
+                    let graphicsCompatible = try await Task.detached {
+                        _ = try transport.run(host, command: SSHTransport.connectionProbe, cancellation: cancellation, timeout: 120).checked()
                         if tmux { try transport.requirePosixShell(host, cancellation: cancellation) }
-                        return result
+                        return try transport.supportsPosixShell(host, cancellation: cancellation)
                     }.value
                     guard !disposed, !cancellation.isCancelled else { return }
-                    terminal.startProcess(executable: "/usr/bin/ssh", args: try transport.terminalArguments(for: host, tmuxSession: tmuxID), environment: transport.environment(for: host).map { "\($0.key)=\($0.value)" })
+                    terminal.startProcess(executable: "/usr/bin/ssh", args: try transport.terminalArguments(for: host, tmuxSession: tmuxID, graphicsCompatible: graphicsCompatible), environment: transport.environment(for: host).map { "\($0.key)=\($0.value)" })
                 } else {
                     let configuration = try LocalShellConfiguration()
                     var environment = configuration.environment
@@ -233,7 +243,8 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable, LocalProc
                 if terminal.shouldRequestFocus { terminal.window?.makeFirstResponder(terminal) }
             } catch {
                 guard !disposed, !cancellation.isCancelled else { return }; stateKey = isLocal ? "启动失败" : "连接失败"; connected = false
-                terminal.feed(text: "\r\n\u{1b}[31m\(error.localizedDescription.replacingOccurrences(of: "\n", with: "\r\n"))\u{1b}[0m\r\n")
+                let message = "\r\n\u{1b}[31m\(error.localizedDescription.replacingOccurrences(of: "\n", with: "\r\n"))\u{1b}[0m\r\n"
+                terminal.dataReceived(slice: Array(message.utf8)[...])
             }
         }
     }

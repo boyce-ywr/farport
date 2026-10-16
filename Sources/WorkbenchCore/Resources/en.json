@@ -50,6 +50,7 @@
   "未保存的修改": "Unsaved changes",
   "关闭会丢弃自上次保存以来的修改，已保存的内容不受影响。": "Closing discards changes since the last save. Saved content is not affected.",
   "本机时间": "Local time",
+  "Codex 宠物需在普通终端运行，Codex 暂不支持 tmux 内显示。": "Run Codex pets in a regular terminal. Codex does not currently support pets inside tmux.",
   "在 Finder 中显示目标文件": "Reveal destination in Finder",
   "在 Finder 中显示本机源文件": "Reveal local source in Finder",
   "本机文件已移动或删除，无法在 Finder 中定位。": "The local file was moved or deleted and cannot be revealed in Finder.",

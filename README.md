@@ -26,6 +26,14 @@ macOS 14+ · Apple Silicon / Intel · [MIT 开源](LICENSE)
 
 ![磁盘与系统信息的紧凑布局，使用演示数据](docs/images/monitor-details.png)
 
+### Codex 宠物
+
+普通本地终端和 SSH 终端支持 Codex 的内置宠物动画。升级后新开一个终端，运行 `codex`，输入 `/pets` 选择宠物，`/pets off` 关闭。
+
+![SSH 终端内实际运行的 Codex 宠物选择器，截图裁剪](docs/images/codex-pet.png)
+
+**Codex 当前不支持在 tmux/Zellij 内显示宠物。** 在 tmux 页点击“打开普通终端”即可新建同一主机的直连终端，原 tmux 任务不受影响。自定义宠物还需要符合所用 Codex CLI 的素材格式。
+
 ### tmux 会话
 
 长时间运行的任务放在 tmux 中，断开后再进入。会话列表能看到窗口、进程和工作目录。
@@ -56,15 +64,15 @@ HTML 报告也能在浏览器打开。Farport 在 Mac 本机提供临时访问�
 
 本文介绍当前主分支；已发布安装包的功能以对应 Release 说明为准。
 
-**0.1.8 请使用构建 11 或更新构建**：修复了关闭音视频/网页预览时可能发生的闪退，旧构建 9 不包含此修复。
+**旧版 0.1.8 构建 9 用户请更新**：当前版本包含预览服务闪退修复。
 
-从 [GitHub Releases](https://github.com/boyce-ywr/farport/releases/latest) 下载 DMG。当前版本 **0.1.8**：
+从 [GitHub Releases](https://github.com/boyce-ywr/farport/releases/latest) 下载 DMG。当前版本 **0.1.9**：
 
 | 你的 Mac | 下载 |
 | --- | --- |
-| Apple Silicon（M 系列） | [Apple Silicon 版](https://github.com/boyce-ywr/farport/releases/download/v0.1.8/Farport-0.1.8-arm64.dmg) |
-| Intel 芯片 | [Intel 版](https://github.com/boyce-ywr/farport/releases/download/v0.1.8/Farport-0.1.8-x86_64.dmg) |
-| 不确定芯片，或需要两种架构 | [Universal 通用版](https://github.com/boyce-ywr/farport/releases/download/v0.1.8/Farport-0.1.8-universal.dmg) |
+| Apple Silicon（M 系列） | [Apple Silicon 版](https://github.com/boyce-ywr/farport/releases/download/v0.1.9/Farport-0.1.9-arm64.dmg) |
+| Intel 芯片 | [Intel 版](https://github.com/boyce-ywr/farport/releases/download/v0.1.9/Farport-0.1.9-x86_64.dmg) |
+| 不确定芯片，或需要两种架构 | [Universal 通用版](https://github.com/boyce-ywr/farport/releases/download/v0.1.9/Farport-0.1.9-universal.dmg) |
 
 1. 打开 DMG，将 **Farport.app** 拖入 **Applications（应用程序）**。
 2. 从“应用程序”打开 Farport。升级前请先保存工作并退出旧版。

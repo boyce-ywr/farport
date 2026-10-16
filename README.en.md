@@ -26,6 +26,14 @@ Monitoring uses a compact disk table and grouped operating-system, hardware, and
 
 ![Compact disk and system details using demo data](docs/images/monitor-details.png)
 
+### Codex pets
+
+Regular local and SSH terminals support Codex's built-in pet animations. After updating, open a new terminal, run `codex`, then use `/pets` to choose a pet or `/pets off` to disable it.
+
+![Actual Codex pet picker over SSH, cropped screenshot](docs/images/codex-pet.png)
+
+**Codex currently disables pets inside tmux and Zellij.** Use “Open regular terminal” on the tmux page to open a direct connection to the same host without stopping its tmux sessions. Custom pets must also match the asset format supported by your Codex CLI version.
+
 ### tmux sessions
 
 Keep long-running tasks in tmux and reconnect later. See sessions, windows, processes, and working directories without leaving the app.
@@ -56,15 +64,15 @@ Open HTML reports in your browser, too. A temporary localhost address reads the 
 
 This README describes the main branch. Check each release's notes for the features included in its downloads.
 
-**Use build 11 or later for 0.1.8**: it fixes a crash when closing media or web previews. Build 9 does not include this fix.
+**Update from 0.1.8 build 9**: the current version includes the preview shutdown crash fix.
 
-Download a DMG from [GitHub Releases](https://github.com/boyce-ywr/farport/releases/latest). Current version: **0.1.8**.
+Download a DMG from [GitHub Releases](https://github.com/boyce-ywr/farport/releases/latest). Current version: **0.1.9**.
 
 | Mac | Download |
 | --- | --- |
-| Apple Silicon, including M-series chips | [Apple Silicon](https://github.com/boyce-ywr/farport/releases/download/v0.1.8/Farport-0.1.8-arm64.dmg) |
-| Intel | [Intel](https://github.com/boyce-ywr/farport/releases/download/v0.1.8/Farport-0.1.8-x86_64.dmg) |
-| Unsure, or need both architectures | [Universal](https://github.com/boyce-ywr/farport/releases/download/v0.1.8/Farport-0.1.8-universal.dmg) |
+| Apple Silicon, including M-series chips | [Apple Silicon](https://github.com/boyce-ywr/farport/releases/download/v0.1.9/Farport-0.1.9-arm64.dmg) |
+| Intel | [Intel](https://github.com/boyce-ywr/farport/releases/download/v0.1.9/Farport-0.1.9-x86_64.dmg) |
+| Unsure, or need both architectures | [Universal](https://github.com/boyce-ywr/farport/releases/download/v0.1.9/Farport-0.1.9-universal.dmg) |
 
 1. Open the DMG and drag **Farport.app** into **Applications**.
 2. Launch Farport from Applications. Save your work and quit the previous version before upgrading.

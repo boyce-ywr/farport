@@ -16,6 +16,7 @@ func rejects(_ message: String, _ operation: () throws -> Void) throws {
 }
 
 do {
+    try checkTerminalGraphics()
     if CommandLine.arguments.contains("--preview-lifecycle-check") { try checkPreviewLifecycle(); exit(0) }
     if CommandLine.arguments.contains("--preview-timeout-check") { try checkPreviewTimeout(); exit(0) }
     if let index = CommandLine.arguments.firstIndex(of: "--preview-lifecycle-ssh"), CommandLine.arguments.indices.contains(index + 1) { try checkRemotePreviewLifecycle(root: CommandLine.arguments[index + 1]); exit(0) }
@@ -147,7 +148,7 @@ do {
     ])
     try expect(shell.executable == "/bin/zsh" && shell.executableName == "-zsh", "直接启动用户登录 Shell 而非 SSH")
     try expect(shell.directory == temporaryRoot.path && shell.environment["HOME"] == temporaryRoot.path && shell.environment["PWD"] == temporaryRoot.path, "本机 Shell 从主目录启动")
-    try expect(shell.environment["SHELL"] == "/bin/zsh" && shell.environment["TERM_PROGRAM"] == "Farport", "本机终端环境标识")
+    try expect(shell.environment["SHELL"] == "/bin/zsh" && shell.environment["TERM_PROGRAM"] == TerminalGraphics.program, "本机终端环境标识")
     try expect(shell.environment["TERM"] == "xterm-256color" && shell.environment["COLORTERM"] == "truecolor", "本机与 SSH 终端色彩能力一致")
     try expect(shell.environment["PATH"] == "/example/bin:/usr/bin:/bin" && shell.environment["LANG"] == "zh_CN.UTF-8", "保留用户路径与语言")
     try expect(!shell.environment.keys.contains(where: { $0.hasPrefix("SWB_") }) && shell.environment["SSH_ASKPASS"] == nil && shell.environment["SSH_ASKPASS_REQUIRE"] == nil && shell.environment["SSH_CONNECTION"] == nil, "本机 Shell 不继承内部凭据提示和测试变量")
