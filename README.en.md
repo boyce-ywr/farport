@@ -23,6 +23,7 @@ Also included: host groups and colors, SSH config import, jump hosts, port forwa
 Choose English or Simplified Chinese in Settings; it applies and saves immediately, without restarting terminals, transfers, or open edits. Remote output, file contents, and custom host names stay unchanged. The file browser's Back button follows the visit history of each file source.
 
 Monitoring uses a compact disk table and grouped operating-system, hardware, and user details, with less empty space.
+Click any process column heading to cycle ascending, descending, and default order. Refreshing preserves your choice, and missing values stay last.
 
 ![Compact disk and system details using demo data](docs/images/monitor-details.png)
 
@@ -66,13 +67,13 @@ This README describes the main branch. Check each release's notes for the featur
 
 **Update from 0.1.8 build 9**: the current version includes the preview shutdown crash fix.
 
-Download a DMG from [GitHub Releases](https://github.com/boyce-ywr/farport/releases/latest). Current version: **0.1.9**.
+Download the stable version from [GitHub Releases](https://github.com/boyce-ywr/farport/releases/latest). **0.1.10 is a prerelease** with the copy and sorting improvements; see its release notes for the packaged-app validation limitation. The stable version remains 0.1.9.
 
 | Mac | Download |
 | --- | --- |
-| Apple Silicon, including M-series chips | [Apple Silicon](https://github.com/boyce-ywr/farport/releases/download/v0.1.9/Farport-0.1.9-arm64.dmg) |
-| Intel | [Intel](https://github.com/boyce-ywr/farport/releases/download/v0.1.9/Farport-0.1.9-x86_64.dmg) |
-| Unsure, or need both architectures | [Universal](https://github.com/boyce-ywr/farport/releases/download/v0.1.9/Farport-0.1.9-universal.dmg) |
+| Apple Silicon, including M-series chips | [Apple Silicon](https://github.com/boyce-ywr/farport/releases/download/v0.1.10/Farport-0.1.10-arm64.dmg) |
+| Intel | [Intel](https://github.com/boyce-ywr/farport/releases/download/v0.1.10/Farport-0.1.10-x86_64.dmg) |
+| Unsure, or need both architectures | [Universal](https://github.com/boyce-ywr/farport/releases/download/v0.1.10/Farport-0.1.10-universal.dmg) |
 
 1. Open the DMG and drag **Farport.app** into **Applications**.
 2. Launch Farport from Applications. Save your work and quit the previous version before upgrading.
@@ -103,6 +104,10 @@ Normal SSH use does not require Swift, Docker, or GitHub CLI. To manage tmux ses
 | Cut / copy / paste / select all in the editor | ⌘X / ⌘C / ⌘V / ⌘A |
 
 ## FAQ
+
+**How do I copy reliably?** Select text and press ⌘C, or use the pane's copy button. In tmux or mouse-aware programs, **Shift-drag, then ⌘C** copies locally without relying on the remote program. Farport confirms “Copied to Mac clipboard”; copying without a local selection does not erase the existing clipboard.
+
+**Why does a program say Copied but Paste is wrong?** The program's message does not confirm a Mac clipboard write. Remote writes require permission; blocked or background requests show feedback. Use the pane's clipboard menu to allow and copy pending content. Permission applies only to the current connection and resets on reconnect. Remote clipboard reads remain blocked.
 
 **Can I configure right-clicks and attachments?** The default terminal menu provides copy, paste, and selection. Enable tmux menus in Settings for sessions opened from the app's tmux page. Farport uses tmux's dedicated menu event even when the foreground program captures the mouse; Shift-right-click uses the normal menu. Remote key bindings are not modified. Attachment insertion has a global default and per-host override. Automatic insertion still checks the original target and never presses Enter.
 

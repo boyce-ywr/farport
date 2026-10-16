@@ -152,6 +152,7 @@ private struct TerminalPane: View {
                         Spacer(minLength: 0)
                     }.frame(maxWidth: .infinity, minHeight: 30).contentShape(Rectangle())
                 }.buttonStyle(.plain).interactionFrame("pane.\(session.id.uuidString)")
+                TerminalClipboardControls(terminal: session.terminal, state: session.terminal.clipboard)
                 Button { workspace.browseFiles(.terminal(session.id)) } label: { Image(systemName: "folder").frame(width: 24, height: 30) }.help(L10n.text("查看此分栏的文件"))
                 Menu {
                     Button(session.restartLabel) {
@@ -167,6 +168,7 @@ private struct TerminalPane: View {
             }.font(.system(size: 10, weight: focused ? .semibold : .regular)).buttonStyle(.borderless).padding(.horizontal, 8)
                 .background(focused ? Color.teal.opacity(0.12) : Color.primary.opacity(0.035))
             TerminalSurface(session: session, store: store, focused: focused)
+                .overlay(alignment: .topTrailing) { TerminalClipboardFeedback(state: session.terminal.clipboard).padding(8) }
         }.overlay { Rectangle().strokeBorder(focused ? Color.teal.opacity(0.6) : Color.primary.opacity(0.1), lineWidth: 1).allowsHitTesting(false) }
     }
 }

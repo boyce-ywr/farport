@@ -47,7 +47,7 @@ struct FileWorkspace: View {
                         TableColumn(L10n.text("权限"), sortUsing: FileSortComparator(column: .permissions)) { file in Text(file.attributes.permissionText).font(.system(size: 10, design: .monospaced)).foregroundStyle(.tertiary) }.width(min: L10n.language == .english ? 78 : 50, ideal: L10n.language == .english ? 80 : 55)
                     }.alternatingRowBackgrounds(.disabled)
                         .background(FileKeyboardCommands(copy: { copyFiles(model.selectedFiles) }, paste: { pasteFiles() }, selectAll: { model.selection = Set(model.visibleFiles.map(\.path)) }).frame(width: 0, height: 0))
-                        .background(FileTableSorting { model.fileSort.cycle($0) }.frame(width: 0, height: 0))
+                        .background(TableHeaderSorting(titles: FileSortColumn.allCases.map(\.title)) { model.fileSort.cycle(FileSortColumn.allCases[$0]) }.frame(width: 0, height: 0))
                         .contextMenu(forSelectionType: String.self) { identifiers in
                             let selected = model.files.filter { identifiers.contains($0.path) }
                             if selected.count == 1, let file = selected.first { fileActions(file) }

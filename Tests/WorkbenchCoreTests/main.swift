@@ -16,6 +16,7 @@ func rejects(_ message: String, _ operation: () throws -> Void) throws {
 }
 
 do {
+    try checkMonitorProcessSorting()
     try checkTerminalGraphics()
     if CommandLine.arguments.contains("--preview-lifecycle-check") { try checkPreviewLifecycle(); exit(0) }
     if CommandLine.arguments.contains("--preview-timeout-check") { try checkPreviewTimeout(); exit(0) }

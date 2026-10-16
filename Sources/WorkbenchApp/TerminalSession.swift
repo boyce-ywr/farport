@@ -16,6 +16,7 @@ private final class TmuxRightMouseEvent: NSEvent {
 }
 
 final class SafeTerminalView: LocalProcessTerminalView {
+    let clipboard = TerminalClipboardState()
     private var proxy: TerminalSecurityProxy!
     var attachmentStagingRoot: URL?
     var onAttachments: ((TerminalAttachmentPayload) -> Void)?
@@ -28,6 +29,7 @@ final class SafeTerminalView: LocalProcessTerminalView {
     var prefersTmuxMenu: (() -> Bool)?
     var prepareTmuxMenu: (() -> Void)?
     private var forwardedRightClick = false
+    private var localSelectionDrag = false
     private var magnificationBase: Double?
     private var accumulatedMagnification: Double = 0
     private var scrollMonitor: Any?
@@ -54,15 +56,16 @@ final class SafeTerminalView: LocalProcessTerminalView {
     required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
     override func mouseDown(with event: NSEvent) {
         if event.modifierFlags.contains(.control) { rightMouseDown(with: event); return }
-        noteMouseInput(event)
-        super.mouseDown(with: event)
+        localSelectionDrag = event.modifierFlags.contains(.shift)
+        if localSelectionDrag { withLocalSelection { super.mouseDown(with: event) } }
+        else { noteMouseInput(event); super.mouseDown(with: event) }
         onFocus?()
     }
     override func rightMouseDown(with event: NSEvent) {
         noteMouseInput(event)
         window?.makeFirstResponder(self); onContextFocus?()
         forwardedRightClick = false
-        if prefersTmuxMenu?() == true && !event.modifierFlags.contains(.shift) && !event.modifierFlags.contains(.control) {
+        if !selectionActive && prefersTmuxMenu?() == true && !event.modifierFlags.contains(.shift) && !event.modifierFlags.contains(.control) {
             if allowMouseReporting && getTerminal().mouseMode != .off {
                 forwardedRightClick = true; super.mouseDown(with: TmuxRightMouseEvent(event))
                 return
@@ -75,13 +78,44 @@ final class SafeTerminalView: LocalProcessTerminalView {
         if forwardedRightClick { forwardedRightClick = false; super.mouseUp(with: TmuxRightMouseEvent(event)) }
     }
     override func mouseUp(with event: NSEvent) {
+        if localSelectionDrag { withLocalSelection { super.mouseUp(with: event) }; localSelectionDrag = false; return }
         if !event.modifierFlags.contains(.control) { super.mouseUp(with: event) }
     }
     override func rightMouseDragged(with event: NSEvent) {
         noteMouseInput(event)
         if forwardedRightClick { super.mouseDragged(with: TmuxRightMouseEvent(event)) }
     }
-    override func mouseDragged(with event: NSEvent) { noteMouseInput(event); super.mouseDragged(with: event) }
+    override func mouseDragged(with event: NSEvent) {
+        if localSelectionDrag { withLocalSelection { super.mouseDragged(with: event) } }
+        else { noteMouseInput(event); super.mouseDragged(with: event) }
+    }
+    private func withLocalSelection(_ action: () -> Void) {
+        let original = allowMouseReporting
+        allowMouseReporting = false
+        defer { allowMouseReporting = original }
+        action()
+    }
+    override func selectionChanged(source: SwiftTerm.Terminal) {
+        super.selectionChanged(source: source)
+        clipboard.hasSelection = selectionActive && !(getSelection() ?? "").isEmpty
+    }
+    override func copy(_ sender: Any) {
+        guard let text = getSelection(), !text.isEmpty else {
+            clipboard.report(L10n.text("没有本地选区；请按住 Shift 拖选，再按 ⌘C。"), failed: true); return
+        }
+        clipboard.write(text)
+    }
+    override func validateUserInterfaceItem(_ item: NSValidatedUserInterfaceItem) -> Bool {
+        if item.action == #selector(copy(_:)) { return true }
+        return super.validateUserInterfaceItem(item)
+    }
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        if window?.firstResponder === self, event.modifierFlags.intersection(.deviceIndependentFlagsMask).subtracting(.capsLock) == .command {
+            if event.charactersIgnoringModifiers?.lowercased() == "c" { copy(self); return true }
+            if event.charactersIgnoringModifiers?.lowercased() == "v" { paste(self); return true }
+        }
+        return super.performKeyEquivalent(with: event)
+    }
     private func noteMouseInput(_ event: NSEvent) {
         if allowMouseReporting, getTerminal().mouseMode != .off, !event.modifierFlags.contains(.shift) { onInputActivity?() }
     }
@@ -95,12 +129,17 @@ final class SafeTerminalView: LocalProcessTerminalView {
         menu.addItem(.separator())
         item(L10n.text("全选"), #selector(contextSelectAll))
         item(L10n.text("清除选择"), #selector(contextSelectNone), enabled: selectionActive)
+        menu.addItem(.separator())
+        item(clipboard.pendingRemoteText == nil ? L10n.text("允许此终端写入剪贴板") : L10n.text("允许并复制刚才的内容"), #selector(contextAllowClipboard))
+        item(L10n.text("禁止此终端写入剪贴板"), #selector(contextDenyClipboard))
         return menu
     }
     @objc private func contextCopy() { copy(self) }
     @objc private func contextPaste() { paste(self) }
     @objc private func contextSelectAll() { selectAll() }
     @objc private func contextSelectNone() { selectNone() }
+    @objc private func contextAllowClipboard() { clipboard.allowRemoteCopy() }
+    @objc private func contextDenyClipboard() { clipboard.denyRemoteCopy() }
     override func magnify(with event: NSEvent) { applyMagnification(Double(event.magnification), phase: event.phase) }
     func applyMagnification(_ delta: Double, phase: NSEvent.Phase) {
         guard delta.isFinite else { return }
@@ -156,7 +195,6 @@ final class SafeTerminalView: LocalProcessTerminalView {
 
 private final class TerminalSecurityProxy: TerminalViewDelegate {
     weak var owner: SafeTerminalView?
-    private var clipboardDecision: Bool?
     init(owner: SafeTerminalView) { self.owner = owner }
     func sizeChanged(source: TerminalView, newCols: Int, newRows: Int) { owner?.sizeChanged(source: source, newCols: newCols, newRows: newRows) }
     func setTerminalTitle(source: TerminalView, title: String) { owner?.setTerminalTitle(source: source, title: title) }
@@ -167,12 +205,14 @@ private final class TerminalSecurityProxy: TerminalViewDelegate {
     func bell(source: TerminalView) { NSSound.beep() }
     func clipboardRead(source: TerminalView) -> Data? { nil }
     func clipboardCopy(source: TerminalView, content: Data) {
-        guard content.count <= 1024 * 1024 else { return }
-        if clipboardDecision == nil {
-            let alert = NSAlert(); alert.messageText = L10n.text("允许此终端写入 Mac 剪贴板？"); alert.informativeText = L10n.text("终端程序请求复制内容（例如 tmux 复制模式）。通过终端协议读取剪贴板的请求始终被拒绝。"); alert.addButton(withTitle: L10n.text("允许本终端写入")); alert.addButton(withTitle: L10n.text("拒绝"))
-            clipboardDecision = alert.runModal() == .alertFirstButtonReturn
+        DispatchQueue.main.async { [weak owner] in
+            guard let owner else { return }
+            let interactive = NSApp.isActive && NSApp.keyWindow === owner.window && owner.window?.firstResponder === owner
+            owner.clipboard.receive(content, interactive: interactive) {
+                let alert = NSAlert(); alert.messageText = L10n.text("允许此终端写入 Mac 剪贴板？"); alert.informativeText = L10n.text("终端程序请求复制内容（例如 tmux 复制模式）。通过终端协议读取剪贴板的请求始终被拒绝。"); alert.addButton(withTitle: L10n.text("允许本终端写入")); alert.addButton(withTitle: L10n.text("拒绝"))
+                return alert.runModal() == .alertFirstButtonReturn
+            }
         }
-        if clipboardDecision == true { owner?.clipboardCopy(source: source, content: content) }
     }
     func iTermContent(source: TerminalView, content: ArraySlice<UInt8>) {}
     func rangeChanged(source: TerminalView, startY: Int, endY: Int) {}
@@ -214,6 +254,7 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable, LocalProc
     func start() {
         guard !started, !disposed else { return }; started = true; stateKey = isLocal ? "正在启动…" : "正在验证连接…"; probe = CancellationFlag()
         connectionID = UUID()
+        terminal.clipboard.resetPermission()
         terminal.resetGraphicsInput()
         let transport = transport; let host = host; let cancellation = probe
         Task {

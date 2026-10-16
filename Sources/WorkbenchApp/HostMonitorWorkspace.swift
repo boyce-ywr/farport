@@ -20,7 +20,11 @@ final class HostMonitorModel: ObservableObject {
     @Published var error: String?
     @Published var section = "overview"
     @Published var query = ""
-    @Published var processOrder = "cpu"
+    @Published var processSort = MonitorProcessSort()
+    var processOrder: [MonitorProcessComparator] {
+        get { processSort.column == nil ? [] : [processSort.comparator] }
+        set {}
+    }
     private(set) var platform: MonitorPlatform?
     private var cancellation = CancellationFlag()
     private var generation = UUID()
@@ -66,11 +70,7 @@ final class HostMonitorModel: ObservableObject {
     func stop() { cancellation.cancel(); generation = UUID(); previous = nil }
     func togglePause() { paused.toggle(); cancellation.cancel(); previous = nil }
     var processes: [MonitorProcess] {
-        (snapshot?.processes ?? []).filter { query.isEmpty || (String($0.id) + " " + $0.name + " " + $0.user).localizedCaseInsensitiveContains(query) }.sorted {
-            if processOrder == "memory" { return ($0.residentBytes ?? -1) == ($1.residentBytes ?? -1) ? $0.id < $1.id : ($0.residentBytes ?? -1) > ($1.residentBytes ?? -1) }
-            if processOrder == "pid" { return $0.id < $1.id }
-            return ($0.cpuPercent ?? -1) == ($1.cpuPercent ?? -1) ? $0.id < $1.id : ($0.cpuPercent ?? -1) > ($1.cpuPercent ?? -1)
-        }
+        processSort.sorted((snapshot?.processes ?? []).filter { query.isEmpty || (String($0.id) + " " + $0.name + " " + $0.user).localizedCaseInsensitiveContains(query) })
     }
 }
 
@@ -169,17 +169,11 @@ struct HostMonitorWorkspace: View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
                 TextField(L10n.text("搜索进程名、PID 或用户"), text: $model.query).textFieldStyle(.roundedBorder)
-                Picker(L10n.text("排序"), selection: $model.processOrder) { Text("CPU").tag("cpu"); Text(L10n.text("内存")).tag("memory"); Text("PID").tag("pid") }.frame(width: 160)
+                Text(model.processSort.description).font(.caption).foregroundStyle(.secondary)
+                if model.processSort.column != nil { Button(L10n.text("恢复默认")) { model.processSort = MonitorProcessSort() }.font(.caption) }
             }
             Text(L10n.text("进程 CPU 按单核 100% 计算，可超过 100%；首个采样显示 —。内存为 RSS / Working Set，不读取命令行参数。")).font(.caption).foregroundStyle(.secondary)
-            Table(model.processes) {
-                TableColumn("PID") { item in Text(String(item.id)).monospacedDigit() }.width(60)
-                TableColumn(L10n.text("进程")) { item in Text(item.name).lineLimit(1).help(item.name).textSelection(.enabled) }.width(min: 140, ideal: 260)
-                TableColumn(L10n.text("用户 / UID")) { item in Text(item.user.isEmpty ? "—" : item.user) }.width(min: 70, ideal: 100)
-                TableColumn("CPU") { item in Text(percent(item.cpuPercent)).monospacedDigit() }.width(75)
-                TableColumn(L10n.text("内存")) { item in Text(size(item.residentBytes)).monospacedDigit() }.width(90)
-                TableColumn(L10n.text("运行时间")) { item in Text(duration(item.elapsedSeconds)).monospacedDigit() }.width(100)
-            }.font(.system(size: 11))
+            MonitorProcessTable(model: model)
             Text(L10n.text("可见进程 \(snapshot.processes.count) 个。只读查看，不提供结束进程操作。")).font(.caption).foregroundStyle(.secondary)
             capabilities(snapshot)
         }

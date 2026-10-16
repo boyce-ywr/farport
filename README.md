@@ -23,6 +23,7 @@ macOS 14+ · Apple Silicon / Intel · [MIT 开源](LICENSE)
 支持简体中文和英文，在设置中选择后立即切换并自动保存，无需重启；终端、传输和编辑草稿不受影响。远端输出、文件内容和自定义主机名称保持原样。文件工具栏的返回按钮按访问历史回退，各个来源分别记住路径。
 
 监控页用紧凑表格查看磁盘占用，系统信息按操作系统、硬件和当前用户分组，减少无用留白。
+进程表的 PID、进程、用户、CPU、内存、运行时间都可点击表头切换“升序 → 降序 → 默认”，刷新后保留选择，缺失值始终排在末尾。
 
 ![磁盘与系统信息的紧凑布局，使用演示数据](docs/images/monitor-details.png)
 
@@ -66,13 +67,13 @@ HTML 报告也能在浏览器打开。Farport 在 Mac 本机提供临时访问�
 
 **旧版 0.1.8 构建 9 用户请更新**：当前版本包含预览服务闪退修复。
 
-从 [GitHub Releases](https://github.com/boyce-ywr/farport/releases/latest) 下载 DMG。当前版本 **0.1.9**：
+从 [GitHub Releases](https://github.com/boyce-ywr/farport/releases/latest) 下载稳定版。**0.1.10 为预发布**，包含新的复制和排序功能；安装版验证限制见对应 Release 说明，稳定版仍为 0.1.9。
 
 | 你的 Mac | 下载 |
 | --- | --- |
-| Apple Silicon（M 系列） | [Apple Silicon 版](https://github.com/boyce-ywr/farport/releases/download/v0.1.9/Farport-0.1.9-arm64.dmg) |
-| Intel 芯片 | [Intel 版](https://github.com/boyce-ywr/farport/releases/download/v0.1.9/Farport-0.1.9-x86_64.dmg) |
-| 不确定芯片，或需要两种架构 | [Universal 通用版](https://github.com/boyce-ywr/farport/releases/download/v0.1.9/Farport-0.1.9-universal.dmg) |
+| Apple Silicon（M 系列） | [Apple Silicon 版](https://github.com/boyce-ywr/farport/releases/download/v0.1.10/Farport-0.1.10-arm64.dmg) |
+| Intel 芯片 | [Intel 版](https://github.com/boyce-ywr/farport/releases/download/v0.1.10/Farport-0.1.10-x86_64.dmg) |
+| 不确定芯片，或需要两种架构 | [Universal 通用版](https://github.com/boyce-ywr/farport/releases/download/v0.1.10/Farport-0.1.10-universal.dmg) |
 
 1. 打开 DMG，将 **Farport.app** 拖入 **Applications（应用程序）**。
 2. 从“应用程序”打开 Farport。升级前请先保存工作并退出旧版。
@@ -103,6 +104,10 @@ HTML 报告也能在浏览器打开。Farport 在 Mac 本机提供临时访问�
 | 编辑器剪切 / 复制 / 粘贴 / 全选 | ⌘X / ⌘C / ⌘V / ⌘A |
 
 ## 几个常见问题
+
+**终端里怎么可靠地复制？** 选中文本后按 ⌘C，或点分栏顶部的复制按钮。在 tmux 或会捕获鼠标的程序中，按住 **Shift 拖选，再按 ⌘C**，由 Farport 直接写入 Mac 剪贴板。成功后显示“已复制到 Mac 剪贴板”；没有本地选区时不会清空原剪贴板。
+
+**为什么程序显示 Copied，粘贴却不对？** 程序自己的提示不代表 Mac 已接收内容。远端写入剪贴板需授权；拒绝或后台请求会显示原因，可在分栏剪贴板菜单中选择“允许并复制刚才的内容”。授权仅针对当前连接，重连后重新确认；Mac 剪贴板读取仍禁止。
 
 **终端右键和附件怎么设置？** 默认右键有复制、粘贴和选择操作；设置中可选 tmux 菜单，适用于从应用 tmux 页进入的会话。即使前台程序接管鼠标，也使用 tmux 的专用菜单事件；Shift＋右键临时返回普通菜单，不改远端按键配置。附件默认安全自动插入，可全局关闭或对单个主机覆盖；目标发生变化时仍需确认，不自动回车。
 
