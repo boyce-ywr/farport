@@ -198,6 +198,21 @@ struct WorkspaceRoot: View {
         guard !didPrepareQA, store.isTestWorkspace, let output = ProcessInfo.processInfo.environment["SWB_QA_OUTPUT"] else { return }
         didPrepareQA = true
         let screen = ProcessInfo.processInfo.environment["SWB_QA_SCREEN"] ?? "terminal"
+        if screen == "windows-ssh" {
+            do { try await WindowsSSHChecks.run(workspace: workspace, output: URL(fileURLWithPath: output)); NSApp.terminate(nil) }
+            catch { fputs("FAIL · \(error.localizedDescription)\n", stderr); workspace.sessions.forEach { $0.close() }; exit(1) }
+            return
+        }
+        if screen == "compact-details" {
+            do { try await CompactLayoutChecks.run(store: store, output: URL(fileURLWithPath: output)); NSApp.terminate(nil) }
+            catch { fputs("FAIL · \(error.localizedDescription)\n", stderr); exit(1) }
+            return
+        }
+        if screen == "attachment-auto" {
+            do { try await AttachmentAutoInsertChecks.run(workspace: workspace); NSApp.terminate(nil) }
+            catch { fputs("FAIL · \(error.localizedDescription)\n", stderr); exit(1) }
+            return
+        }
         if screen == "editor-actions" {
             do { try await EditorChecks.run(store: store, output: URL(fileURLWithPath: output)); NSApp.terminate(nil) }
             catch { fputs("FAIL · \(error.localizedDescription)\n", stderr); exit(1) }

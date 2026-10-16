@@ -48,7 +48,8 @@ enum FileNavigationMediaChecks {
         workspace.browseFiles(.local); workspace.browseFiles(.host(host.id))
         guard workspace.currentFileBrowser === model, model.history == remoteHistory else { throw WorkbenchError.message("来源切换丢失历史") }
         if scene == "media-preview" {
-            for name in ["demo.wav", "demo.mp4"] {
+            let cycles = ProcessInfo.processInfo.environment["SWB_QA_MEDIA_LIFECYCLE"] == "1" ? 10 : 1
+            for name in Array(repeating: ["demo.wav", "demo.mp4"], count: cycles).flatMap({ $0 }) {
                 guard let file = model.files.first(where: { $0.name == name }) else { throw WorkbenchError.message("缺少媒体文件") }
                 model.selection = [file.path]; model.preview(file)
                 try await wait { !model.previewBusy && model.mediaURL != nil }

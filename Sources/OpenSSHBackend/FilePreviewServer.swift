@@ -6,6 +6,14 @@ import WorkbenchCore
 import Darwin
 
 public final class FilePreviewServer: @unchecked Sendable {
+    private final class Request: @unchecked Sendable {
+        let id = UUID()
+        let connection: NWConnection
+        let cancellation = CancellationFlag()
+        var serving = false
+        init(_ connection: NWConnection) { self.connection = connection }
+        func cancel() { cancellation.cancel(); connection.cancel() }
+    }
     public let root: String
     public let allowsScripts: Bool
     public private(set) var port: UInt16 = 0
@@ -15,10 +23,9 @@ public final class FilePreviewServer: @unchecked Sendable {
     private let fileName: String?
     private let listener: NWListener
     private let queue = DispatchQueue(label: "farport.preview.http")
-    private let workers = DispatchSemaphore(value: 4)
     private let cancellation = CancellationFlag()
     private let lock = NSLock()
-    private var connections: [UUID: NWConnection] = [:]
+    private var connections: [UUID: Request] = [:]
 
     public init(transport: SSHTransport, host: HostProfile?, directory: String, allowsScripts: Bool = false, fileName: String? = nil) throws {
         guard fileName == nil || RemotePath.validName(fileName!) else { throw WorkbenchError.message(L10n.text("预览文件名无效。")) }
@@ -35,10 +42,16 @@ public final class FilePreviewServer: @unchecked Sendable {
         parameters.requiredLocalEndpoint = .hostPort(host: "127.0.0.1", port: .any)
         listener = try NWListener(using: parameters)
         let ready = DispatchSemaphore(value: 0)
-        listener.stateUpdateHandler = { state in if case .ready = state { ready.signal() }; if case .failed = state { ready.signal() } }
-        listener.newConnectionHandler = { [weak self] connection in self?.accept(connection) }
+        listener.stateUpdateHandler = { [weak self] state in
+            if case .ready = state { ready.signal() }
+            if case .failed = state { self?.stop(); ready.signal() }
+        }
+        listener.newConnectionHandler = { [weak self] connection in
+            guard let self else { connection.cancel(); return }
+            self.accept(connection)
+        }
         listener.start(queue: queue)
-        guard ready.wait(timeout: .now() + 5) == .success, let port = listener.port else { listener.cancel(); throw WorkbenchError.message(L10n.text("无法启动本机文件预览服务。")) }
+        guard ready.wait(timeout: .now() + 5) == .success, !cancellation.isCancelled, let port = listener.port else { listener.cancel(); throw WorkbenchError.message(L10n.text("无法启动本机文件预览服务。")) }
         self.port = port.rawValue
     }
     deinit { stop() }
@@ -48,88 +61,109 @@ public final class FilePreviewServer: @unchecked Sendable {
         return URL(string: "http://127.0.0.1:\(port)/\(token)/")!.appendingPathComponent(filename)
     }
     public func stop() {
-        cancellation.cancel(); listener.cancel()
-        lock.lock(); let current = Array(connections.values); connections.removeAll(); lock.unlock()
+        lock.lock()
+        cancellation.cancel()
+        let current = Array(connections.values); connections.removeAll()
+        lock.unlock()
+        listener.cancel()
         current.forEach { $0.cancel() }
     }
     private func accept(_ connection: NWConnection) {
-        guard !cancellation.isCancelled, workers.wait(timeout: .now()) == .success else { connection.cancel(); return }
-        let identifier = UUID()
-        lock.lock(); connections[identifier] = connection; lock.unlock()
-        connection.stateUpdateHandler = { [weak self] state in
-            if case .cancelled = state { connection.stateUpdateHandler = nil; self?.release(identifier) }
-            if case .failed = state { connection.cancel() }
+        let request = Request(connection)
+        lock.lock()
+        guard !cancellation.isCancelled, connections.count < 4 else { lock.unlock(); connection.cancel(); return }
+        connections[request.id] = request
+        connection.stateUpdateHandler = { [weak self, weak request] state in
+            guard let request else { return }
+            switch state {
+            case .cancelled:
+                request.cancellation.cancel()
+                self?.release(request, finished: false)
+            case .failed:
+                request.cancel()
+                self?.release(request, finished: false)
+            default: break
+            }
         }
         connection.start(queue: queue)
-        queue.asyncAfter(deadline: .now() + 120) { connection.cancel() }
-        receive(connection, data: Data())
+        lock.unlock()
+        queue.asyncAfter(deadline: .now() + 120) { [weak request] in request?.cancel() }
+        receive(request, data: Data())
     }
-    private func release(_ identifier: UUID) {
-        lock.lock(); let removed = connections.removeValue(forKey: identifier); lock.unlock()
-        if removed != nil { workers.signal() }
+    private func release(_ request: Request, finished: Bool) {
+        lock.lock(); defer { lock.unlock() }
+        if finished || !request.serving { connections.removeValue(forKey: request.id) }
     }
-    private func receive(_ connection: NWConnection, data: Data) {
-        connection.receive(minimumIncompleteLength: 1, maximumLength: 8192) { [weak self] bytes, _, complete, error in
-            guard let self else { connection.cancel(); return }
+    private func receive(_ request: Request, data: Data) {
+        request.connection.receive(minimumIncompleteLength: 1, maximumLength: 8192) { [weak self] bytes, _, complete, error in
+            guard let self, !request.cancellation.isCancelled else { request.cancel(); return }
             var header = data; if let bytes { header.append(bytes) }
-            guard header.count <= 16384, error == nil else { connection.cancel(); return }
+            guard header.count <= 16384, error == nil else { request.cancel(); return }
             if let end = header.range(of: Data("\r\n\r\n".utf8)) {
-                let request = String(decoding: header[..<end.lowerBound], as: UTF8.self)
-                DispatchQueue.global(qos: .utility).async { self.serve(request, connection: connection) }
-            } else if complete { connection.cancel() }
-            else { self.receive(connection, data: header) }
+                self.lock.lock()
+                let allowed = !self.cancellation.isCancelled && !request.cancellation.isCancelled && self.connections[request.id] != nil
+                if allowed { request.serving = true }
+                self.lock.unlock()
+                guard allowed else { request.cancel(); return }
+                let header = String(decoding: header[..<end.lowerBound], as: UTF8.self)
+                DispatchQueue.global(qos: .utility).async {
+                    defer { request.cancel(); self.release(request, finished: true) }
+                    self.serve(header, request: request)
+                }
+            } else if complete { request.cancel() }
+            else { self.receive(request, data: header) }
         }
     }
-    private func serve(_ request: String, connection: NWConnection) {
-        defer { connection.cancel() }
+    private func serve(_ header: String, request: Request) {
+        let cancellation = request.cancellation
         var started = false
         do {
             try cancellation.check()
-            let lines = request.components(separatedBy: "\r\n")
+            let lines = header.components(separatedBy: "\r\n")
             let first = (lines.first ?? "").split(separator: " ")
-            guard first.count == 3, ["GET", "HEAD"].contains(String(first[0])) else { try respond(405, connection: connection); return }
+            guard first.count == 3, ["GET", "HEAD"].contains(String(first[0])) else { try respond(405, request: request); return }
             var headers: [String: String] = [:]
             for line in lines.dropFirst() {
-                guard let separator = line.firstIndex(of: ":") else { try respond(400, connection: connection); return }
+                guard let separator = line.firstIndex(of: ":") else { try respond(400, request: request); return }
                 let name = line[..<separator].lowercased()
-                guard headers[name] == nil else { try respond(400, connection: connection); return }
+                guard headers[name] == nil else { try respond(400, request: request); return }
                 headers[name] = line[line.index(after: separator)...].trimmingCharacters(in: .whitespaces)
             }
             let authority = "127.0.0.1:\(port)"
             guard headers["host"] == authority, headers["sec-fetch-site"] != "cross-site",
-                  headers["origin"] == nil || headers["origin"] == "http://\(authority)" else { try respond(403, connection: connection); return }
+                  headers["origin"] == nil || headers["origin"] == "http://\(authority)" else { try respond(403, request: request); return }
             let rawPath = first[1].split(separator: "?", maxSplits: 1, omittingEmptySubsequences: false)[0]
-            guard let decoded = String(rawPath).removingPercentEncoding, decoded.hasPrefix("/\(token)/") else { try respond(404, connection: connection); return }
+            guard let decoded = String(rawPath).removingPercentEncoding, decoded.hasPrefix("/\(token)/") else { try respond(404, request: request); return }
             var parts = String(decoded.dropFirst(token.count + 2)).split(separator: "/", omittingEmptySubsequences: false).map(String.init)
             if parts.last == "" { parts.removeLast(); parts.append("index.html") }
-            guard !parts.isEmpty, parts.allSatisfy({ !$0.isEmpty && $0 != "." && $0 != ".." && !$0.contains("\\") && $0.rangeOfCharacter(from: .controlCharacters) == nil }) else { try respond(403, connection: connection); return }
-            if let fileName, parts != [fileName] { try respond(403, connection: connection); return }
+            guard !parts.isEmpty, parts.allSatisfy({ !$0.isEmpty && $0 != "." && $0 != ".." && !$0.contains("\\") && $0.rangeOfCharacter(from: .controlCharacters) == nil }) else { try respond(403, request: request); return }
+            if let fileName, parts != [fileName] { try respond(403, request: request); return }
             let client = try transport.files(host, cancellation: cancellation); defer { client.close() }
             var path = ""
             for component in root.split(separator: "/").map(String.init) + parts {
                 path += "/" + component
                 let attributes = try client.stat(path)
-                guard !attributes.isSymbolicLink else { try respond(403, connection: connection); return }
+                guard !attributes.isSymbolicLink else { try respond(403, request: request); return }
             }
             let attributes = try client.stat(path)
-            guard attributes.isRegularFile else { try respond(403, connection: connection); return }
-            guard attributes.size <= (fileName == nil ? 256 * 1024 * 1024 : 32 * 1024 * 1024 * 1024) else { try respond(413, connection: connection); return }
+            guard attributes.isRegularFile else { try respond(403, request: request); return }
+            guard attributes.size <= (fileName == nil ? 256 * 1024 * 1024 : 32 * 1024 * 1024 * 1024) else { try respond(413, request: request); return }
             let local = host == nil ? try localReader(parts: parts) : nil
             let remote = client as? SFTPClient
             let remoteHandle = try remote?.openRead(path)
             defer { try? local?.close(); if let remoteHandle { try? remote?.closeHandle(remoteHandle) } }
             var start: UInt64 = 0; var end = attributes.size; var status = 200
             if let range = headers["range"] {
-                guard range.hasPrefix("bytes="), !range.contains(",") else { try respond(416, connection: connection); return }
+                guard range.hasPrefix("bytes="), !range.contains(",") else { try respond(416, request: request); return }
                 let values = range.dropFirst(6).split(separator: "-", omittingEmptySubsequences: false)
-                guard values.count == 2, attributes.size > 0 else { try respond(416, connection: connection); return }
+                guard values.count == 2, attributes.size > 0 else { try respond(416, request: request); return }
                 if values[0].isEmpty {
-                    guard let suffix = UInt64(values[1]), suffix > 0 else { try respond(416, connection: connection); return }
+                    guard let suffix = UInt64(values[1]), suffix > 0 else { try respond(416, request: request); return }
                     start = attributes.size - min(suffix, attributes.size)
                 } else {
-                    guard let offset = UInt64(values[0]), offset < attributes.size else { try respond(416, connection: connection); return }; start = offset
+                    guard let offset = UInt64(values[0]), offset < attributes.size else { try respond(416, request: request); return }; start = offset
                     if !values[1].isEmpty {
-                        guard let last = UInt64(values[1]), last >= start else { try respond(416, connection: connection); return }
+                        guard let last = UInt64(values[1]), last >= start else { try respond(416, request: request); return }
                         end = min(last, attributes.size - 1) + 1
                     }
                 }
@@ -138,7 +172,7 @@ public final class FilePreviewServer: @unchecked Sendable {
             let mime = UTType(filenameExtension: (path as NSString).pathExtension)?.preferredMIMEType ?? "application/octet-stream"
             var extra = "Content-Type: \(mime)\r\nAccept-Ranges: bytes\r\n"
             if status == 206 { extra += "Content-Range: bytes \(start)-\(end - 1)/\(attributes.size)\r\n" }
-            try send(Data(responseHeader(status, length: end - start, extra: extra).utf8), connection: connection); started = true
+            try send(Data(responseHeader(status, length: end - start, extra: extra).utf8), request: request); started = true
             if first[0] == "HEAD" { return }
             while start < end {
                 try cancellation.check()
@@ -148,16 +182,16 @@ public final class FilePreviewServer: @unchecked Sendable {
                 else if let remoteHandle, let remote { bytes = try remote.read(remoteHandle, offset: start, length: limit) }
                 else { throw WorkbenchError.message(L10n.text("预览读取通道不可用。")) }
                 guard !bytes.isEmpty else { throw WorkbenchError.message(L10n.text("文件在预览期间变化。")) }
-                try send(bytes, connection: connection); start += UInt64(bytes.count)
+                try send(bytes, request: request); start += UInt64(bytes.count)
             }
-        } catch { if !started { try? respond(404, connection: connection) } }
+        } catch { if !started && !cancellation.isCancelled { try? respond(404, request: request) } }
     }
     private func responseHeader(_ status: Int, length: UInt64, extra: String = "") -> String {
         let script = allowsScripts ? "'self' 'unsafe-inline'" : "'none'"
         let sandbox = allowsScripts ? "allow-scripts allow-same-origin" : "allow-same-origin"
         return "HTTP/1.1 \(status) \(status == 200 ? "OK" : "Response")\r\nContent-Length: \(length)\r\nConnection: close\r\nCache-Control: no-store\r\nReferrer-Policy: no-referrer\r\nX-Content-Type-Options: nosniff\r\nCross-Origin-Resource-Policy: same-origin\r\nContent-Security-Policy: default-src 'none'; script-src \(script); style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; media-src 'self'; connect-src 'self'; frame-src 'self'; base-uri 'self'; form-action 'none'; sandbox \(sandbox)\r\n\(extra)\r\n"
     }
-    private func respond(_ status: Int, connection: NWConnection) throws { try send(Data(responseHeader(status, length: 0).utf8), connection: connection) }
+    private func respond(_ status: Int, request: Request) throws { try send(Data(responseHeader(status, length: 0).utf8), request: request) }
     private func localReader(parts: [String]) throws -> FileHandle {
         var descriptor = Darwin.open(root, O_RDONLY | O_DIRECTORY | O_NOFOLLOW)
         guard descriptor >= 0 else { throw WorkbenchError.message(L10n.text("预览目录不可读。")) }
@@ -172,11 +206,18 @@ public final class FilePreviewServer: @unchecked Sendable {
         }
         return FileHandle(fileDescriptor: descriptor, closeOnDealloc: true)
     }
-    private func send(_ data: Data, connection: NWConnection) throws {
+    private func send(_ data: Data, request: Request) throws {
+        try request.cancellation.check()
         let sent = DispatchSemaphore(value: 0)
-        connection.send(content: data, completion: .contentProcessed { _ in sent.signal() })
-        guard sent.wait(timeout: .now() + 15) == .success else { throw WorkbenchError.message(L10n.text("浏览器读取超时。")) }
-        if case .cancelled = connection.state { throw WorkbenchError.cancelled }
-        if case .failed = connection.state { throw WorkbenchError.message(L10n.text("浏览器已断开。")) }
+        request.connection.send(content: data, completion: .contentProcessed { error in
+            if error != nil { request.cancellation.cancel() }
+            sent.signal()
+        })
+        let deadline = DispatchTime.now() + 15
+        while sent.wait(timeout: .now() + .milliseconds(100)) == .timedOut {
+            try request.cancellation.check()
+            guard DispatchTime.now() < deadline else { throw WorkbenchError.message(L10n.text("浏览器读取超时。")) }
+        }
+        try request.cancellation.check()
     }
 }

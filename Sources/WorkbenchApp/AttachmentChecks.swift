@@ -3,7 +3,7 @@ import Foundation
 import WorkbenchCore
 import OpenSSHBackend
 
-private final class AttachmentDragFixture: NSObject, NSDraggingInfo {
+final class AttachmentDragFixture: NSObject, NSDraggingInfo {
     let draggingPasteboard: NSPasteboard
     let draggingDestinationWindow: NSWindow?
     init(pasteboard: NSPasteboard, window: NSWindow?) { draggingPasteboard = pasteboard; draggingDestinationWindow = window }

@@ -30,18 +30,27 @@ final class SafeTerminalView: LocalProcessTerminalView {
     private var forwardedRightClick = false
     private var magnificationBase: Double?
     private var accumulatedMagnification: Double = 0
+    private var scrollMonitor: Any?
     override init(frame: CGRect) {
         super.init(frame: frame)
         proxy = TerminalSecurityProxy(owner: self); terminalDelegate = proxy
         registerForDraggedTypes([.fileURL, .png, .tiff])
+        scrollMonitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { [weak self] event in
+            if let self, event.window === self.window, !self.isHiddenOrHasHiddenAncestor,
+               self.bounds.contains(self.convert(event.locationInWindow, from: nil)) { self.noteMouseInput(event) }
+            return event
+        }
     }
+    deinit { if let scrollMonitor { NSEvent.removeMonitor(scrollMonitor) } }
     required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
     override func mouseDown(with event: NSEvent) {
         if event.modifierFlags.contains(.control) { rightMouseDown(with: event); return }
+        noteMouseInput(event)
         super.mouseDown(with: event)
         onFocus?()
     }
     override func rightMouseDown(with event: NSEvent) {
+        noteMouseInput(event)
         window?.makeFirstResponder(self); onContextFocus?()
         forwardedRightClick = false
         if prefersTmuxMenu?() == true && !event.modifierFlags.contains(.shift) && !event.modifierFlags.contains(.control) {
@@ -60,7 +69,12 @@ final class SafeTerminalView: LocalProcessTerminalView {
         if !event.modifierFlags.contains(.control) { super.mouseUp(with: event) }
     }
     override func rightMouseDragged(with event: NSEvent) {
+        noteMouseInput(event)
         if forwardedRightClick { super.mouseDragged(with: TmuxRightMouseEvent(event)) }
+    }
+    override func mouseDragged(with event: NSEvent) { noteMouseInput(event); super.mouseDragged(with: event) }
+    private func noteMouseInput(_ event: NSEvent) {
+        if allowMouseReporting, getTerminal().mouseMode != .off, !event.modifierFlags.contains(.shift) { onInputActivity?() }
     }
     func ordinaryContextMenu() -> NSMenu {
         let menu = NSMenu(); menu.autoenablesItems = false
@@ -117,6 +131,7 @@ final class SafeTerminalView: LocalProcessTerminalView {
         return receiveAttachments(from: sender.draggingPasteboard)
     }
     override func send(source: SwiftTerm.TerminalView, data: ArraySlice<UInt8>) { onInputActivity?(); super.send(source: source, data: data) }
+    override func send(source: SwiftTerm.Terminal, data: ArraySlice<UInt8>) { super.send(source: self, data: data) }
     func sendAttachmentReference(_ text: String) {
         let bracketed = getTerminal().bracketedPasteMode
         if bracketed { process.send(data: Array("\u{1b}[200~".utf8)[...]) }
@@ -195,7 +210,12 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable, LocalProc
             do {
                 guard !disposed, !cancellation.isCancelled else { return }
                 if let host {
-                    _ = try await Task.detached { try transport.run(host, command: "true", cancellation: cancellation, timeout: 120).checked() }.value
+                    let tmux = tmuxID != nil
+                    _ = try await Task.detached {
+                        let result = try transport.run(host, command: SSHTransport.connectionProbe, cancellation: cancellation, timeout: 120).checked()
+                        if tmux { try transport.requirePosixShell(host, cancellation: cancellation) }
+                        return result
+                    }.value
                     guard !disposed, !cancellation.isCancelled else { return }
                     terminal.startProcess(executable: "/usr/bin/ssh", args: try transport.terminalArguments(for: host, tmuxSession: tmuxID), environment: transport.environment(for: host).map { "\($0.key)=\($0.value)" })
                 } else {
@@ -280,12 +300,15 @@ final class Workspace: ObservableObject {
     @Published var selectedHostID: UUID? { didSet { alignTerminalWithHost() } }
     @Published var page: WorkspacePage = .terminal {
         didSet {
+            if page != oldValue { focusGeneration &+= 1 }
             if page == .files, oldValue != .files, fileSource == nil { followCurrentTerminalFiles() }
             if page == .terminal { alignTerminalWithHost() }
         }
     }
     @Published var sessions: [TerminalSession] = []
-    @Published var layout = TerminalLayout()
+    @Published var layout = TerminalLayout() {
+        didSet { if layout.focused != oldValue.focused { focusGeneration &+= 1 } }
+    }
     let tabDragScope = UUID()
     @Published var browsingLocalFiles = false
     @Published var showTransferTray = false
@@ -381,9 +404,15 @@ final class Workspace: ObservableObject {
         }
     }
     func attachmentIdentity(_ session: TerminalSession) -> AttachmentDeliveryIdentity {
-        let window = NSApp.keyWindow?.sheetParent ?? NSApp.keyWindow
+        let window = session.terminal.window
         return AttachmentDeliveryIdentity(sessionID: session.id, connectionID: session.connectionID, focusGeneration: focusGeneration, inputGeneration: session.inputGeneration,
                                           windowNumber: window?.windowNumber, applicationActive: NSApp.isActive)
+    }
+    func canAutomaticallyInsert(_ draft: TerminalAttachmentDraft) -> Bool {
+        let current = attachmentIdentity(draft.session)
+        let keyWindow = NSApp.keyWindow?.sheetParent ?? NSApp.keyWindow
+        return current.allowsAutomaticInsertion(from: draft.identity) && keyWindow === draft.session.terminal.window
+            && selectedTerminalID == draft.session.id && page == .terminal
     }
     func requestAttachments(session: TerminalSession, payload: TerminalAttachmentPayload) {
         guard session.connected, sessions.contains(where: { $0.id == session.id }), attachmentDraft?.busy != true else {
@@ -456,7 +485,6 @@ final class Workspace: ObservableObject {
         if let host { connect(host, split: split, axis: axis) } else { connectLocal(split: split, axis: axis) }
     }
     func selectTerminal(_ session: TerminalSession) {
-        focusGeneration &+= 1
         layout.select(session.id); browsingLocalFiles = session.isLocal; selectedHostID = session.host?.id
         fileSource = .terminal(session.id)
         session.terminal.window?.makeFirstResponder(session.terminal)

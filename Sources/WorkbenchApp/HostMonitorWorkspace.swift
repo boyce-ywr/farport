@@ -98,7 +98,7 @@ struct HostMonitorWorkspace: View {
         _model = StateObject(wrappedValue: HostMonitorModel(host: workspace.host, store: store))
     }
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 12) {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(L10n.text("主机监控")).font(.title2.bold())
@@ -144,7 +144,7 @@ struct HostMonitorWorkspace: View {
     }
     private func overview(_ snapshot: MonitorSnapshot) -> some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
+            VStack(alignment: .leading, spacing: 12) {
                 HStack(spacing: 12) {
                     card("CPU", value: percent(snapshot.cpuPercent), detail: L10n.text("整机 0–100%；首次采样可能无数据"))
                     card(L10n.text("内存"), value: size(snapshot.memoryUsed), detail: L10n.text("总计 \(size(snapshot.memoryTotal))"))
@@ -157,16 +157,10 @@ struct HostMonitorWorkspace: View {
                 }.chartYScale(domain: 0...100)
                     .chartXAxis { AxisMarks(values: .automatic(desiredCount: 4)) { _ in AxisGridLine(); AxisValueLabel(format: .dateTime.hour().minute().second(), anchor: .top) } }
                     .chartYAxis { AxisMarks(position: .trailing, values: [0, 25, 50, 75, 100]) { _ in AxisGridLine(); AxisValueLabel(anchor: .leading) } }
-                    .frame(height: 150)
-                Text(L10n.text("磁盘与挂载点")).font(.headline)
+                    .frame(height: 120)
+                Text(L10n.text("磁盘与挂载点")).font(.system(size: 12, weight: .semibold))
                 if snapshot.disks.isEmpty { missing("disk-unavailable") }
-                ForEach(snapshot.disks) { disk in
-                    VStack(alignment: .leading, spacing: 5) {
-                        HStack { Text(disk.mount).font(.caption.monospaced()).textSelection(.enabled); Spacer(); Text("\(size(disk.usedBytes)) / \(size(disk.totalBytes))").font(.caption) }
-                        ProgressView(value: min(1, disk.usedBytes / disk.totalBytes))
-                        Text(L10n.text("可用 \(size(disk.availableBytes))")).font(.caption2).foregroundStyle(.secondary)
-                    }.padding(10).background(.quaternary.opacity(0.16), in: RoundedRectangle(cornerRadius: 8))
-                }
+                if !snapshot.disks.isEmpty { MonitorDiskList(disks: snapshot.disks) }
                 capabilities(snapshot)
             }
         }
@@ -218,12 +212,7 @@ struct HostMonitorWorkspace: View {
     private func system(_ snapshot: MonitorSnapshot) -> some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 10) {
-                ForEach([("os", "操作系统"), ("kernel", "内核版本"), ("architecture", "架构"), ("hostname", "主机名"), ("model", "硬件型号"), ("cpuModel", "CPU 型号"), ("logicalCPUs", "逻辑核心"), ("physicalCPUs", "物理核心"), ("username", "当前登录用户"), ("uid", "用户标识"), ("groups", "用户组"), ("home", "主目录"), ("shell", "Shell / 采集环境")], id: \.0) { field in
-                    HStack(alignment: .top) {
-                        Text(L10n.key(field.1)).foregroundStyle(.secondary).frame(width: 140, alignment: .leading)
-                        Text(snapshot.info[field.0].flatMap { $0.isEmpty ? nil : $0 } ?? "—").textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
-                    }.font(.system(size: 12)).padding(9).background(.quaternary.opacity(0.1), in: RoundedRectangle(cornerRadius: 6))
-                }
+                MonitorSystemDetails(info: snapshot.info)
                 Text(L10n.text("仅显示当前连接用户，不读取密码、密钥、环境变量或硬件序列号。")).font(.caption).foregroundStyle(.secondary)
                 capabilities(snapshot)
             }
@@ -258,11 +247,11 @@ struct HostMonitorWorkspace: View {
         return Text(L10n.key(messages[key] ?? key)).font(.caption).foregroundStyle(.secondary).frame(maxWidth: .infinity, alignment: .leading)
     }
     private func card(_ title: String, value: String, detail: String) -> some View {
-        VStack(alignment: .leading, spacing: 7) {
+        VStack(alignment: .leading, spacing: 4) {
             Text(title).font(.caption).foregroundStyle(.secondary)
-            Text(value).font(.system(size: 25, weight: .semibold, design: .rounded))
+            Text(value).font(.system(size: 22, weight: .semibold, design: .rounded)).monospacedDigit()
             Text(detail).font(.caption2).foregroundStyle(.secondary).lineLimit(2)
-        }.padding(16).frame(maxWidth: .infinity, alignment: .leading).background(.teal.opacity(0.06), in: RoundedRectangle(cornerRadius: 12))
+        }.padding(12).frame(maxWidth: .infinity, alignment: .leading).background(.teal.opacity(0.06), in: RoundedRectangle(cornerRadius: 8))
     }
     private func percent(_ value: Double?) -> String { value.map { String(format: "%.1f%%", $0) } ?? "—" }
     private func size(_ value: Double?) -> String { value.map { bytes(UInt64(max(0, min($0, Double(UInt64.max / 2))))) } ?? "—" }

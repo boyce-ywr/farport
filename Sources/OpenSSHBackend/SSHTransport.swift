@@ -102,11 +102,15 @@ public enum ProcessRunner {
         try? output.fileHandleForReading.close(); try? error.fileHandleForReading.close()
         try cancellation.check()
         if timedOut { throw WorkbenchError.message(L10n.text("操作超时，连接已关闭。请检查网络、跳板机和远端状态。")) }
-        return CommandResult(output: captured.data, error: String(decoding: errors.data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines), status: process.terminationStatus)
+        return CommandResult(output: captured.data, error: CommandDiagnostic.decode(errors.data).trimmingCharacters(in: .whitespacesAndNewlines), status: process.terminationStatus)
     }
 }
 
 public final class SSHTransport: @unchecked Sendable {
+    public static let connectionProbe = "echo FARPORT_SSH_READY"
+    private let shellLock = NSLock()
+    private var posixHosts = Set<String>()
+    private var windowsHosts = Set<String>()
     public let paths: ApplicationPaths
     public let askpass: String?
     public let noninteractive: Bool
@@ -165,13 +169,32 @@ public final class SSHTransport: @unchecked Sendable {
     public func run(_ host: HostProfile, command: String, cancellation: CancellationFlag = CancellationFlag(), timeout: TimeInterval = 45) throws -> CommandResult {
         try ProcessRunner.run(executable: "/usr/bin/ssh", arguments: options(for: host) + [host.address, command], environment: environment(for: host), cancellation: cancellation, timeout: timeout)
     }
+    public func requirePosixShell(_ host: HostProfile, cancellation: CancellationFlag = CancellationFlag()) throws {
+        try cancellation.check()
+        let key = connectionDigest(host)
+        if shellLock.withLock({ posixHosts.contains(key) }) { return }
+        let unsupported = L10n.text("当前 SSH 使用 Windows 原生 Shell，不能直接管理 tmux。请打开普通终端；如需 tmux，请连接已配置的 Linux 或 WSL SSH 服务。")
+        if shellLock.withLock({ windowsHosts.contains(key) }) { throw WorkbenchError.message(unsupported) }
+        let posix = try run(host, command: "/bin/sh -c 'printf FARPORT_POSIX_SHELL'", cancellation: cancellation, timeout: 15)
+        if posix.status == 255 { _ = try posix.checked() }
+        if posix.status == 0, posix.text.contains("FARPORT_POSIX_SHELL") {
+            _ = shellLock.withLock { posixHosts.insert(key) }; return
+        }
+        let windows = try run(host, command: HostMonitorService.powershell("[Console]::Write('FARPORT_WINDOWS_SHELL')"), cancellation: cancellation, timeout: 15)
+        if windows.status == 255 { _ = try windows.checked() }
+        if windows.status == 0, windows.text.contains("FARPORT_WINDOWS_SHELL") {
+            _ = shellLock.withLock { windowsHosts.insert(key) }
+            throw WorkbenchError.message(unsupported)
+        }
+        throw WorkbenchError.message(L10n.text("目标 SSH 没有可用的 /bin/sh，无法执行 tmux 管理；普通终端仍可使用。"))
+    }
     public func sftp(_ host: HostProfile, cancellation: CancellationFlag = CancellationFlag()) throws -> SFTPClient { try SFTPClient(transport: self, host: host, cancellation: cancellation) }
     public func testConnection(_ draft: HostProfile, cancellation: CancellationFlag = CancellationFlag()) throws -> ConnectionTestResult {
         var host = draft
         if host.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { host.name = host.address }
         try host.validate()
         let started = Date()
-        _ = try ProcessRunner.run(executable: "/usr/bin/ssh", arguments: options(for: host, reuseConnection: false) + [host.address, "true"],
+        _ = try ProcessRunner.run(executable: "/usr/bin/ssh", arguments: options(for: host, reuseConnection: false) + [host.address, Self.connectionProbe],
                                   environment: environment(for: host), cancellation: cancellation, timeout: 120).checked()
         do {
             let client = try SFTPClient(transport: self, host: host, cancellation: cancellation, reuseConnection: false)
@@ -185,6 +208,8 @@ public final class SSHTransport: @unchecked Sendable {
         }
     }
     public func disconnectMaster(_ host: HostProfile) {
+        let key = connectionDigest(host)
+        shellLock.withLock { posixHosts.remove(key); windowsHosts.remove(key) }
         _ = try? ProcessRunner.run(executable: "/usr/bin/ssh", arguments: options(for: host) + ["-O", "exit", host.address], environment: environment(for: host), timeout: 3)
     }
 }

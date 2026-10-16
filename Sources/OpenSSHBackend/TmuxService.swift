@@ -25,7 +25,10 @@ public struct TmuxService: Sendable {
     }
     public func execute(_ arguments: String, cancellation: CancellationFlag = CancellationFlag()) throws -> CommandResult { try runShell(prefix + " " + arguments, cancellation: cancellation) }
     private func runShell(_ command: String, cancellation: CancellationFlag) throws -> CommandResult {
-        if let host { return try transport.run(host, command: RemoteTmuxCommand.wrap(command), cancellation: cancellation) }
+        if let host {
+            try transport.requirePosixShell(host, cancellation: cancellation)
+            return try transport.run(host, command: RemoteTmuxCommand.wrap(command), cancellation: cancellation)
+        }
         var environment = try LocalShellConfiguration().environment
         environment.removeValue(forKey: "TMUX"); environment.removeValue(forKey: "TMUX_PANE")
         return try ProcessRunner.run(executable: "/bin/sh", arguments: ["-c", command], environment: environment, cancellation: cancellation)

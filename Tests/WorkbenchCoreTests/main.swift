@@ -16,6 +16,11 @@ func rejects(_ message: String, _ operation: () throws -> Void) throws {
 }
 
 do {
+    if CommandLine.arguments.contains("--preview-lifecycle-check") { try checkPreviewLifecycle(); exit(0) }
+    if CommandLine.arguments.contains("--preview-timeout-check") { try checkPreviewTimeout(); exit(0) }
+    if let index = CommandLine.arguments.firstIndex(of: "--preview-lifecycle-ssh"), CommandLine.arguments.indices.contains(index + 1) { try checkRemotePreviewLifecycle(root: CommandLine.arguments[index + 1]); exit(0) }
+    try checkSSHCompatibility()
+    try checkAttachmentIdentity()
     if CommandLine.arguments.contains("--english-check") { try checkEnglishRuntime(); exit(0) }
     try checkHostMonitoring()
     if let index = CommandLine.arguments.firstIndex(of: "--monitor-check") { try checkLiveMonitor(arguments: Array(CommandLine.arguments.dropFirst(index + 1))) }
@@ -26,6 +31,7 @@ do {
     try checkFileSorting()
     try checkTransferConflicts()
     try checkPreviewServer()
+    try checkPreviewLifecycle()
     try checkReleaseUpdates()
     if CommandLine.arguments.contains("--release-check") { try checkLiveRelease() }
     try expect(HostMarkColor.allCases.count == 10, "主机提供十种标记颜色")

@@ -22,6 +22,10 @@ Also included: host groups and colors, SSH config import, jump hosts, port forwa
 
 Choose English or Simplified Chinese in Settings; it applies and saves immediately, without restarting terminals, transfers, or open edits. Remote output, file contents, and custom host names stay unchanged. The file browser's Back button follows the visit history of each file source.
 
+Monitoring uses a compact disk table and grouped operating-system, hardware, and user details, with less empty space.
+
+![Compact disk and system details using demo data](docs/images/monitor-details.png)
+
 ### tmux sessions
 
 Keep long-running tasks in tmux and reconnect later. See sessions, windows, processes, and working directories without leaving the app.
@@ -30,7 +34,7 @@ Keep long-running tasks in tmux and reconnect later. See sessions, windows, proc
 
 ### File transfers
 
-Copy selected items to another file source, or use “Transfer to.” Existing files require confirmation. Folder merges preserve files that exist only at the destination.
+Copy selected items to another file source, or use “Transfer to.” Existing files require confirmation. Folder merges preserve files that exist only at the destination. Completed transfers use compact rows: the folder button reveals a download's destination or an upload's local source in Finder. Remote-to-remote transfers have no local Finder action.
 
 ![A completed host-to-host transfer and an overwrite prompt](docs/images/transfers.png)
 
@@ -51,6 +55,8 @@ Open HTML reports in your browser, too. A temporary localhost address reads the 
 ## Install
 
 This README describes the main branch. Check each release's notes for the features included in its downloads.
+
+**Use build 11 or later for 0.1.8**: it fixes a crash when closing media or web previews. Build 9 does not include this fix.
 
 Download a DMG from [GitHub Releases](https://github.com/boyce-ywr/farport/releases/latest). Current version: **0.1.8**.
 
@@ -92,13 +98,15 @@ Normal SSH use does not require Swift, Docker, or GitHub CLI. To manage tmux ses
 
 **Can I configure right-clicks and attachments?** The default terminal menu provides copy, paste, and selection. Enable tmux menus in Settings for sessions opened from the app's tmux page. Farport uses tmux's dedicated menu event even when the foreground program captures the mouse; Shift-right-click uses the normal menu. Remote key bindings are not modified. Attachment insertion has a global default and per-host override. Automatic insertion still checks the original target and never presses Enter.
 
+**Can I paste straight into the terminal?** Yes. ⌘V and right-click Paste accept text, clipboard images, and files copied in Finder. Images and files are uploaded and verified before automatic insertion, with no second click. Terminal protocol replies no longer count as typing. Typing during upload, switching targets, or leaving the app in the background still prevents automatic insertion. Multiline text keeps its confirmation prompt.
+
 **How do updates work?** Download and replace the app from Releases; GitHub CLI is not required for this. Version 0.1.8’s in-app update checker currently requires an authenticated GitHub CLI installation. It verifies the downloaded package and lets you decide when to install—it does not close your terminals automatically.
 
 **Can I use Codex or Claude Code?** You can send images and files to the machine running your agent. The remote Codex + tmux image workflow has been tested; the full Claude Code image-recognition workflow has not been independently verified. Nested SSH, containers, and different users can have separate filesystems, so check that the receiving process can read the uploaded location.
 
 **Where does my data go?** Host settings and transfer records stay on your Mac; credentials use macOS Keychain. Transfers go to the destination you choose. HTML preview URLs listen only on localhost but carry a temporary access token—do not share them. More detail is in the [usage guide](docs/usage.md) (Chinese).
 
-**Is there a Windows version?** Not yet. The current client is macOS-only.
+**Can I connect to Windows?** The client runs on macOS and can connect to Windows OpenSSH. Native CMD sessions, Chinese input/output, connection tests, and SFTP have live validation. Native Windows shells do not support this tmux manager; use a configured Linux/WSL SSH service for tmux. Farport does not change the default shell. See release notes for validation of other Windows features.
 
 ## Feedback and development
 

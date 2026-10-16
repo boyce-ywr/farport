@@ -89,7 +89,7 @@ final class TerminalAttachmentDraft: ObservableObject, Identifiable {
                 guard !disposed else { return }
                 running = false; result = uploaded; status = L10n.text("目标机器的 \(uploaded.fileCount) 个文件回读校验通过")
                 if !automaticallyInsert { status += L10n.text("；已按设置等待手动插入。") }
-                else if let workspace, workspace.attachmentIdentity(session) == identity, workspace.selectedTerminalID == session.id, workspace.page == .terminal {
+                else if let workspace, workspace.canAutomaticallyInsert(self) {
                     await insert(requireOriginalFocus: true)
                 } else { status += L10n.text("；会话或焦点已变化，请回原终端后点击插入。") }
             } catch { guard !disposed else { return }; running = false; failure = error.localizedDescription }
@@ -99,7 +99,7 @@ final class TerminalAttachmentDraft: ObservableObject, Identifiable {
         guard let result, let workspace, !disposed, !inserting else { return }
         guard workspace.selectedTerminalID == session.id, workspace.page == .terminal, session.connected,
               session.connectionID == identity.connectionID,
-              (!requireOriginalFocus || workspace.attachmentIdentity(session) == identity) else {
+              (!requireOriginalFocus || workspace.canAutomaticallyInsert(self)) else {
             failure = L10n.text("接收终端或连接已变化。请回到原连接，确认输入位置后重试；未插入路径。"); return
         }
         inserting = true; defer { inserting = false }
@@ -115,7 +115,7 @@ final class TerminalAttachmentDraft: ObservableObject, Identifiable {
             }.value
             guard !disposed, workspace.selectedTerminalID == session.id, workspace.page == .terminal,
                   session.connected, session.connectionID == identity.connectionID,
-                  (!requireOriginalFocus || workspace.attachmentIdentity(session) == identity) else {
+                  (!requireOriginalFocus || workspace.canAutomaticallyInsert(self)) else {
                 throw WorkbenchError.message(L10n.text("插入前目标发生变化，附件未发送。"))
             }
             let text = try AttachmentReference.text(paths: result.paths)
