@@ -16,6 +16,10 @@ func rejects(_ message: String, _ operation: () throws -> Void) throws {
 }
 
 do {
+    try checkConnectionRecovery()
+    if CommandLine.arguments.contains("--connection-recovery-check") { print("PASS · \(checks) 项连接恢复断言"); exit(0) }
+    try checkWorkflowRefinements()
+    if CommandLine.arguments.contains("--workflow-refinements-check") { print("PASS · \(checks) 项二期工作流断言"); exit(0) }
     try checkWorkspaceTools()
     if CommandLine.arguments.contains("--workspace-tools-check") { print("PASS · \(checks) 项工作工具断言"); exit(0) }
     try checkScreenSharing()

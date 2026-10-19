@@ -16,6 +16,11 @@ public struct AttachmentDeliveryIdentity: Equatable, Sendable {
             && sessionID == original.sessionID && connectionID == original.connectionID
             && focusGeneration == original.focusGeneration && inputGeneration == original.inputGeneration
     }
+    public func preservesAutomaticTarget(from original: Self) -> Bool {
+        original.windowNumber != nil && (windowNumber == nil || windowNumber == original.windowNumber)
+            && sessionID == original.sessionID && connectionID == original.connectionID
+            && focusGeneration == original.focusGeneration && inputGeneration == original.inputGeneration
+    }
 }
 
 public enum AttachmentReference {

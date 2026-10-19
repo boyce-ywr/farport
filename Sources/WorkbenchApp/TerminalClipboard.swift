@@ -1,33 +1,66 @@
 import AppKit
 import SwiftUI
 import WorkbenchCore
+import CryptoKit
 
 @MainActor
 final class TerminalClipboardState: ObservableObject {
     @Published private(set) var message = ""
     @Published private(set) var failed = false
+    @Published private(set) var informational = false
     @Published private(set) var remoteAllowed: Bool?
     @Published private(set) var pendingRemoteText: String?
     @Published var hasSelection = false
     private var prompting = false
     private var notice: Task<Void, Never>?
-    deinit { notice?.cancel() }
-    func report(_ message: String, failed: Bool = false) {
-        notice?.cancel(); self.message = message; self.failed = failed
+    private var copyWait: Task<Void, Never>?
+    private var copyRequest = UUID()
+    private var interaction: UInt64 = 0
+    private var remoteProof: (changeCount: Int, digest: SHA256.Digest, date: Date, interaction: UInt64)?
+    private var reportedCopy = false
+    deinit { notice?.cancel(); copyWait?.cancel() }
+    func report(_ message: String, failed: Bool = false, informational: Bool = false) {
+        copyWait?.cancel(); copyWait = nil; copyRequest = UUID()
+        notice?.cancel(); self.message = message; self.failed = failed; self.informational = informational; reportedCopy = false
         notice = Task { [weak self] in
             do { try await Task.sleep(for: .seconds(failed ? 7 : 2)) } catch { return }
             self?.message = ""
         }
     }
-    @discardableResult func write(_ text: String) -> Bool {
+    @discardableResult func write(_ text: String, remote: Bool = false) -> Bool {
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
         guard pasteboard.setString(text, forType: .string), pasteboard.string(forType: .string) == text else {
             report(L10n.text("写入 Mac 剪贴板失败，请重试。"), failed: true); return false
         }
-        report(L10n.text("已复制到 Mac 剪贴板")); return true
+        remoteProof = remote ? (pasteboard.changeCount, SHA256.hash(data: Data(text.utf8)), Date(), interaction) : nil
+        report(L10n.text("已复制到 Mac 剪贴板")); reportedCopy = true; return true
+    }
+    func noteUserInteraction() {
+        interaction &+= 1; remoteProof = nil; copyWait?.cancel(); copyWait = nil; copyRequest = UUID()
+        if reportedCopy { notice?.cancel(); message = ""; reportedCopy = false }
+    }
+    func noLocalSelection(remoteContext: Bool) {
+        if confirmedRecentRemoteCopy() { report(L10n.text("已复制到 Mac 剪贴板")); reportedCopy = true; return }
+        guard remoteContext else { report(L10n.text("没有本地选区；请按住 Shift 拖选，再按 ⌘C。"), failed: true); return }
+        if pendingRemoteText != nil && remoteAllowed == false { report(L10n.text("终端复制已阻止；可在剪贴板菜单中允许。"), failed: true); return }
+        copyWait?.cancel(); notice?.cancel(); message = ""; failed = false; informational = true
+        let request = UUID(); copyRequest = request
+        copyWait = Task { [weak self] in
+            do { try await Task.sleep(for: .milliseconds(800)) } catch { return }
+            guard let self, copyRequest == request else { return }
+            if confirmedRecentRemoteCopy() { report(L10n.text("已复制到 Mac 剪贴板")); reportedCopy = true }
+            else { report(L10n.text("未收到新的终端剪贴板同步；可按 Shift 拖选后 ⌘C 直接复制。"), informational: true) }
+        }
+    }
+    private func confirmedRecentRemoteCopy() -> Bool {
+        guard let proof = remoteProof, proof.interaction == interaction,
+              (0...2).contains(Date().timeIntervalSince(proof.date)), NSPasteboard.general.changeCount == proof.changeCount,
+              let text = NSPasteboard.general.string(forType: .string), text.utf8.count <= 1024 * 1024 else { return false }
+        return SHA256.hash(data: Data(text.utf8)) == proof.digest
     }
     func receive(_ data: Data, interactive: Bool, confirm: () -> Bool) {
+        remoteProof = nil
         guard data.count <= 1024 * 1024, let text = String(data: data, encoding: .utf8), !text.isEmpty else {
             report(L10n.text("未复制：终端内容为空、编码无效或超过 1 MiB。"), failed: true); return
         }
@@ -43,18 +76,18 @@ final class TerminalClipboardState: ObservableObject {
             prompting = false
         }
         if remoteAllowed == true {
-            if let pendingRemoteText, write(pendingRemoteText) { self.pendingRemoteText = nil }
+            if let pendingRemoteText, write(pendingRemoteText, remote: true) { self.pendingRemoteText = nil }
         } else { report(L10n.text("终端复制已阻止；可在剪贴板菜单中允许。"), failed: true) }
     }
     func allowRemoteCopy() {
         remoteAllowed = true
-        if let pendingRemoteText, write(pendingRemoteText) { self.pendingRemoteText = nil }
+        if let pendingRemoteText, write(pendingRemoteText, remote: true) { self.pendingRemoteText = nil }
     }
     func denyRemoteCopy() {
         remoteAllowed = false; pendingRemoteText = nil
         report(L10n.text("已禁止此终端写入剪贴板；本地选中复制不受影响。"))
     }
-    func resetPermission() { remoteAllowed = nil; pendingRemoteText = nil }
+    func resetPermission() { remoteAllowed = nil; pendingRemoteText = nil; remoteProof = nil; copyWait?.cancel(); copyWait = nil; copyRequest = UUID(); notice?.cancel(); message = ""; failed = false; informational = false; reportedCopy = false }
 }
 
 struct TerminalClipboardControls: View {
@@ -69,6 +102,8 @@ struct TerminalClipboardControls: View {
                 .help(L10n.text("粘贴 · ⌘V")).accessibilityLabel(L10n.text("粘贴"))
             Menu {
                 Button(L10n.text("复制")) { terminal.copy(terminal) }.disabled(!state.hasSelection)
+                Button(L10n.text("复制所选命令全文")) { terminal.copySemanticCommand(output: false) }.disabled(!state.hasSelection || !terminal.semanticCommandCopyAllowed)
+                Button(L10n.text("复制所选命令的输出")) { terminal.copySemanticCommand(output: true) }.disabled(!state.hasSelection || !terminal.semanticCommandCopyAllowed)
                 Divider()
                 Button(state.pendingRemoteText == nil ? L10n.text("允许此终端写入剪贴板") : L10n.text("允许并复制刚才的内容")) { state.allowRemoteCopy() }
                 Button(L10n.text("禁止此终端写入剪贴板")) { state.denyRemoteCopy() }
@@ -82,7 +117,7 @@ struct TerminalClipboardFeedback: View {
     @ObservedObject var state: TerminalClipboardState
     var body: some View {
         if !state.message.isEmpty {
-            Label(state.message, systemImage: state.failed ? "exclamationmark.circle" : "checkmark.circle")
+            Label(state.message, systemImage: state.failed ? "exclamationmark.circle" : (state.informational ? "info.circle" : "checkmark.circle"))
                 .font(.system(size: 11)).foregroundStyle(state.failed ? Color.orange : .primary)
                 .padding(8).background(.regularMaterial, in: RoundedRectangle(cornerRadius: 6))
                 .frame(maxWidth: 320, alignment: .trailing).fixedSize(horizontal: false, vertical: true)

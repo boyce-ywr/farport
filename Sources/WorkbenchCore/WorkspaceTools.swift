@@ -83,5 +83,6 @@ public struct WorkspaceToolsState: Codable {
     public var workspaces: [WorkspaceSnapshot] = []
     public var snippets: [CommandSnippet] = []
     public var bookmarks: [DirectoryBookmark] = []
+    public var services: [ForwardedService]?
     public init() {}
 }

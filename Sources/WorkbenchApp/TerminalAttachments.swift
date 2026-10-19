@@ -43,6 +43,7 @@ final class TerminalAttachmentDraft: ObservableObject, Identifiable {
     @Published var preparing = true
     @Published var running = false
     @Published var inserting = false
+    @Published var settlingFocus = false
     @Published var progress: Double = 0
     @Published var status = L10n.text("正在确认目标…")
     @Published var failure: String?
@@ -83,22 +84,39 @@ final class TerminalAttachmentDraft: ObservableObject, Identifiable {
             do {
                 let uploaded = try await Task.detached {
                     try AttachmentUploader(transport: transport).upload(files, host: host, directory: destination, cancellation: flag) { [weak owner = self] message, value in
-                        DispatchQueue.main.async { guard owner?.disposed == false else { return }; owner?.status = message; owner?.progress = value }
+                        DispatchQueue.main.async { guard owner?.disposed == false, owner?.running == true, !flag.isCancelled else { return }; owner?.status = message; owner?.progress = value }
                     }
                 }.value
                 guard !disposed else { return }
                 running = false; result = uploaded; status = L10n.text("目标机器的 \(uploaded.fileCount) 个文件回读校验通过")
                 if !automaticallyInsert { status += L10n.text("；已按设置等待手动插入。") }
-                else if let workspace, workspace.canAutomaticallyInsert(self) {
-                    await insert(requireOriginalFocus: true)
-                } else { status += L10n.text("；会话或焦点已变化，请回原终端后点击插入。") }
+                else if await waitForAutomaticTarget() { await insert(requireOriginalFocus: true) }
             } catch { guard !disposed else { return }; running = false; failure = error.localizedDescription }
         }
     }
+    private func waitForAutomaticTarget() async -> Bool {
+        guard let workspace else { return false }
+        settlingFocus = true; defer { settlingFocus = false }
+        var stable = 0
+        for _ in 0..<40 {
+            guard !disposed, !cancellation.isCancelled, !inserted else { return false }
+            if let reason = workspace.automaticInsertionBlocker(self) { status = L10n.text("附件已上传：") + reason; return false }
+            workspace.restoreTransientAttachmentFocus(self)
+            if workspace.canAutomaticallyInsert(self) { stable += 1; if stable >= 2 { return true } }
+            else { stable = 0; status = L10n.text("附件已上传，正在等待原终端焦点稳定…") }
+            do { try await Task.sleep(for: .milliseconds(50)) } catch { return false }
+        }
+        status = L10n.text("附件已上传，但原终端尚未恢复输入焦点；请确认后手动插入。")
+        return false
+    }
     func insert(requireOriginalFocus: Bool = false) async {
-        guard let result, let workspace, !disposed, !inserting else { return }
+        guard let result, let workspace, !disposed, !inserting, !inserted else { return }
+        if !requireOriginalFocus, session.connectionID != identity.connectionID {
+            guard session.connected, session.connectionConfigurationValid(), confirm(L10n.text("连接已重建，确认插入已上传的附件？"), L10n.text("只会向当前选中的原主机终端发送路径；仍会重新检查文件和 tmux 窗格，不会自动回车。")) else { return }
+        }
+        let expectedConnection = requireOriginalFocus ? identity.connectionID : session.connectionID
         guard workspace.selectedTerminalID == session.id, workspace.page == .terminal, session.connected,
-              session.connectionID == identity.connectionID,
+              session.connectionID == expectedConnection,
               (!requireOriginalFocus || workspace.canAutomaticallyInsert(self)) else {
             failure = L10n.text("接收终端或连接已变化。请回到原连接，确认输入位置后重试；未插入路径。"); return
         }
@@ -113,8 +131,9 @@ final class TerminalAttachmentDraft: ObservableObject, Identifiable {
                     else { _ = try client.preview(path, offset: 0, limit: 1) }
                 }
             }.value
+            if requireOriginalFocus, !(await waitForAutomaticTarget()) { return }
             guard !disposed, workspace.selectedTerminalID == session.id, workspace.page == .terminal,
-                  session.connected, session.connectionID == identity.connectionID,
+                  session.connected, session.connectionID == expectedConnection,
                   (!requireOriginalFocus || workspace.canAutomaticallyInsert(self)) else {
                 throw WorkbenchError.message(L10n.text("插入前目标发生变化，附件未发送。"))
             }
@@ -145,7 +164,7 @@ final class TerminalAttachmentDraft: ObservableObject, Identifiable {
         guard !busy, !disposed else { return }
         failure = nil; preparing = true; cancellation = CancellationFlag(); prepare()
     }
-    var busy: Bool { preparing || running || inserting }
+    var busy: Bool { preparing || running || inserting || settlingFocus }
     func dispose() {
         disposed = true; cancellation.cancel()
         if let directory = payload.temporaryDirectory { try? FileManager.default.removeItem(at: directory) }

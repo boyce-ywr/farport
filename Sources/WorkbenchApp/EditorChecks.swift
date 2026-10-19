@@ -124,13 +124,34 @@ enum EditorChecks {
         try await key("s", code: 1, in: sheet)
         try await wait { state.frames["editor.error"] != nil && text.isEditable }
         guard state.saves == 4, state.presented, try await contents() == external, text.string.contains("本地待保存修改") else { throw WorkbenchError.message("保存冲突覆盖文件或丢失草稿") }
+        let unsaved = text.string
+        guard let draft = try store.loadEditorDraft(host: host, path: path), draft.original == Data(second.utf8), draft.edited == Data(unsaved.utf8),
+              !draft.canRestore(hostID: host?.id, connectionKey: host?.connectionKey, path: path, current: Data(external.utf8)) else {
+            throw WorkbenchError.message("真实保存冲突未落盘草稿或允许覆盖外部版本")
+        }
         try await press("editor.undo", in: sheet, state: state)
         guard text.string == second else { throw WorkbenchError.message("冲突后撤销丢失已保存内容") }
         DispatchQueue.main.asyncAfter(deadline: .now() + 1) { if NSApp.modalWindow != nil { NSApp.abortModal() } }
         try await key("\u{1b}", code: 53, modifiers: [], in: sheet)
         try await wait { !state.presented && window.sheets.isEmpty }
+        let restoredDocument = try await Task.detached {
+            let client = try transport.files(host); defer { client.close() }
+            try client.saveText(path, data: Data(second.utf8), expected: client.stat(path), original: Data(external.utf8))
+            return EditDocument(file: RemoteFile(name: "editor-check.md", path: path, attributes: try client.stat(path)), data: Data(second.utf8))
+        }.value
+        let reopened = State()
+        content.rootView = Container(state: reopened, document: restoredDocument, store: store, host: host).environment(\.locale, L10n.language.locale)
+        try await wait { window.sheets.first != nil && reopened.frames["editor.restore-draft"] != nil }
+        guard let restoredSheet = window.sheets.first, let restoredText = editor(in: restoredSheet.contentView) else { throw WorkbenchError.message("无法重新打开草稿编辑器") }
+        try await press("editor.restore-draft", in: restoredSheet, state: reopened)
+        try await wait { restoredText.string == unsaved }
+        try await key("s", code: 1, in: restoredSheet)
+        try await wait { reopened.saves == 1 }
+        guard try await contents() == unsaved, try store.loadEditorDraft(host: host, path: path) == nil else { throw WorkbenchError.message("恢复草稿后保存失败或未清理恢复副本") }
+        try await key("\u{1b}", code: 53, modifiers: [], in: restoredSheet)
+        try await wait { !reopened.presented && window.sheets.isEmpty }
         try await Task.detached { let client = try transport.files(host); defer { client.close() }; try client.removeRecursively(path) }.value
-        print("PASS · \(host == nil ? "本机" : "隔离 SSH") 编辑器：连续保存、保留窗口、保存后撤销/重做、工具栏剪贴板、轻提示、冲突保留草稿")
+        print("PASS · \(host == nil ? "本机" : "隔离 SSH") 编辑器：连续保存、撤销/重做、剪贴板、轻提示、冲突草稿落盘、重开恢复、成功保存清理")
     }
     private static func press(_ identifier: String, in window: NSWindow, state: State) async throws {
         guard let frame = state.frames[identifier], let content = window.contentView else { throw WorkbenchError.message("编辑按钮不可用：\(identifier)") }

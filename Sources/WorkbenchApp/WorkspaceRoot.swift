@@ -32,8 +32,18 @@ struct WorkspaceRoot: View {
         .coordinateSpace(name: "workspace-interactions")
         .onPreferenceChange(InteractionFrames.self) { interactionFrames = $0 }
         .focusedSceneObject(workspace)
+        .onChange(of: store.automaticallyReconnectSSH) { _, enabled in workspace.sessions.forEach { $0.setAutomaticReconnect(enabled) } }
+        .overlay(alignment: .topTrailing) {
+            if let notice = store.taskNotice {
+                HStack(alignment: .top) {
+                    Label(notice, systemImage: "bell.badge").font(.caption).lineLimit(3)
+                    Button { store.taskNotice = nil } label: { Image(systemName: "xmark") }.buttonStyle(.borderless).help(L10n.text("关闭提醒"))
+                }.padding(12).frame(maxWidth: 370).background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8)).shadow(radius: 4).padding(.top, 48).padding(.trailing, 14)
+            }
+        }
         .sheet(isPresented: $workspace.showCommandSnippets) { CommandSnippetsView(workspace: workspace, store: store) }
         .sheet(item: $workspace.screenSharingHost) { host in ScreenSharingView(host: host, store: store) }
+        .sheet(item: $workspace.webServiceHost) { host in WebServicesView(host: host, store: store) }
         .background(WindowTitlebar().frame(width: 0, height: 0))
         .sheet(item: $editingHost) { draft in
             HostEditor(profile: draft, store: store) { host in
@@ -193,7 +203,7 @@ struct WorkspaceRoot: View {
             Spacer()
             StatusClock()
             if let terminal = workspace.selectedTerminal, workspace.page == .terminal {
-                TerminalStatus(session: terminal, showReconnect: false)
+                TerminalStatus(session: terminal, showReconnect: true)
             }
             Text(L10n.text("\(store.hosts.count) 台主机 · \(workspace.sessions.count) 个终端")).foregroundStyle(.secondary)
         }.font(.system(size: 10)).padding(.horizontal, 12).frame(height: 22)
@@ -202,6 +212,16 @@ struct WorkspaceRoot: View {
         guard !didPrepareQA, store.isTestWorkspace, let output = ProcessInfo.processInfo.environment["SWB_QA_OUTPUT"] else { return }
         didPrepareQA = true
         let screen = ProcessInfo.processInfo.environment["SWB_QA_SCREEN"] ?? "terminal"
+        if screen == "connection-stability" {
+            do { try await ConnectionStabilityChecks.run(workspace: workspace); NSApp.terminate(nil) }
+            catch { fputs("FAIL · \(error.localizedDescription)\n", stderr); workspace.sessions.forEach { $0.close() }; exit(1) }
+            return
+        }
+        if screen == "workflow-refinements" {
+            do { try await WorkflowRefinementChecks.run(workspace: workspace, output: URL(fileURLWithPath: output)); NSApp.terminate(nil) }
+            catch { fputs("FAIL · \(error.localizedDescription)\n", stderr); workspace.sessions.forEach { $0.close() }; exit(1) }
+            return
+        }
         if screen == "workspace-tools" {
             do { try await WorkspaceToolsChecks.run(workspace: workspace, output: URL(fileURLWithPath: output)); NSApp.terminate(nil) }
             catch { fputs("FAIL · \(error.localizedDescription)\n", stderr); workspace.sessions.forEach { $0.close() }; exit(1) }

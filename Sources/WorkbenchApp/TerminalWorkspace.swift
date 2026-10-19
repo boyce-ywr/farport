@@ -147,7 +147,7 @@ private struct TerminalPane: View {
             HStack(spacing: 7) {
                 Button { workspace.selectTerminal(session) } label: {
                     HStack(spacing: 7) {
-                        Circle().fill(focused ? Color.teal : .secondary.opacity(0.35)).frame(width: 6, height: 6)
+                        Circle().fill(session.connected ? Color.teal : (session.connecting || session.retryDeadline != nil ? .orange : .secondary.opacity(0.5))).frame(width: 6, height: 6).help(session.state)
                         Text(workspace.sessionLabel(session)).lineLimit(1)
                         Spacer(minLength: 0)
                     }.frame(maxWidth: .infinity, minHeight: 30).contentShape(Rectangle())
@@ -156,9 +156,10 @@ private struct TerminalPane: View {
                 Button { workspace.browseFiles(.terminal(session.id)) } label: { Image(systemName: "folder").frame(width: 24, height: 30) }.help(L10n.text("查看此分栏的文件"))
                 Menu {
                     Button(session.restartLabel) {
-                        if session.isLocal && session.connected && !confirm(L10n.text("重新打开本机终端？"), L10n.text("当前 Shell 及其任务可能被结束。")) { return }
-                        session.reconnect()
+                        session.requestManualReconnect()
                     }
+                    Button(L10n.text("复制连接诊断")) { session.copyConnectionDiagnostics() }
+                    if session.retryDeadline != nil || session.connecting { Button(L10n.text("暂停自动重连")) { session.pauseAutomaticReconnect() } }
                     Divider()
                     Button(L10n.text("左右分栏 · ⌘D")) { workspace.selectTerminal(session); workspace.newTerminal(split: true) }
                     Button(L10n.text("上下分栏 · ⌘⇧D")) { workspace.selectTerminal(session); workspace.newTerminal(split: true, axis: .topBottom) }
@@ -178,12 +179,16 @@ struct TerminalStatus: View {
     let showReconnect: Bool
     var body: some View {
         HStack(spacing: 10) {
-            Label(session.state, systemImage: session.connected ? "circle.fill" : "circle").font(.system(size: 10)).foregroundStyle(session.connected ? .teal : .secondary)
+            Label(session.state, systemImage: session.connected ? "circle.fill" : "circle").font(.system(size: 10)).foregroundStyle(session.connected ? .teal : .secondary).lineLimit(1).help(session.lastConnectionError ?? session.state)
+            if let deadline = session.retryDeadline {
+                TimelineView(.periodic(from: .now, by: 1)) { context in
+                    Text(L10n.text("重连倒计时") + " \(max(0, Int(ceil(deadline.timeIntervalSince(context.date)))))s").font(.caption.monospacedDigit()).foregroundStyle(.orange)
+                }
+                Button(L10n.text("暂停")) { session.pauseAutomaticReconnect() }.font(.caption)
+            }
+            if session.connecting { ProgressView().controlSize(.small) }
             if showReconnect {
-                Button(session.restartLabel) {
-                    if session.isLocal && session.connected && !confirm(L10n.text("重新打开本机终端？"), L10n.text("当前 Shell 及其任务可能被结束，将从用户主目录启动新的登录 Shell。")) { return }
-                    session.reconnect()
-                }.font(.caption)
+                Button(session.connected ? session.restartLabel : L10n.text("立即重连")) { session.requestManualReconnect() }.font(.caption)
             }
             else { Text(session.dimensions).font(.system(size: 10)).foregroundStyle(.tertiary) }
         }

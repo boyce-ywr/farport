@@ -15,6 +15,16 @@ final class AppStore: ObservableObject {
     @Published var errorMessage: String?
     @Published var tunnels: [TunnelSession] = []
     @Published var screenSharingSessions: [ScreenSharingSession] = []
+    @Published var webServices: [WebServiceSession] = []
+    let connectionRecoveryEvents = ConnectionRecoveryEvents()
+    @Published var automaticallyReconnectSSH = UserDefaults.standard.object(forKey: "automaticallyReconnectSSH") as? Bool ?? true {
+        didSet { UserDefaults.standard.set(automaticallyReconnectSSH, forKey: "automaticallyReconnectSSH") }
+    }
+    @Published var taskNotice: String?
+    @Published var notifyLongTasks = UserDefaults.standard.bool(forKey: "notifyLongTasks") {
+        didSet { UserDefaults.standard.set(notifyLongTasks, forKey: "notifyLongTasks") }
+    }
+    private var transferStarted: [UUID: Date] = [:]
     @Published var fileClipboard: [FileEndpoint] = []
     @Published var workspaceTools = WorkspaceToolsState()
     private var toolsSave: Task<Void, Never>?
@@ -147,21 +157,31 @@ final class AppStore: ObservableObject {
     private func startNext() {
         while active.count < 2, let job = transfers.first(where: { $0.status == .queued && active[$0.id] == nil }) {
             let flag = CancellationFlag(); active[job.id] = flag
+            transferStarted[job.id] = Date()
             let profiles = hosts; let engine = TransferEngine(transport: transport)
             Task.detached(priority: .utility) { [weak self] in
                 _ = engine.execute(job, hosts: profiles, cancellation: flag) { updated in
                     DispatchQueue.main.async { self?.receive(updated) }
                 }
                 DispatchQueue.main.async {
-                    self?.active.removeValue(forKey: job.id); self?.objectWillChange.send(); self?.startNext()
+                    self?.active.removeValue(forKey: job.id); self?.transferStarted.removeValue(forKey: job.id); self?.objectWillChange.send(); self?.startNext()
                 }
             }
         }
     }
     private func receive(_ job: TransferJob) {
         guard let index = transfers.firstIndex(where: { $0.id == job.id }) else { return }
+        let previous = transfers[index].status
         if transfers[index].status != .cancelled { transfers[index] = job }
+        if previous != .cancelled, previous != job.status, [.completed, .failed, .paused, .cancelled, .awaitingConfirmation].contains(job.status), let started = transferStarted.removeValue(forKey: job.id) {
+            if [.completed, .failed].contains(job.status) { notifyTaskCompletion(title: L10n.text("传输任务"), detail: job.status.title, elapsed: Date().timeIntervalSince(started), background: true) }
+        }
         persistTransfers(force: job.status != .running)
+    }
+    func notifyTaskCompletion(title: String, detail: String, elapsed: TimeInterval, background: Bool) {
+        guard notifyLongTasks, background, elapsed.isFinite, elapsed >= 30 else { return }
+        taskNotice = title + " · " + detail
+        if !NSApp.isActive && !isTestWorkspace { NSApp.requestUserAttention(.informationalRequest) }
     }
     func persistTransfers(force: Bool = false) {
         guard force || Date().timeIntervalSince(lastPersistence) > 0.6 else { return }; lastPersistence = Date()
@@ -176,6 +196,7 @@ final class AppStore: ObservableObject {
         previewServers.forEach { $0.stop() }; previewServers.removeAll()
         tunnels.forEach { $0.stop() }
         screenSharingSessions.forEach { $0.stop() }
+        webServices.forEach { $0.stop() }
         active.values.forEach { $0.cancel() }
         for index in transfers.indices where transfers[index].status == .running || transfers[index].status == .queued { transfers[index].status = .paused }
         persistTransfers(force: true); persistence.sync {}

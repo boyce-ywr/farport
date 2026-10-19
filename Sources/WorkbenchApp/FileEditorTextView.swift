@@ -16,6 +16,12 @@ final class FileEditorBuffer: ObservableObject {
     func copy() { textView?.copy(nil); focus() }
     func paste() { textView?.pasteAsPlainText(nil); focus() }
     func selectAll() { textView?.selectAll(nil); focus() }
+    func restoreDraft(_ value: String) {
+        guard let textView else { text = value; return }
+        textView.breakUndoCoalescing()
+        textView.insertText(value, replacementRange: NSRange(location: 0, length: textView.string.utf16.count))
+        updateActions(); focus()
+    }
     func focus() { if let textView { textView.window?.makeFirstResponder(textView) } }
     func updateActions() {
         if let textView, text != textView.string { text = textView.string }

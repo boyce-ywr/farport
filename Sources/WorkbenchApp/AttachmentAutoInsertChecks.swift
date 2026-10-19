@@ -1,6 +1,7 @@
 import AppKit
 import WorkbenchCore
 import OpenSSHBackend
+import Combine
 
 @MainActor
 enum AttachmentAutoInsertChecks {
@@ -38,13 +39,16 @@ enum AttachmentAutoInsertChecks {
             try await wait { session.connected && session.terminal.window != nil }
             session.terminal.window?.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true)
             try await wait { NSApp.isActive && NSApp.keyWindow === session.terminal.window }
-            session.terminal.send(txt: "stty -echo; cat > /dev/null\n")
+            let transport = store.transport
+            let receivedPath = host == nil ? store.paths.root.appendingPathComponent("attachment-input-\(UUID().uuidString)").path : "/tmp/farport-attachment-input-\(UUID().uuidString)"
+            defer { let client = try? transport.files(host); try? client?.removeRecursively(receivedPath); client?.close() }
+            session.terminal.send(txt: "stty -echo -icanon; cat > \(RemotePath.quote(receivedPath))\n")
             try await Task.sleep(for: .milliseconds(300))
             clipboard.clearContents(); clipboard.setString("FARPORT_PASTE_TEXT", forType: .string)
             let before = session.inputGeneration
             try paste(session.terminal)
             guard workspace.attachmentDraft == nil, session.inputGeneration > before else { throw WorkbenchError.message("纯文本粘贴没有直接发送") }
-            for kind in ["image", "file", "drop", "typing", "manual", "switch-back", "switch"] {
+            for kind in ["image", "file", "drop", "same-tab", "focus-blip", "typing", "manual", "switch-back", "switch"] {
                 store.automaticallyInsertAttachments = kind != "manual"
                 clipboard.clearContents()
                 if kind == "image" { clipboard.setData(png, forType: .png) }
@@ -57,8 +61,23 @@ enum AttachmentAutoInsertChecks {
                     menu.performActionForItem(at: index)
                 } else { try paste(session.terminal) }
                 guard let draft = workspace.attachmentDraft else { throw WorkbenchError.message("剪贴板附件没有进入上传流程") }
+                var focusSubscription: AnyCancellable?
+                var sawTemporaryBlock = false
+                var temporaryWindow: NSWindow?
+                if kind == "focus-blip", let originalWindow = session.terminal.window {
+                    focusSubscription = draft.$result.sink { uploaded in
+                        guard uploaded != nil, !sawTemporaryBlock else { return }
+                        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 240, height: 100), styleMask: [.titled], backing: .buffered, defer: false)
+                        temporaryWindow = window; window.makeKeyAndOrderFront(nil)
+                        sawTemporaryBlock = !workspace.canAutomaticallyInsert(draft)
+                        DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(300)) {
+                            window.orderOut(nil); originalWindow.makeKeyAndOrderFront(nil); originalWindow.makeFirstResponder(session.terminal)
+                        }
+                    }
+                }
                 session.terminal.feed(text: "\u{1b}[6n\u{1b}[c\u{1b}[>c")
                 workspace.selectTerminal(session)
+                if kind == "same-tab" { workspace.chooseTab(session) }
                 if kind == "typing" { session.terminal.send(txt: "keep typing") }
                 if kind == "switch-back" { workspace.page = .transfers; workspace.page = .terminal }
                 if kind == "switch" { workspace.connectLocal(split: true) }
@@ -74,12 +93,25 @@ enum AttachmentAutoInsertChecks {
                     let decoded = NSBitmapImageRep(data: saved)
                     let verified = kind == "image" ? decoded?.pixelsWide == 32 && decoded?.pixelsHigh == 32 : saved == png
                     guard verified else { throw WorkbenchError.message("附件目标回读不一致") }
+                    if kind == "focus-blip", !sawTemporaryBlock { throw WorkbenchError.message("没有覆盖上传完成时的短暂失焦") }
+                    await draft.insert()
+                    let reference = try AttachmentReference.text(paths: result.paths)
+                    let deadline = Date().addingTimeInterval(5)
+                    while true {
+                        let received = try await Task.detached { let client = try transport.files(host); defer { client.close() }; return String(decoding: try client.preview(receivedPath), as: UTF8.self) }.value
+                        let copies = received.components(separatedBy: reference).count - 1
+                        guard copies <= 1, !received.contains("\n"), !received.contains("\r") else { throw WorkbenchError.message("附件重复插入或自动发送了回车") }
+                        if copies == 1 { break }
+                        guard Date() < deadline else { throw WorkbenchError.message("标记已插入但实际终端没有收到路径") }
+                        try await Task.sleep(for: .milliseconds(100))
+                    }
                 }
+                focusSubscription?.cancel(); temporaryWindow?.orderOut(nil)
                 await draft.deleteUploaded(); draft.dispose(); workspace.attachmentDraft = nil
                 if kind == "switch", let other = workspace.selectedTerminal, other !== session { workspace.close(other); workspace.selectTerminal(session) }
             }
             workspace.close(session)
-            print("PASS · \(host == nil ? "本机" : "隔离 SSH") Cmd+V 文本/图片、右键粘贴 Finder 文件、自动回包期间自动插入、手动策略/输入/目标切换保护")
+            print("PASS · \(host == nil ? "本机" : "隔离 SSH") Cmd+V 图片/文件实际送达一次且不回车、同标签/短暂失焦恢复、手动策略/输入/目标切换保护")
         }
         for host in targets {
             let service = TmuxService(transport: store.transport, host: host)

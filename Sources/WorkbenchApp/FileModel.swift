@@ -253,6 +253,7 @@ struct RemoteEditor: View {
     @ObservedObject var store: AppStore
     let saved: () -> Void
     @StateObject private var buffer: FileEditorBuffer
+    @StateObject private var draftClipboard = TerminalClipboardState()
     @ViewState private var savedData: Data
     @ViewState private var savedAttributes: FileAttributes
     @ViewState private var busy = false
@@ -260,6 +261,9 @@ struct RemoteEditor: View {
     @ViewState private var showPreview = false
     @ViewState private var savedAt: Date?
     @ViewState private var showSaved = false
+    @ViewState private var showChanges = false
+    @ViewState private var draftToReview: EditorDraft?
+    @ViewState private var draftID: UUID?
     @Environment(\.dismiss) private var dismiss
     init(document: EditDocument, host: HostProfile?, store: AppStore, saved: @escaping () -> Void) {
         self.document = document; self.host = host; self.store = store; self.saved = saved
@@ -271,6 +275,27 @@ struct RemoteEditor: View {
         VStack(alignment: .leading, spacing: 14) {
             HStack { Image(systemName: "doc.text").foregroundStyle(.teal); Text(document.file.name).font(.title3.bold()); Spacer(); Text(host == nil ? L10n.text("UTF-8 · 本地编辑") : L10n.text("UTF-8 · 远程编辑")).font(.caption).foregroundStyle(.secondary) }
             Text(document.file.path).font(.system(size: 11, design: .monospaced)).foregroundStyle(.secondary)
+            if let draft = draftToReview {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(L10n.text("发现上次保存失败留下的本机草稿，请先恢复或明确丢弃。")) .font(.caption)
+                    HStack {
+                        Button(L10n.text("恢复草稿")) { buffer.restoreDraft(String(decoding: draft.edited, as: UTF8.self)); draftID = draft.id; draftToReview = nil }
+                            .disabled(!draft.canRestore(hostID: host?.id, connectionKey: host?.connectionKey, path: document.file.path, current: savedData))
+                            .interactionFrame("editor.restore-draft")
+                        Button(L10n.text("复制草稿")) { draftClipboard.write(String(decoding: draft.edited, as: UTF8.self)) }.disabled(draft.edited.isEmpty)
+                        Button(L10n.text("丢弃草稿"), role: .destructive) {
+                            if confirm(L10n.text("丢弃恢复草稿？"), L10n.text("只删除本机恢复副本，不修改远端文件。")) {
+                                do { try store.removeEditorDraft(host: host, path: document.file.path, identifier: draft.id); draftToReview = nil; draftID = nil }
+                                catch { errorMessage = error.localizedDescription }
+                            }
+                        }
+                    }
+                    if !draftClipboard.message.isEmpty { Text(draftClipboard.message).font(.caption).foregroundStyle(draftClipboard.failed ? .orange : .green) }
+                    if !draft.canRestore(hostID: host?.id, connectionKey: host?.connectionKey, path: document.file.path, current: savedData) {
+                        Text(L10n.text("文件已变化，禁止自动套用旧草稿；可复制草稿后手动核对合并。")) .font(.caption).foregroundStyle(.orange)
+                    }
+                }.padding(10).background(.orange.opacity(0.1), in: RoundedRectangle(cornerRadius: 6))
+            }
             HStack(spacing: 10) {
                 Button { save() } label: { Label(L10n.text("保存"), systemImage: "square.and.arrow.down") }
                     .keyboardShortcut("s").disabled(busy).help(L10n.text("保存（⌘S），不关闭编辑器"))
@@ -303,6 +328,7 @@ struct RemoteEditor: View {
             HStack {
                 Label(L10n.text("保存前检查文件变化，临时文件写完后原子替换。"), systemImage: "lock.shield").font(.caption).foregroundStyle(.secondary)
                 Spacer()
+                Button(L10n.text("查看差异")) { showChanges = true }.disabled(busy).interactionFrame("editor.diff")
                 HStack(spacing: 6) {
                     ZStack { if busy { ProgressView().controlSize(.small) } }.frame(width: 16, height: 16)
                     Text(busy ? L10n.text("正在保存…") : (showSaved ? L10n.text("已保存") : (isDirty ? L10n.text("未保存的修改") : "")))
@@ -314,6 +340,11 @@ struct RemoteEditor: View {
                 }.keyboardShortcut(.cancelAction).disabled(busy).accessibilityIdentifier("editor.close").interactionFrame("editor.close")
             }
         }.padding(24).frame(width: 850, height: 620).interactiveDismissDisabled()
+            .sheet(isPresented: $showChanges) { TextChangesView(original: String(decoding: savedData, as: UTF8.self), edited: buffer.text) }
+            .task {
+                do { draftToReview = try store.loadEditorDraft(host: host, path: document.file.path); draftID = draftToReview?.id }
+                catch { errorMessage = error.localizedDescription }
+            }
             .onChange(of: buffer.text) { _, _ in showSaved = false }
             .task(id: savedAt) {
                 guard savedAt != nil else { return }
@@ -323,6 +354,7 @@ struct RemoteEditor: View {
     private var isDirty: Bool { buffer.text != String(decoding: savedData, as: UTF8.self) }
     private func save() {
         guard !busy else { return }
+        guard draftToReview == nil else { errorMessage = L10n.text("请先处理恢复草稿，避免覆盖未恢复的内容。"); return }
         guard let data = buffer.text.data(using: .utf8), data.count <= 512 * 1024 else { errorMessage = L10n.text("编辑内容超过 512 KiB，请使用终端编辑或上传文件。"); return }
         buffer.textView?.breakUndoCoalescing()
         busy = true; errorMessage = nil; showSaved = false
@@ -336,8 +368,17 @@ struct RemoteEditor: View {
                     return try client.stat(file.path)
                 }.value
                 savedData = data; savedAttributes = attributes; savedAt = Date(); showSaved = true
+                do { try store.removeEditorDraft(host: host, path: file.path, identifier: draftID); draftID = nil }
+                catch { errorMessage = L10n.text("文件已保存，但清理本机草稿失败：") + error.localizedDescription }
                 saved()
-            } catch { errorMessage = error.localizedDescription }
+            } catch {
+                let failure = error.localizedDescription
+                do {
+                    let draft = try store.saveEditorDraft(host: host, path: file.path, original: original, edited: data, replacing: draftID)
+                    draftID = draft.id
+                    errorMessage = failure + "\n" + L10n.text("编辑内容已保存为本机私有草稿，可重试保存或下次打开时恢复。")
+                } catch { errorMessage = failure + "\n" + L10n.text("本机草稿保存失败，请勿关闭编辑器：") + error.localizedDescription }
+            }
         }
     }
 }

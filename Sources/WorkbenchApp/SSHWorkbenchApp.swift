@@ -31,8 +31,8 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
     }
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         let store = AppStore.shared
-        if (store.activeCount > 0 || store.screenSharingSessions.contains(where: \.running)) && ProcessInfo.processInfo.environment["SWB_QA_EXIT"] != "1" {
-            let alert = NSAlert(); alert.messageText = L10n.text("暂停传输并退出？"); alert.informativeText = L10n.text("未完成的任务会保留断点。SSH 终端和桌面通道将关闭；远端 tmux 会话不会因此被结束。"); alert.addButton(withTitle: L10n.text("暂停并退出")); alert.addButton(withTitle: L10n.text("取消"))
+        if (store.activeCount > 0 || store.screenSharingSessions.contains(where: \.running) || store.webServices.contains(where: \.running)) && ProcessInfo.processInfo.environment["SWB_QA_EXIT"] != "1" {
+            let alert = NSAlert(); alert.messageText = L10n.text("暂停传输并退出？"); alert.informativeText = L10n.text("未完成的任务会保留断点。SSH 终端、桌面及网页服务通道将关闭；远端 tmux 会话不会因此被结束。"); alert.addButton(withTitle: L10n.text("暂停并退出")); alert.addButton(withTitle: L10n.text("取消"))
             guard alert.runModal() == .alertFirstButtonReturn else { return .terminateCancel }
         }
         store.prepareToQuit()
@@ -65,6 +65,9 @@ struct WorkbenchCommands: Commands {
             Button(L10n.text("检查更新…")) { openWindow(id: "updates"); UpdateController.shared.check() }
         }
         CommandMenu(L10n.text("终端")) {
+            Button(L10n.text("重新连接当前终端")) { workspace?.selectedTerminal?.requestManualReconnect() }.keyboardShortcut("r", modifiers: [.command, .shift]).disabled(workspace?.selectedTerminal == nil)
+            Button(L10n.text("复制连接诊断")) { workspace?.selectedTerminal?.copyConnectionDiagnostics() }.disabled(workspace?.selectedTerminal == nil)
+            Divider()
             Button(L10n.text("上一个分栏")) { workspace?.focusNextPane(backward: true) }.keyboardShortcut("[").disabled(workspace?.page != .terminal)
             Button(L10n.text("下一个分栏")) { workspace?.focusNextPane() }.keyboardShortcut("]").disabled(workspace?.page != .terminal)
             Button(L10n.text("最大化 / 还原当前分栏")) { workspace?.togglePaneZoom() }.keyboardShortcut(.return, modifiers: [.command, .shift]).disabled(workspace?.page != .terminal)
@@ -111,6 +114,10 @@ struct PreferencesView: View {
                 Slider(value: $store.fontSize, in: 10...28, step: 1) { Text(L10n.text("字号 \(Int(store.fontSize))")) }
             }
             Section(L10n.text("隐私与安全")) {
+                Toggle(L10n.text("SSH 异常断线后自动重连"), isOn: $store.automaticallyReconnectSSH)
+                Text(L10n.text("保留 SSH 心跳容错，按退避重试；指纹或认证需要确认时暂停，不反复弹密码框，不重放命令。")) .font(.caption).foregroundStyle(.secondary)
+                Toggle(L10n.text("后台长任务完成时提醒"), isOn: $store.notifyLongTasks)
+                Text(L10n.text("超过 30 秒的传输或明确报告开始/结束的 Shell 命令才提醒；不根据停止输出猜完成，提醒不包含命令正文。")) .font(.caption).foregroundStyle(.secondary)
                 Toggle(L10n.text("附件上传后自动插入终端"), isOn: $store.automaticallyInsertAttachments)
                 Text(L10n.text("主机可单独覆盖。仅影响新上传；目标变化时仍需确认，永不自动回车。")).font(.caption).foregroundStyle(.secondary)
                 Toggle(L10n.text("tmux 终端右键使用 tmux 菜单"), isOn: $store.useTmuxContextMenu)

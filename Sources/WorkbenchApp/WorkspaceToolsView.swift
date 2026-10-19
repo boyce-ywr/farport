@@ -8,7 +8,8 @@ struct WorkspaceToolsMenu: View {
     var body: some View {
         Menu {
             Button(L10n.text("常用命令…")) { workspace.showCommandSnippets = true }
-            Button(L10n.text("打开远程 Mac 桌面…")) { workspace.screenSharingHost = workspace.host }.disabled(workspace.host == nil)
+            Button(L10n.text("打开远程 Mac 桌面…")) { workspace.screenSharingHost = workspace.toolsHost }.disabled(workspace.toolsHost == nil)
+            Button(L10n.text("远端网页与服务模板…")) { workspace.webServiceHost = workspace.toolsHost }.disabled(workspace.toolsHost == nil)
             Menu(L10n.text("恢复工作区")) {
                 Text(L10n.text("在空窗口恢复布局；不会重放命令。"))
                 ForEach(store.workspaceTools.workspaces) { snapshot in
@@ -134,6 +135,11 @@ struct CommandSnippetsView: View {
 }
 
 extension Workspace {
+    var toolsHost: HostProfile? {
+        if page == .files { return fileHost }
+        if page == .terminal, let selectedTerminal { return selectedTerminal.host }
+        return host
+    }
     func insertSnippet(_ snippet: CommandSnippet, targetID: UUID?, connectionID: UUID?) throws {
         try snippet.validate()
         guard let session = selectedTerminal, session.id == targetID, session.connected, session.connectionID == connectionID,

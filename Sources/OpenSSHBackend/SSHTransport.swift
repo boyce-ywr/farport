@@ -114,13 +114,15 @@ public final class SSHTransport: @unchecked Sendable {
     public let paths: ApplicationPaths
     public let askpass: String?
     public let noninteractive: Bool
-    public init(paths: ApplicationPaths, askpass: String? = nil, noninteractive: Bool = false) {
-        self.paths = paths; self.askpass = askpass; self.noninteractive = noninteractive
+    public let silentAuthentication: Bool
+    public init(paths: ApplicationPaths, askpass: String? = nil, noninteractive: Bool = false, silentAuthentication: Bool = false) {
+        self.paths = paths; self.askpass = askpass; self.noninteractive = noninteractive; self.silentAuthentication = silentAuthentication
     }
     public func environment(for host: HostProfile) -> [String: String] {
         var environment = ProcessInfo.processInfo.environment
         environment["TERM"] = "xterm-256color"; environment["COLORTERM"] = "truecolor"
         environment["LANG"] = "en_US.UTF-8"
+        if silentAuthentication { environment["SWB_SILENT_AUTH"] = "1" } else { environment.removeValue(forKey: "SWB_SILENT_AUTH") }
         if let askpass, !noninteractive {
             environment["SSH_ASKPASS"] = askpass; environment["SSH_ASKPASS_REQUIRE"] = "force"
             environment["DISPLAY"] = "ssh-workbench"; environment["SWB_CREDENTIAL_ACCOUNT"] = host.id.uuidString + ":" + connectionDigest(host)
@@ -134,12 +136,12 @@ public final class SSHTransport: @unchecked Sendable {
         let socketName = String(connectionDigest(host).prefix(12)) + "-%C"
         var arguments = ["-p", String(host.port), "-o", "ConnectTimeout=15", "-o", "ConnectionAttempts=1",
                          "-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=3",
-                         "-o", "StrictHostKeyChecking=\(noninteractive ? "yes" : "ask")",
+                         "-o", "StrictHostKeyChecking=\(noninteractive || silentAuthentication ? "yes" : "ask")",
                          "-o", "UserKnownHostsFile=\"\(paths.knownHosts.path)\"", "-o", "UpdateHostKeys=no",
                          "-o", "ControlMaster=auto", "-o", "ControlPersist=60",
                          "-o", "ControlPath=\(paths.sockets.appendingPathComponent(socketName).path)",
-                         "-o", "ForwardAgent=no", "-o", "NumberOfPasswordPrompts=2", "-o", "LogLevel=ERROR"]
-        if noninteractive { arguments += ["-o", "BatchMode=yes"] }
+                         "-o", "ForwardAgent=no", "-o", "NumberOfPasswordPrompts=\(silentAuthentication ? 1 : 2)", "-o", "LogLevel=ERROR"]
+        if noninteractive || (silentAuthentication && askpass == nil) { arguments += ["-o", "BatchMode=yes"] }
         if let config = host.configFile { arguments = ["-F", config] + arguments }
         if !host.username.isEmpty { arguments += ["-l", host.username] }
         if !host.identityFile.isEmpty { arguments += ["-i", NSString(string: host.identityFile).expandingTildeInPath, "-o", "IdentitiesOnly=yes"] }

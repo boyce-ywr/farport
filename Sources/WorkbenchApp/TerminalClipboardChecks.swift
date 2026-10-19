@@ -65,6 +65,7 @@ enum TerminalClipboardChecks {
         guard pasteboard.string(forType: .string) == "approved 中文", remote.failed else { throw WorkbenchError.message("无效或过大OSC52内容未拒绝") }
         remote.resetPermission()
         guard remote.remoteAllowed == nil, remote.pendingRemoteText == nil else { throw WorkbenchError.message("新连接继承了旧剪贴板授权") }
+        try await checkCopyOrdering()
         let incoming = "OSC52 实际复制"
         terminal.clipboard.denyRemoteCopy()
         terminal.feed(text: "\u{1b}]52;c;\(Data(incoming.utf8).base64EncodedString())\u{7}")
@@ -137,6 +138,35 @@ enum TerminalClipboardChecks {
             }
             print("PASS · \(host == nil ? "本机" : "SSH") tmux输出经本地选区复制，不依赖tmux剪贴板设置")
         }
+    }
+    private static func checkCopyOrdering() async throws {
+        let pasteboard = NSPasteboard.general
+        let previous = pasteboard.pasteboardItems?.map { item in item.types.compactMap { type in item.data(forType: type).map { (type, $0) } } }
+        defer {
+            pasteboard.clearContents()
+            if let previous { pasteboard.writeObjects(previous.map { values in let item = NSPasteboardItem(); for (type, data) in values { item.setData(data, forType: type) }; return item }) }
+        }
+        let terminal = SafeTerminalView(frame: NSRect(x: 0, y: 0, width: 640, height: 300))
+        terminal.remoteSelectionContext = true
+        terminal.clipboard.receive(Data("remote-before-cmd-c".utf8), interactive: true) { true }
+        terminal.copy(terminal)
+        guard !terminal.clipboard.failed, terminal.clipboard.message == L10n.text("已复制到 Mac 剪贴板"), pasteboard.string(forType: .string) == "remote-before-cmd-c" else { throw WorkbenchError.message("远端先完成复制时仍误报没有选区") }
+        terminal.clipboard.resetPermission()
+        terminal.copy(terminal)
+        guard !terminal.clipboard.failed, terminal.clipboard.message.isEmpty else { throw WorkbenchError.message("等待远端复制前先闪失败提示") }
+        try await Task.sleep(for: .milliseconds(100))
+        terminal.clipboard.receive(Data("remote-after-cmd-c".utf8), interactive: true) { true }
+        try await Task.sleep(for: .milliseconds(850))
+        guard !terminal.clipboard.failed, terminal.clipboard.message == L10n.text("已复制到 Mac 剪贴板"), pasteboard.string(forType: .string) == "remote-after-cmd-c" else { throw WorkbenchError.message("延迟提示覆盖了实际复制成功") }
+        pasteboard.clearContents(); pasteboard.setString("external", forType: .string)
+        terminal.copy(terminal)
+        try await Task.sleep(for: .milliseconds(900))
+        guard terminal.clipboard.informational, !terminal.clipboard.failed, pasteboard.string(forType: .string) == "external" else { throw WorkbenchError.message("用旧复制记录覆盖剪贴板或误报失败") }
+        terminal.clipboard.resetPermission()
+        terminal.clipboard.receive(Data("denied".utf8), interactive: true) { false }
+        terminal.copy(terminal)
+        guard terminal.clipboard.failed, pasteboard.string(forType: .string) == "external" else { throw WorkbenchError.message("新反馈逻辑绕过了远端复制授权") }
+        print("PASS · tmux先复制/后复制时序合并，延迟提示不覆盖成功，旧剪贴板与授权保护")
     }
     private static func hasLine(_ value: String, session: TerminalSession) -> Bool {
         let screen = session.terminal.getTerminal()

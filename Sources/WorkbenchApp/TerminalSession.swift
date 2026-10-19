@@ -3,6 +3,8 @@ import SwiftUI
 import SwiftTerm
 import WorkbenchCore
 import OpenSSHBackend
+import Combine
+import Darwin
 
 private final class TmuxRightMouseEvent: NSEvent {
     let original: NSEvent
@@ -28,6 +30,11 @@ final class SafeTerminalView: LocalProcessTerminalView {
     var onContextFocus: (() -> Void)?
     var prefersTmuxMenu: (() -> Bool)?
     var prepareTmuxMenu: (() -> Void)?
+    var semanticCommandCopyAllowed = true
+    var remoteSelectionContext = false
+    var commandCapture = SemanticCommandCapture()
+    private var shellMarkers = ShellMarkerStream()
+    private(set) var observedProcessExit = true
     private var forwardedRightClick = false
     private var localSelectionDrag = false
     private var magnificationBase: Double?
@@ -50,11 +57,24 @@ final class SafeTerminalView: LocalProcessTerminalView {
     deinit { if let scrollMonitor { NSEvent.removeMonitor(scrollMonitor) } }
     override func dataReceived(slice: ArraySlice<UInt8>) {
         let filtered = graphicsInput.filter(slice)
-        if !filtered.isEmpty { super.dataReceived(slice: filtered[...]) }
+        guard !filtered.isEmpty else { return }
+        var offset = 0
+        for event in shellMarkers.scan(filtered) {
+            super.dataReceived(slice: filtered[offset..<event.endIndex])
+            if semanticCommandCopyAllowed { commandCapture.receive(event.action, terminal: getTerminal()) }
+            offset = event.endIndex
+        }
+        if offset < filtered.count { super.dataReceived(slice: filtered[offset...]) }
     }
-    func resetGraphicsInput() { graphicsInput = TerminalGraphicsInput() }
+    func resetGraphicsInput() { graphicsInput = TerminalGraphicsInput(); shellMarkers = ShellMarkerStream(); commandCapture.reset() }
+    func prepareProcessStart() { observedProcessExit = false }
+    override func processTerminated(_ source: LocalProcess, exitCode: Int32?) {
+        observedProcessExit = true
+        super.processTerminated(source, exitCode: exitCode)
+    }
     required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
     override func mouseDown(with event: NSEvent) {
+        clipboard.noteUserInteraction()
         if event.modifierFlags.contains(.control) { rightMouseDown(with: event); return }
         localSelectionDrag = event.modifierFlags.contains(.shift)
         if localSelectionDrag { withLocalSelection { super.mouseDown(with: event) } }
@@ -101,7 +121,7 @@ final class SafeTerminalView: LocalProcessTerminalView {
     }
     override func copy(_ sender: Any) {
         guard let text = getSelection(), !text.isEmpty else {
-            clipboard.report(L10n.text("没有本地选区；请按住 Shift 拖选，再按 ⌘C。"), failed: true); return
+            clipboard.noLocalSelection(remoteContext: remoteSelectionContext || (allowMouseReporting && getTerminal().mouseMode != .off)); return
         }
         clipboard.write(text)
     }
@@ -117,7 +137,7 @@ final class SafeTerminalView: LocalProcessTerminalView {
         return super.performKeyEquivalent(with: event)
     }
     private func noteMouseInput(_ event: NSEvent) {
-        if allowMouseReporting, getTerminal().mouseMode != .off, !event.modifierFlags.contains(.shift) { onInputActivity?() }
+        if allowMouseReporting, getTerminal().mouseMode != .off, !event.modifierFlags.contains(.shift) { clipboard.noteUserInteraction(); onInputActivity?() }
     }
     func ordinaryContextMenu() -> NSMenu {
         let menu = NSMenu(); menu.autoenablesItems = false
@@ -125,6 +145,8 @@ final class SafeTerminalView: LocalProcessTerminalView {
             let entry = NSMenuItem(title: title, action: action, keyEquivalent: ""); entry.target = self; entry.isEnabled = enabled; menu.addItem(entry)
         }
         item(L10n.text("复制"), #selector(contextCopy), enabled: selectionActive)
+        item(L10n.text("复制所选命令全文"), #selector(contextCommandCopy), enabled: selectionActive && semanticCommandCopyAllowed)
+        item(L10n.text("复制所选命令的输出"), #selector(contextOutputCopy), enabled: selectionActive && semanticCommandCopyAllowed)
         item(L10n.text("粘贴"), #selector(contextPaste), enabled: process.running && NSPasteboard.general.availableType(from: [.string, .fileURL, .png, .tiff]) != nil)
         menu.addItem(.separator())
         item(L10n.text("全选"), #selector(contextSelectAll))
@@ -135,6 +157,8 @@ final class SafeTerminalView: LocalProcessTerminalView {
         return menu
     }
     @objc private func contextCopy() { copy(self) }
+    @objc private func contextCommandCopy() { copySemanticCommand(output: false) }
+    @objc private func contextOutputCopy() { copySemanticCommand(output: true) }
     @objc private func contextPaste() { paste(self) }
     @objc private func contextSelectAll() { selectAll() }
     @objc private func contextSelectNone() { selectNone() }
@@ -154,6 +178,7 @@ final class SafeTerminalView: LocalProcessTerminalView {
         if ended { magnificationBase = nil; accumulatedMagnification = 0 }
     }
     override func paste(_ sender: Any) {
+        clipboard.noteUserInteraction()
         if receiveAttachments(from: NSPasteboard.general) { return }
         if let text = NSPasteboard.general.string(forType: .string), text.contains("\n") || text.contains("\r") {
             let alert = NSAlert(); alert.messageText = L10n.text("粘贴多行内容？"); alert.informativeText = L10n.text("内容可能包含会立即执行的命令。\n\n") + String(text.prefix(700)); alert.addButton(withTitle: L10n.text("粘贴")); alert.addButton(withTitle: L10n.text("取消"))
@@ -178,7 +203,7 @@ final class SafeTerminalView: LocalProcessTerminalView {
         layer?.borderWidth = 0
         return receiveAttachments(from: sender.draggingPasteboard)
     }
-    override func send(source: SwiftTerm.TerminalView, data: ArraySlice<UInt8>) { onInputActivity?(); super.send(source: source, data: data) }
+    override func send(source: SwiftTerm.TerminalView, data: ArraySlice<UInt8>) { clipboard.noteUserInteraction(); onInputActivity?(); super.send(source: source, data: data) }
     override func send(source: SwiftTerm.Terminal, data: ArraySlice<UInt8>) { super.send(source: self, data: data) }
     func sendAttachmentReference(_ text: String) {
         let bracketed = getTerminal().bracketedPasteMode
@@ -228,6 +253,11 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable, LocalProc
     @Published private var stateKey = "待连接"
     var state: String { L10n.key(stateKey) }
     @Published var connected = false
+    @Published private(set) var connecting = false
+    @Published private(set) var retryDeadline: Date?
+    @Published private(set) var autoReconnectPaused = false
+    @Published private(set) var lastConnectionError: String?
+    @Published private(set) var automaticAttempt = 0
     @Published var dimensions = ""
     @Published private(set) var reportedDirectory: String?
     var directoryChanged: (() -> Void)?
@@ -236,6 +266,21 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable, LocalProc
     private var started = false
     private var disposed = false
     private var pendingReconnect = false
+    private var childActive = false
+    private var hadConnection = false
+    private var connectedAt: Date?
+    private var recoveryNeeded = false
+    private var automaticAttemptInProgress = false
+    private var automaticReconnectEnabled = true
+    private var retryPolicy = SSHRetryPolicy()
+    private var retryTask: Task<Void, Never>?
+    private var terminationTask: Task<Void, Never>?
+    private var networkActivity: NSObjectProtocol?
+    private var closingLease: TerminalSession?
+    private var events: [ConnectionEvent] = []
+    private var lastEnvironmentRetry = Date.distantPast
+    var recoverySubscription: AnyCancellable?
+    var connectionConfigurationValid: () -> Bool = { true }
     private var probe = CancellationFlag()
     private var preparingTmuxMenu = false
     private let transport: SSHTransport
@@ -249,33 +294,46 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable, LocalProc
         super.init()
         stateKey = isLocal ? "待启动" : "待连接"
         terminal.processDelegate = self; terminal.optionAsMetaKey = true
+        terminal.semanticCommandCopyAllowed = tmuxID == nil
+        terminal.remoteSelectionContext = tmuxID != nil
         terminal.font = NSFont.monospacedSystemFont(ofSize: 13, weight: .regular)
         terminal.getTerminal().changeScrollback(10000)
         terminal.onInputActivity = { [weak self] in self?.inputGeneration &+= 1 }
     }
-    func start() {
-        guard !started, !disposed else { return }; started = true; stateKey = isLocal ? "正在启动…" : "正在验证连接…"; probe = CancellationFlag()
+    func start(automatic: Bool = false) {
+        guard !started, !disposed, !childActive else { return }
+        guard connectionConfigurationValid() else { stateKey = "主机配置已变化，请重新打开终端"; autoReconnectPaused = true; releaseNetworkActivity(); return }
+        started = true; connecting = true; automaticAttemptInProgress = automatic
+        stateKey = isLocal ? "正在启动…" : (automatic ? "正在自动重连…" : "正在验证连接…"); probe = CancellationFlag()
+        retryTask?.cancel(); retryTask = nil; retryDeadline = nil
+        if !isLocal && networkActivity == nil { networkActivity = ProcessInfo.processInfo.beginActivity(options: .userInitiatedAllowingIdleSystemSleep, reason: "Maintain requested SSH connection") }
         connectionID = UUID()
+        let attemptID = connectionID
         reportedDirectory = nil
         terminal.clipboard.resetPermission()
         terminal.resetGraphicsInput()
-        let transport = transport; let host = host; let cancellation = probe
+        let transport = automatic ? SSHTransport(paths: transport.paths, askpass: transport.askpass, noninteractive: transport.noninteractive, silentAuthentication: true) : transport
+        let host = host; let cancellation = probe
+        record(automatic ? "automatic_probe" : "manual_probe")
         Task {
             do {
-                guard !disposed, !cancellation.isCancelled else { return }
+                guard !disposed, !cancellation.isCancelled, connectionID == attemptID else { return }
                 if let host {
                     let tmux = tmuxID != nil
                     let graphicsCompatible = try await Task.detached {
-                        _ = try transport.run(host, command: SSHTransport.connectionProbe, cancellation: cancellation, timeout: 120).checked()
+                        _ = try transport.run(host, command: SSHTransport.connectionProbe, cancellation: cancellation, timeout: automatic ? 20 : 120).checked()
                         if tmux { try transport.requirePosixShell(host, cancellation: cancellation) }
                         return try transport.supportsPosixShell(host, cancellation: cancellation)
                     }.value
-                    guard !disposed, !cancellation.isCancelled else { return }
+                    guard !disposed, !cancellation.isCancelled, connectionID == attemptID else { return }
+                    guard connectionConfigurationValid() else { connecting = false; started = false; stateKey = "主机配置已变化，请重新打开终端"; releaseNetworkActivity(); return }
+                    terminal.prepareProcessStart()
                     terminal.startProcess(executable: "/usr/bin/ssh", args: try transport.terminalArguments(for: host, tmuxSession: tmuxID, graphicsCompatible: graphicsCompatible), environment: transport.environment(for: host).map { "\($0.key)=\($0.value)" })
                 } else {
                     let configuration = try LocalShellConfiguration()
                     var environment = configuration.environment
                     environment.removeValue(forKey: "TMUX"); environment.removeValue(forKey: "TMUX_PANE")
+                    terminal.prepareProcessStart()
                     if let tmuxID {
                         terminal.startProcess(executable: try TmuxService.localExecutable(), args: ["attach-session", "-t", tmuxID], environment: environment.map { "\($0.key)=\($0.value)" }, currentDirectory: configuration.directory)
                     } else {
@@ -283,19 +341,90 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable, LocalProc
                     }
                 }
                 guard terminal.process.running else { throw WorkbenchError.message(L10n.text("无法启动终端进程，请重新打开终端。")) }
-                connected = true; stateKey = isLocal ? "运行中" : "已连接"
+                childActive = true; connecting = false; connected = true; hadConnection = true; connectedAt = Date(); recoveryNeeded = false
+                stateKey = isLocal ? "运行中" : "已连接"; lastConnectionError = nil
+                record("process_started", processID: terminal.process.shellPid)
                 if terminal.shouldRequestFocus { terminal.window?.makeFirstResponder(terminal) }
             } catch {
-                guard !disposed, !cancellation.isCancelled else { return }; stateKey = isLocal ? "启动失败" : "连接失败"; connected = false
-                let message = "\r\n\u{1b}[31m\(error.localizedDescription.replacingOccurrences(of: "\n", with: "\r\n"))\u{1b}[0m\r\n"
-                terminal.dataReceived(slice: Array(message.utf8)[...])
+                guard !disposed, !cancellation.isCancelled, connectionID == attemptID else { return }
+                connecting = false; started = false; connected = false; lastConnectionError = error.localizedDescription
+                stateKey = isLocal ? "启动失败" : "连接失败"
+                if !isLocal, hadConnection, SSHRetryPolicy.permitsRetry(diagnostic: error.localizedDescription) {
+                    recoveryNeeded = true; record("network_probe_failed"); scheduleAutomaticReconnect()
+                } else {
+                    autoReconnectPaused = automatic; record(automatic ? "automatic_probe_needs_attention" : "manual_probe_failed"); releaseNetworkActivity()
+                    if automatic { stateKey = "自动重连已暂停，请手动验证" }
+                    else {
+                        let safe = error.localizedDescription.unicodeScalars.filter { !CharacterSet.controlCharacters.contains($0) || $0 == "\n" || $0 == "\t" }.map(String.init).joined()
+                        terminal.dataReceived(slice: Array(("\r\n" + safe.replacingOccurrences(of: "\n", with: "\r\n") + "\r\n").utf8)[...])
+                    }
+                }
             }
         }
     }
     func reconnect() {
-        probe.cancel(); disposed = false
-        if terminal.process.running { pendingReconnect = true; terminal.terminate() }
+        guard !disposed else { return }
+        probe.cancel(); retryTask?.cancel(); retryTask = nil; retryDeadline = nil
+        autoReconnectPaused = false; recoveryNeeded = false; retryPolicy.reset(); automaticAttempt = 0; connecting = false
+        record("manual_reconnect_requested")
+        if childActive { pendingReconnect = true; connected = false; stateKey = "正在关闭旧连接…"; stopOwnedProcess() }
         else { started = false; start() }
+    }
+    func requestManualReconnect() {
+        guard !pendingReconnect else { return }
+        if childActive, tmuxID == nil, !confirm(L10n.text("重新连接当前终端？"), L10n.text("当前普通 Shell 的前台任务可能被结束；不会重放命令。tmux 只重新附着原会话。")) { return }
+        reconnect()
+    }
+    func setAutomaticReconnect(_ enabled: Bool) {
+        automaticReconnectEnabled = enabled
+        if !enabled { pauseAutomaticReconnect() }
+        else { autoReconnectPaused = false; if recoveryNeeded { scheduleAutomaticReconnect(immediate: true) } }
+    }
+    func pauseAutomaticReconnect() {
+        autoReconnectPaused = true; retryTask?.cancel(); retryTask = nil; retryDeadline = nil
+        if connecting && automaticAttemptInProgress { probe.cancel(); connecting = false; started = false; connectionID = UUID() }
+        if !connected && (!connecting || automaticAttemptInProgress) { stateKey = "自动重连已暂停"; releaseNetworkActivity() }
+        record("automatic_reconnect_paused")
+    }
+    func recoveryEnvironmentChanged(_ event: String) {
+        guard !disposed, !isLocal else { return }
+        record(event)
+        guard event != "network_path_changed", recoveryNeeded, !connecting, !childActive,
+              Date().timeIntervalSince(lastEnvironmentRetry) >= 2 else { return }
+        lastEnvironmentRetry = Date(); scheduleAutomaticReconnect(immediate: true)
+    }
+    private func scheduleAutomaticReconnect(stableDuration: TimeInterval = 0, immediate: Bool = false) {
+        guard !disposed, !isLocal, hadConnection, recoveryNeeded, automaticReconnectEnabled, !autoReconnectPaused, !childActive, !connecting else { releaseNetworkActivity(); return }
+        guard connectionConfigurationValid() else { autoReconnectPaused = true; stateKey = "主机配置已变化，请重新打开终端"; releaseNetworkActivity(); return }
+        retryTask?.cancel()
+        let delay = immediate ? 0.2 : retryPolicy.nextDelay(stableDuration: stableDuration) + Double.random(in: 0...0.4)
+        automaticAttempt = max(1, retryPolicy.failures); retryDeadline = Date().addingTimeInterval(delay); stateKey = "等待自动重连"
+        record("automatic_reconnect_scheduled")
+        retryTask = Task { [weak self] in
+            do { try await Task.sleep(for: .seconds(delay)) } catch { return }
+            guard let self, !disposed, recoveryNeeded, automaticReconnectEnabled, !autoReconnectPaused, !childActive, !connecting else { return }
+            retryTask = nil; retryDeadline = nil; started = false; start(automatic: true)
+        }
+    }
+    private func stopOwnedProcess() {
+        guard childActive, terminal.process.shellPid > 0 else { return }
+        closingLease = self
+        let processID = terminal.process.shellPid; let originalConnection = connectionID
+        if !terminal.observedProcessExit && processID > 0 { _ = Darwin.kill(processID, SIGTERM) }
+        terminationTask?.cancel()
+        terminationTask = Task { [weak self] in
+            do { try await Task.sleep(for: .seconds(3)) } catch { return }
+            guard let self, childActive, connectionID == originalConnection, !terminal.observedProcessExit, terminal.process.shellPid == processID else { return }
+            record("owned_process_force_stop", processID: processID); _ = Darwin.kill(processID, SIGKILL)
+        }
+    }
+    private func releaseNetworkActivity() { if let networkActivity { ProcessInfo.processInfo.endActivity(networkActivity); self.networkActivity = nil } }
+    private func record(_ event: String, processID: Int32? = nil, waitStatus: Int32? = nil) {
+        events.append(ConnectionEvent(event: event, processID: processID, waitStatus: waitStatus)); events = Array(events.suffix(60))
+    }
+    func copyConnectionDiagnostics() {
+        let encoder = JSONEncoder(); encoder.outputFormatting = [.prettyPrinted, .sortedKeys]; encoder.dateEncodingStrategy = .iso8601
+        if let data = try? encoder.encode(events), let text = String(data: data, encoding: .utf8) { terminal.clipboard.write(text) }
     }
     func enableTmuxMenuIfNeeded() {
         guard let tmuxID, connected, !preparingTmuxMenu else { return }
@@ -314,8 +443,20 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable, LocalProc
             } catch { AppStore.shared.errorMessage = error.localizedDescription }
         }
     }
-    func close() { disposed = true; pendingReconnect = false; probe.cancel(); terminal.terminate(); connected = false; stateKey = isLocal ? "已结束" : "已断开" }
-    nonisolated func sizeChanged(source: LocalProcessTerminalView, newCols: Int, newRows: Int) { DispatchQueue.main.async { [weak self] in self?.dimensions = "\(newCols) × \(newRows)" } }
+    func close() {
+        guard !disposed else { return }; disposed = true; pendingReconnect = false; recoveryNeeded = false
+        probe.cancel(); retryTask?.cancel(); retryTask = nil; retryDeadline = nil; recoverySubscription?.cancel()
+        connected = false; connecting = false; stateKey = isLocal ? "已结束" : "已断开"; record("closed_by_user")
+        if childActive { stopOwnedProcess() }; releaseNetworkActivity()
+    }
+    nonisolated func sizeChanged(source: LocalProcessTerminalView, newCols: Int, newRows: Int) {
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            let value = "\(newCols) × \(newRows)"
+            if dimensions != value { terminal.commandCapture.reset() }
+            dimensions = value
+        }
+    }
     nonisolated func setTerminalTitle(source: TerminalView, title: String) { DispatchQueue.main.async { [weak self] in if !title.isEmpty { self?.title = String(title.prefix(100)) } } }
     nonisolated func setTerminalTitle(source: LocalProcessTerminalView, title: String) { DispatchQueue.main.async { [weak self] in if !title.isEmpty { self?.title = String(title.prefix(100)) } } }
     nonisolated func hostCurrentDirectoryUpdate(source: TerminalView, directory: String?) {
@@ -328,10 +469,22 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable, LocalProc
     }
     nonisolated func processTerminated(source: TerminalView, exitCode: Int32?) {
         DispatchQueue.main.async { [weak self] in
-            guard let self else { return }; connected = false
-            stateKey = isLocal ? (exitCode == 0 || disposed ? "已结束" : "进程已退出") : (exitCode == 0 ? "已断开" : "连接已中断")
-            if pendingReconnect && !disposed { pendingReconnect = false; started = false; start() }
+            guard let self, childActive else { return }
+            childActive = false; connected = false; connecting = false; terminationTask?.cancel(); terminationTask = nil
+            defer { closingLease = nil }
+            record("process_exited", processID: terminal.process.shellPid, waitStatus: exitCode)
+            guard !disposed else { releaseNetworkActivity(); return }
+            if pendingReconnect { pendingReconnect = false; started = false; start(); return }
+            let result = TerminalProcessExit(waitStatus: exitCode)
+            stateKey = isLocal ? (result.code == 0 ? "已结束" : "进程已退出") : (result.shouldRecoverSSH ? "连接已中断" : "远端会话已结束")
+            recoveryNeeded = !isLocal && result.shouldRecoverSSH
+            if recoveryNeeded { scheduleAutomaticReconnect(stableDuration: connectedAt.map { Date().timeIntervalSince($0) } ?? 0) }
+            else { record("remote_session_ended"); releaseNetworkActivity() }
         }
+    }
+    deinit {
+        retryTask?.cancel(); terminationTask?.cancel(); recoverySubscription?.cancel()
+        if let networkActivity { ProcessInfo.processInfo.endActivity(networkActivity) }
     }
 }
 
@@ -381,6 +534,7 @@ final class Workspace: ObservableObject {
     @Published var showTerminalSearch = false
     @Published var showCommandSnippets = false
     @Published var screenSharingHost: HostProfile?
+    @Published var webServiceHost: HostProfile?
     @Published var followTerminalDirectory = false
     var savedWorkspaceID = UUID()
     var restoringWorkspace = false
@@ -449,6 +603,20 @@ final class Workspace: ObservableObject {
         }
         session.terminal.prefersTmuxMenu = { [weak self, weak session] in self?.store.useTmuxContextMenu == true && session?.tmuxID != nil && session?.connected == true }
         session.terminal.prepareTmuxMenu = { [weak session] in session?.enableTmuxMenuIfNeeded() }
+        session.setAutomaticReconnect(store.automaticallyReconnectSSH)
+        let configuredHost = session.host
+        session.connectionConfigurationValid = { [weak self] in
+            guard let self else { return false }
+            guard let configuredHost else { return true }
+            return store.hosts.contains { $0.id == configuredHost.id && $0.connectionKey == configuredHost.connectionKey }
+        }
+        session.recoverySubscription = store.connectionRecoveryEvents.events.sink { [weak session] event in session?.recoveryEnvironmentChanged(event) }
+        session.terminal.commandCapture.completed = { [weak self, weak session] elapsed, status in
+            guard let self, let session else { return }
+            let detail = status.map { L10n.text("Shell 报告退出码：") + String($0) } ?? L10n.text("Shell 报告命令结束，未提供退出码。")
+            let background = !NSApp.isActive || page != .terminal || selectedTerminalID != session.id || session.terminal.window?.isKeyWindow != true
+            store.notifyTaskCompletion(title: session.displayName, detail: detail, elapsed: elapsed, background: background)
+        }
         session.directoryChanged = { [weak self, weak session] in
             guard let self, let session else { return }
             objectWillChange.send()
@@ -525,9 +693,27 @@ final class Workspace: ObservableObject {
     }
     func canAutomaticallyInsert(_ draft: TerminalAttachmentDraft) -> Bool {
         let current = attachmentIdentity(draft.session)
-        let keyWindow = NSApp.keyWindow?.sheetParent ?? NSApp.keyWindow
-        return current.allowsAutomaticInsertion(from: draft.identity) && keyWindow === draft.session.terminal.window
+        let keyWindow = NSApp.keyWindow
+        return store.automaticallyInsertAttachments(for: draft.session.host)
+            && current.allowsAutomaticInsertion(from: draft.identity) && keyWindow === draft.session.terminal.window
+            && NSApp.modalWindow == nil && keyWindow?.attachedSheet == nil && keyWindow?.firstResponder === draft.session.terminal
             && selectedTerminalID == draft.session.id && page == .terminal
+    }
+    func automaticInsertionBlocker(_ draft: TerminalAttachmentDraft) -> String? {
+        let current = attachmentIdentity(draft.session)
+        if !store.automaticallyInsertAttachments(for: draft.session.host) { return L10n.text("自动插入已关闭，请手动插入。") }
+        if !draft.session.connectionConfigurationValid() { return L10n.text("主机配置已变化，请重新确认附件目标。") }
+        if !draft.session.connected || current.connectionID != draft.identity.connectionID { return L10n.text("连接已变化，请确认原终端后手动插入。") }
+        if current.inputGeneration != draft.identity.inputGeneration { return L10n.text("上传期间有新的终端输入，请确认输入位置后手动插入。") }
+        if current.focusGeneration != draft.identity.focusGeneration || selectedTerminalID != draft.session.id || page != .terminal { return L10n.text("上传期间切换了目标，请回原终端确认后手动插入。") }
+        if !current.preservesAutomaticTarget(from: draft.identity) { return L10n.text("原窗口已变化，请手动确认插入目标。") }
+        return nil
+    }
+    func restoreTransientAttachmentFocus(_ draft: TerminalAttachmentDraft) {
+        guard automaticInsertionBlocker(draft) == nil, NSApp.isActive, NSApp.modalWindow == nil,
+              let window = draft.session.terminal.window, window === NSApp.keyWindow, window.attachedSheet == nil,
+              window.firstResponder == nil || window.firstResponder === window else { return }
+        window.makeFirstResponder(draft.session.terminal)
     }
     func requestAttachments(session: TerminalSession, payload: TerminalAttachmentPayload) {
         guard session.connected, sessions.contains(where: { $0.id == session.id }), attachmentDraft?.busy != true else {
@@ -544,8 +730,7 @@ final class Workspace: ObservableObject {
         if panel.runModal() == .OK { requestAttachments(session: session, payload: TerminalAttachmentPayload(files: panel.urls, temporaryDirectory: nil)) }
     }
     func chooseTab(_ session: TerminalSession) {
-        focusGeneration &+= 1
-        if page == .files { fileSource = .terminal(session.id) }
+        if page == .files { if fileSource != .terminal(session.id) { focusGeneration &+= 1 }; fileSource = .terminal(session.id) }
         else { selectTerminal(session) }
     }
     func followCurrentTerminalFiles() {
