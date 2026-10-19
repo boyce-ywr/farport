@@ -22,7 +22,7 @@ func checkSFTPNames() throws {
 }
 
 func checkDeviceFiles(arguments: [String]) throws {
-    guard arguments.count == 3, let port = Int(arguments[1]) else { throw WorkbenchError.message("需要地址、端口、用户名") }
+    guard (3...4).contains(arguments.count), let port = Int(arguments[1]) else { throw WorkbenchError.message("需要地址、端口、用户名，以及可选的只读目录") }
     let root = URL(fileURLWithPath: ".test/device-check").standardizedFileURL
     let paths = try ApplicationPaths(root: root)
     let known = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".ssh/known_hosts")
@@ -30,10 +30,12 @@ func checkDeviceFiles(arguments: [String]) throws {
     let host = HostProfile(name: "设备只读检查", address: arguments[0], port: port, username: arguments[2])
     try paths.save([host], to: paths.hosts)
     let client = try SSHTransport(paths: paths, noninteractive: true).sftp(host); defer { client.close() }
-    let home = try client.realpath()
+    let started = Date()
+    let home = try client.realpath(arguments.count == 4 ? arguments[3] : ".")
     let result = try client.listForBrowsing(home)
     try expect(!result.files.isEmpty, "真实设备正常文件可列出")
     try expect(result.files.allSatisfy { !$0.name.contains("\u{fffd}") && $0.name.rangeOfCharacter(from: .controlCharacters) == nil }, "设备异常文件名不进入操作路径")
     if result.skipped > 0 { try rejects("真实设备递归操作不能静默忽略坏文件名") { _ = try client.list(home) } }
     print("PASS · 设备 SFTP 只读验证：显示 \(result.files.count) 项，明确跳过 \(result.skipped) 个异常文件名；未修改任何远端文件")
+    print("设备目录读取耗时：\(String(format: "%.3f", Date().timeIntervalSince(started))) 秒")
 }

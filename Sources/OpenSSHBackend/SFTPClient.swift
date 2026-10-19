@@ -155,7 +155,7 @@ public final class SFTPClient: @unchecked Sendable {
         guard result.skipped == 0 else { throw WorkbenchError.message(L10n.text("目录中有 \(result.skipped) 个非 UTF-8 或含控制字符的文件名。为避免漏传或误删，已停止递归操作；请先在目标主机处理异常文件名。")) }
         return result.files
     }
-    public func listForBrowsing(_ path: String) throws -> (files: [RemoteFile], skipped: Int) {
+    public func listForBrowsing(_ path: String, progress: (@Sendable (Int) -> Void)? = nil) throws -> (files: [RemoteFile], skipped: Int) {
         lock.lock(); defer { lock.unlock() }
         var opened = try request(11, expecting: 102) { $0.string(path) }; let handle = try opened.bytes()
         defer { try? closeHandle(handle) }
@@ -173,6 +173,7 @@ public final class SFTPClient: @unchecked Sendable {
                 files.append(file)
             }
             guard files.count + skipped <= 1_000_000 else { throw WorkbenchError.message(L10n.text("目录超过一百万项，请按子目录浏览。")) }
+            progress?(files.count + skipped)
         }
         return (files.sorted { left, right in
             if left.attributes.isDirectory != right.attributes.isDirectory { return left.attributes.isDirectory }

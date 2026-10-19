@@ -10,9 +10,11 @@ final class FileModel: ObservableObject {
     let id = UUID()
     @Published var path = "."
     @Published var pathInput = "."
-    @Published var files: [RemoteFile] = []
+    @Published var files: [RemoteFile] = [] { didSet { visibleFilesCache = nil } }
     @Published var selection: Set<String> = []
     @Published var busy = false
+    @Published private(set) var loadingPath: String?
+    @Published private(set) var loadedEntryCount = 0
     @Published var previewBusy = false
     @Published var errorMessage: String?
     @Published var skippedFileNames = 0
@@ -25,7 +27,7 @@ final class FileModel: ObservableObject {
     @Published var webURL: URL?
     @Published var webScripts = false
     @Published var previewRatio = 0.38
-    @Published var fileSort = FileSort()
+    @Published var fileSort = FileSort() { didSet { visibleFilesCache = nil } }
     @Published private(set) var history = DirectoryHistory()
     @Published var mediaURL: URL?
     private var mediaServer: FilePreviewServer?
@@ -36,8 +38,10 @@ final class FileModel: ObservableObject {
     }
     private var webServer: FilePreviewServer?
     private weak var store: AppStore?
-    @Published var filter = ""
-    @Published var showHidden = false
+    @Published var filter = "" { didSet { visibleFilesCache = nil } }
+    @Published var showHidden = false { didSet { visibleFilesCache = nil } }
+    private var visibleFilesCache: [RemoteFile]?
+    private var visibleFilesLanguage: AppLanguage?
     @Published var followLog = false
     let host: HostProfile?
     let transport: SSHTransport
@@ -78,8 +82,14 @@ final class FileModel: ObservableObject {
             } catch { if generation == identifier { errorMessage = error.localizedDescription; previewBusy = false } }
         }
     }
-    var visibleFiles: [RemoteFile] { fileSort.sorted(files.filter { (showHidden || !$0.name.hasPrefix(".")) && (filter.isEmpty || $0.name.localizedCaseInsensitiveContains(filter)) }) }
-    var selectedFiles: [RemoteFile] { visibleFiles.filter { selection.contains($0.path) } }
+    var visibleFiles: [RemoteFile] {
+        let language = L10n.language
+        if let visibleFilesCache, visibleFilesLanguage == language { return visibleFilesCache }
+        let result = fileSort.sorted(files.filter { (showHidden || !$0.name.hasPrefix(".")) && (filter.isEmpty || $0.name.localizedCaseInsensitiveContains(filter)) })
+        visibleFilesCache = result; visibleFilesLanguage = language
+        return result
+    }
+    var selectedFiles: [RemoteFile] { selection.isEmpty ? [] : visibleFiles.filter { selection.contains($0.path) } }
     var selectedFile: RemoteFile? { selectedFiles.count == 1 ? selectedFiles.first : nil }
     var selectedEndpoints: [FileEndpoint] { selectedFiles.map { FileEndpoint(hostID: host?.id, path: $0.path) } }
     var previewText: String { String(decoding: previewData, as: UTF8.self) }
@@ -90,26 +100,36 @@ final class FileModel: ObservableObject {
     }
     func goBack() { if let destination = history.backDestination, !busy { load(destination, returning: true) } }
     func load(_ target: String? = nil, returning: Bool = false) {
+        let target = target ?? path
+        guard loadingPath != target || !busy else { return }
         navigation.cancel(); navigation = CancellationFlag(); let cancellation = navigation
         previewCancellation.cancel(); generation = UUID(); previewBusy = false; previewFailure = nil; openingLink = nil
         stopMediaPreview()
-        let target = target ?? path; let transport = transport; let host = host
-        busy = true; errorMessage = nil
+        let transport = transport; let host = host
+        busy = true; errorMessage = nil; loadingPath = target; loadedEntryCount = 0
         Task {
             do {
                 let result = try await Task.detached { () -> (String, [RemoteFile], Int) in
                     let client = try transport.files(host, cancellation: cancellation); defer { client.close() }
                     let canonical = try client.realpath(target)
-                    if let remote = client as? SFTPClient { let listing = try remote.listForBrowsing(canonical); return (canonical, listing.files, listing.skipped) }
+                    if let remote = client as? SFTPClient {
+                        let listing = try remote.listForBrowsing(canonical) { count in
+                            Task { @MainActor in
+                                guard !cancellation.isCancelled, self.loadingPath == target else { return }
+                                self.loadedEntryCount = max(self.loadedEntryCount, count)
+                            }
+                        }
+                        return (canonical, listing.files, listing.skipped)
+                    }
                     return (canonical, try client.list(canonical), 0)
                 }.value
                 guard !cancellation.isCancelled else { return }
                 if returning { history.returned(to: result.0) } else { history.visited(result.0) }
                 if path != result.0 { previewCancellation.cancel(); generation = UUID(); previewBusy = false; filter = ""; selection = [] }
-                path = result.0; pathInput = result.0; files = result.1; skippedFileNames = result.2; busy = false; hasLoaded = true
+                path = result.0; pathInput = result.0; files = result.1; skippedFileNames = result.2; busy = false; loadingPath = nil; hasLoaded = true
                 selection.formIntersection(Set(files.map(\.path)))
                 if selection.count != 1 { previewFile = nil; previewData = Data(); followLog = false }
-            } catch { if !cancellation.isCancelled { errorMessage = error.localizedDescription; busy = false } }
+            } catch { if !cancellation.isCancelled { errorMessage = error.localizedDescription; busy = false; loadingPath = nil } }
         }
     }
     func activate(_ file: RemoteFile) {
@@ -217,7 +237,7 @@ final class FileModel: ObservableObject {
         stopMediaPreview()
         if busy { hasLoaded = false }
         navigation.cancel(); previewCancellation.cancel(); generation = UUID()
-        busy = false; previewBusy = false; followLog = false
+        busy = false; loadingPath = nil; loadedEntryCount = 0; previewBusy = false; followLog = false
     }
 }
 

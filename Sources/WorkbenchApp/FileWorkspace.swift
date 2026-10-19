@@ -21,6 +21,15 @@ struct FileWorkspace: View {
     var body: some View {
         VStack(spacing: 0) {
             toolbar
+            if let loadingPath = model.loadingPath {
+                HStack(spacing: 10) {
+                    ProgressView().controlSize(.small)
+                    Text(L10n.text("正在读取目录：\(loadingPath) · 已读取 \(model.loadedEntryCount) 项"))
+                        .lineLimit(1).truncationMode(.middle).help(loadingPath)
+                    Spacer()
+                    Button(L10n.text("取消")) { model.stop() }
+                }.font(.caption).padding(.horizontal, 18).padding(.bottom, 10)
+            }
             if let error = model.errorMessage { ErrorBanner(message: error) { model.errorMessage = nil }.padding(.horizontal, 18).padding(.bottom, 8) }
             if model.skippedFileNames > 0 {
                 Label(L10n.text("已显示可识别的文件；跳过 \(model.skippedFileNames) 个非 UTF-8 或含控制字符的文件名。请在目标主机处理，避免误操作。"), systemImage: "exclamationmark.triangle")

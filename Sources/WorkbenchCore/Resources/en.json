@@ -10,6 +10,7 @@
   "SSH 配置中的 ProxyCommand / Match exec 可以执行本地命令。导入后连接将使用所选配置文件；不会复制私钥。": "ProxyCommand and Match exec can run local commands. Connections will use the selected config; private keys are not copied.",
   "信任并导入": "Trust and import",
   "取消": "Cancel",
+  "正在读取目录：{0} · 已读取 {1} 项": "Reading folder: {0} · {1} entries read",
   "SSH 配置": "SSH configuration",
   "该文件未包含可导入的具体 Host 别名；通配符不会转换为主机。": "No explicit Host aliases were found. Wildcards are not imported as hosts.",
   "附件已发送至 {0}": "Attachments sent to {0}",
