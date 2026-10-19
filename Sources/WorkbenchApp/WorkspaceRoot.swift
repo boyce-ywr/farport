@@ -32,6 +32,8 @@ struct WorkspaceRoot: View {
         .coordinateSpace(name: "workspace-interactions")
         .onPreferenceChange(InteractionFrames.self) { interactionFrames = $0 }
         .focusedSceneObject(workspace)
+        .sheet(isPresented: $workspace.showCommandSnippets) { CommandSnippetsView(workspace: workspace, store: store) }
+        .sheet(item: $workspace.screenSharingHost) { host in ScreenSharingView(host: host, store: store) }
         .background(WindowTitlebar().frame(width: 0, height: 0))
         .sheet(item: $editingHost) { draft in
             HostEditor(profile: draft, store: store) { host in
@@ -131,6 +133,7 @@ struct WorkspaceRoot: View {
                 Button(L10n.text("管理 tmux")) { workspace.selectedHostID = host.id; workspace.page = .tmux }
                 Button(L10n.text("浏览文件")) { workspace.browseFiles(.host(host.id)) }
                 Button(L10n.text("主机监控")) { workspace.selectedHostID = host.id; workspace.page = .monitor }
+                Button(L10n.text("打开远程 Mac 桌面…")) { workspace.screenSharingHost = host }
                 Divider()
                 Button(L10n.text("编辑主机")) { editingHost = host }
                 Button(L10n.text("清除此主机保存的凭据")) { store.forgetCredentials(host) }
@@ -156,6 +159,7 @@ struct WorkspaceRoot: View {
                 ForEach(store.hosts) { host in Button(host.name) { workspace.connectPreferred(host) } }
                 Divider(); Button(L10n.text("添加 SSH 主机…")) { editingHost = HostProfile() }
             } label: { Label(displayHost?.name ?? L10n.text("此 Mac"), systemImage: "server.rack").lineLimit(1) }.menuStyle(.borderlessButton).frame(maxWidth: 160)
+            WorkspaceToolsMenu(workspace: workspace, store: store)
             Button { workspace.showTransferTray.toggle() } label: { Image(systemName: "tray.and.arrow.down").frame(width: 26, height: 32) }.help(L10n.text("传输队列"))
             if workspace.page == .terminal {
                 Button { workspace.showTerminalSearch.toggle() } label: { Image(systemName: "magnifyingglass").frame(width: 26, height: 32) }.help(L10n.text("查找终端内容 · ⌘F"))
@@ -198,6 +202,11 @@ struct WorkspaceRoot: View {
         guard !didPrepareQA, store.isTestWorkspace, let output = ProcessInfo.processInfo.environment["SWB_QA_OUTPUT"] else { return }
         didPrepareQA = true
         let screen = ProcessInfo.processInfo.environment["SWB_QA_SCREEN"] ?? "terminal"
+        if screen == "workspace-tools" {
+            do { try await WorkspaceToolsChecks.run(workspace: workspace, output: URL(fileURLWithPath: output)); NSApp.terminate(nil) }
+            catch { fputs("FAIL · \(error.localizedDescription)\n", stderr); workspace.sessions.forEach { $0.close() }; exit(1) }
+            return
+        }
         if screen == "terminal-clipboard" {
             do { try await TerminalClipboardChecks.run(workspace: workspace, output: URL(fileURLWithPath: output)); NSApp.terminate(nil) }
             catch { fputs("FAIL · \(error.localizedDescription)\n", stderr); workspace.sessions.forEach { $0.close() }; exit(1) }

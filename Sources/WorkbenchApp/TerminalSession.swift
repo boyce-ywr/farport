@@ -220,7 +220,7 @@ private final class TerminalSecurityProxy: TerminalViewDelegate {
 
 @MainActor
 final class TerminalSession: NSObject, ObservableObject, Identifiable, LocalProcessTerminalViewDelegate {
-    let id = UUID()
+    let id: UUID
     let host: HostProfile?
     let tmuxID: String?
     let terminal = SafeTerminalView(frame: NSRect(x: 0, y: 0, width: 900, height: 560))
@@ -229,6 +229,8 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable, LocalProc
     var state: String { L10n.key(stateKey) }
     @Published var connected = false
     @Published var dimensions = ""
+    @Published private(set) var reportedDirectory: String?
+    var directoryChanged: (() -> Void)?
     private(set) var connectionID = UUID()
     private(set) var inputGeneration: UInt64 = 0
     private var started = false
@@ -241,8 +243,8 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable, LocalProc
     var displayName: String { host?.name ?? L10n.text("此 Mac") }
     var subtitle: String { host?.subtitle ?? L10n.text("\(NSUserName()) · \(LocalShellConfiguration.userShell) · 登录 Shell") }
     var restartLabel: String { isLocal ? L10n.text("重新打开") : L10n.text("重连") }
-    init(host: HostProfile? = nil, tmuxID: String? = nil, transport: SSHTransport) {
-        self.host = host; self.tmuxID = tmuxID; self.transport = transport
+    init(host: HostProfile? = nil, tmuxID: String? = nil, transport: SSHTransport, id: UUID = UUID()) {
+        self.id = id; self.host = host; self.tmuxID = tmuxID; self.transport = transport
         title = tmuxID == nil ? (host?.name ?? L10n.text("此 Mac")) : "tmux · \(host?.name ?? L10n.text("此 Mac"))"
         super.init()
         stateKey = isLocal ? "待启动" : "待连接"
@@ -254,6 +256,7 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable, LocalProc
     func start() {
         guard !started, !disposed else { return }; started = true; stateKey = isLocal ? "正在启动…" : "正在验证连接…"; probe = CancellationFlag()
         connectionID = UUID()
+        reportedDirectory = nil
         terminal.clipboard.resetPermission()
         terminal.resetGraphicsInput()
         let transport = transport; let host = host; let cancellation = probe
@@ -315,7 +318,14 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable, LocalProc
     nonisolated func sizeChanged(source: LocalProcessTerminalView, newCols: Int, newRows: Int) { DispatchQueue.main.async { [weak self] in self?.dimensions = "\(newCols) × \(newRows)" } }
     nonisolated func setTerminalTitle(source: TerminalView, title: String) { DispatchQueue.main.async { [weak self] in if !title.isEmpty { self?.title = String(title.prefix(100)) } } }
     nonisolated func setTerminalTitle(source: LocalProcessTerminalView, title: String) { DispatchQueue.main.async { [weak self] in if !title.isEmpty { self?.title = String(title.prefix(100)) } } }
-    nonisolated func hostCurrentDirectoryUpdate(source: TerminalView, directory: String?) {}
+    nonisolated func hostCurrentDirectoryUpdate(source: TerminalView, directory: String?) {
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            let names: Set<String> = host.map { [$0.address] } ?? Set(["localhost", "127.0.0.1", "::1", Host.current().name, Host.current().localizedName].compactMap { $0 })
+            reportedDirectory = tmuxID == nil ? TerminalDirectory.path(from: directory, allowedHosts: names) : nil
+            directoryChanged?()
+        }
+    }
     nonisolated func processTerminated(source: TerminalView, exitCode: Int32?) {
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }; connected = false
@@ -359,7 +369,7 @@ final class Workspace: ObservableObject {
     }
     @Published var sessions: [TerminalSession] = []
     @Published var layout = TerminalLayout() {
-        didSet { if layout.focused != oldValue.focused { focusGeneration &+= 1 } }
+        didSet { if layout.focused != oldValue.focused { focusGeneration &+= 1 }; rememberWorkspace() }
     }
     let tabDragScope = UUID()
     @Published var browsingLocalFiles = false
@@ -369,6 +379,11 @@ final class Workspace: ObservableObject {
     @Published var attachmentDraft: TerminalAttachmentDraft?
     @Published var sidebarCollapsed = false
     @Published var showTerminalSearch = false
+    @Published var showCommandSnippets = false
+    @Published var screenSharingHost: HostProfile?
+    @Published var followTerminalDirectory = false
+    var savedWorkspaceID = UUID()
+    var restoringWorkspace = false
     @Published private var fileTerminalOrder: [UUID] = []
     var orderedFileSessions: [TerminalSession] { fileTerminalOrder.compactMap { identifier in sessions.first { $0.id == identifier } } }
     func toggleSidebar() {
@@ -434,6 +449,11 @@ final class Workspace: ObservableObject {
         }
         session.terminal.prefersTmuxMenu = { [weak self, weak session] in self?.store.useTmuxContextMenu == true && session?.tmuxID != nil && session?.connected == true }
         session.terminal.prepareTmuxMenu = { [weak session] in session?.enableTmuxMenuIfNeeded() }
+        session.directoryChanged = { [weak self, weak session] in
+            guard let self, let session else { return }
+            objectWillChange.send()
+            if followTerminalDirectory, fileSource?.terminalID == session.id { locateTerminalDirectory(session) }
+        }
         fileTerminalOrder.append(session.id)
         session.terminal.onFocus = { [weak self, weak session] in
             guard let self, let session, page == .terminal,
@@ -454,6 +474,49 @@ final class Workspace: ObservableObject {
             self?.store.fontSize = size
             if finished { self?.store.savePreferences() }
         }
+    }
+    func rememberWorkspace() {
+        guard !restoringWorkspace else { return }
+        let identifiers = Set(layout.tabs.flatMap(\.terminals))
+        let saved = sessions.filter { identifiers.contains($0.id) }.map { SavedTerminal(id: $0.id, hostID: $0.host?.id, connectionKey: $0.host?.connectionKey, tmuxID: $0.tmuxID) }
+        store.workspaceTools.workspaces.removeAll { $0.id == savedWorkspaceID }
+        if !saved.isEmpty {
+            let names = sessions.filter { identifiers.contains($0.id) }.map(\.displayName)
+            let title = names.reduce(into: [String]()) { if !$0.contains($1) { $0.append($1) } }.joined(separator: " · ")
+            let snapshot = WorkspaceSnapshot(id: savedWorkspaceID, title: title, terminals: saved, layout: layout)
+            if (try? snapshot.validate()) != nil { store.workspaceTools.workspaces.insert(snapshot, at: 0) }
+        }
+        store.workspaceTools.workspaces = Array(store.workspaceTools.workspaces.prefix(10))
+        store.saveWorkspaceTools()
+    }
+    func restoreWorkspace(_ snapshot: WorkspaceSnapshot) {
+        guard sessions.isEmpty else { store.errorMessage = L10n.text("请在空窗口恢复工作区，现有终端不会被替换。"); return }
+        do {
+            try snapshot.validate()
+            var restoredLayout = snapshot.layout
+            var skipped = 0
+            restoringWorkspace = true
+            defer { restoringWorkspace = false }
+            for saved in snapshot.terminals {
+                let profile = saved.hostID.flatMap { identifier in store.hosts.first { $0.id == identifier && $0.connectionKey == saved.connectionKey } }
+                if saved.hostID != nil && profile == nil { restoredLayout.close(saved.id); skipped += 1; continue }
+                register(TerminalSession(host: profile, tmuxID: saved.tmuxID, transport: store.transport, id: saved.id))
+            }
+            layout = restoredLayout
+            selectedHostID = selectedTerminal?.host?.id; page = .terminal
+            if skipped > 0 { store.errorMessage = L10n.text("已跳过删除或连接配置已变化的主机；未向它们发起连接。") }
+        } catch { store.errorMessage = error.localizedDescription }
+    }
+    func locateTerminalDirectory(_ session: TerminalSession) {
+        guard session.connected, let directory = session.reportedDirectory else { return }
+        let browser = fileBrowser(for: .terminal(session.id), host: session.host)
+        if browser.path != directory { browser.load(directory) }
+    }
+    func openTerminalDirectory() {
+        guard let session = selectedTerminal, session.reportedDirectory != nil else {
+            store.errorMessage = L10n.text("终端尚未报告可信目录。需要 OSC 7 Shell 集成；tmux 或主机不匹配时请手动浏览。"); return
+        }
+        browseFiles(.terminal(session.id)); locateTerminalDirectory(session)
     }
     func attachmentIdentity(_ session: TerminalSession) -> AttachmentDeliveryIdentity {
         let window = session.terminal.window

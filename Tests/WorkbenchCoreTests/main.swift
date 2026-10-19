@@ -16,6 +16,11 @@ func rejects(_ message: String, _ operation: () throws -> Void) throws {
 }
 
 do {
+    try checkWorkspaceTools()
+    if CommandLine.arguments.contains("--workspace-tools-check") { print("PASS · \(checks) 项工作工具断言"); exit(0) }
+    try checkScreenSharing()
+    if CommandLine.arguments.contains("--screen-sharing-check") { print("PASS · \(checks) 项桌面与工具断言"); exit(0) }
+    if let index = CommandLine.arguments.firstIndex(of: "--screen-sharing-ssh"), CommandLine.arguments.indices.contains(index + 1) { try checkScreenSharingSSH(root: CommandLine.arguments[index + 1]); exit(0) }
     try checkMonitorProcessSorting()
     try checkTerminalGraphics()
     if CommandLine.arguments.contains("--preview-lifecycle-check") { try checkPreviewLifecycle(); exit(0) }

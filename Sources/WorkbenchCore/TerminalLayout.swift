@@ -1,8 +1,8 @@
 import Foundation
 
-public enum TerminalSplitAxis: Equatable { case leftRight, topBottom }
+public enum TerminalSplitAxis: Codable, Equatable { case leftRight, topBottom }
 
-public indirect enum TerminalPaneNode: Equatable {
+public indirect enum TerminalPaneNode: Codable, Equatable {
     case terminal(UUID)
     case split(id: UUID, axis: TerminalSplitAxis, ratio: Double, first: TerminalPaneNode, second: TerminalPaneNode)
 
@@ -38,7 +38,7 @@ public indirect enum TerminalPaneNode: Equatable {
     }
 }
 
-public struct TerminalTab: Equatable, Identifiable {
+public struct TerminalTab: Codable, Equatable, Identifiable {
     public let id: UUID
     public fileprivate(set) var root: TerminalPaneNode
     public fileprivate(set) var focused: UUID
@@ -46,7 +46,7 @@ public struct TerminalTab: Equatable, Identifiable {
     public var terminals: [UUID] { root.terminals }
 }
 
-public struct TerminalLayout: Equatable {
+public struct TerminalLayout: Codable, Equatable {
     public private(set) var tabs: [TerminalTab] = []
     public private(set) var selectedTabID: UUID?
     public init() {}

@@ -31,8 +31,8 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
     }
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         let store = AppStore.shared
-        if store.activeCount > 0 && ProcessInfo.processInfo.environment["SWB_QA_EXIT"] != "1" {
-            let alert = NSAlert(); alert.messageText = L10n.text("暂停传输并退出？"); alert.informativeText = L10n.text("未完成的任务会保留断点。SSH 连接将关闭；远端 tmux 会话不会因此被结束。"); alert.addButton(withTitle: L10n.text("暂停并退出")); alert.addButton(withTitle: L10n.text("取消"))
+        if (store.activeCount > 0 || store.screenSharingSessions.contains(where: \.running)) && ProcessInfo.processInfo.environment["SWB_QA_EXIT"] != "1" {
+            let alert = NSAlert(); alert.messageText = L10n.text("暂停传输并退出？"); alert.informativeText = L10n.text("未完成的任务会保留断点。SSH 终端和桌面通道将关闭；远端 tmux 会话不会因此被结束。"); alert.addButton(withTitle: L10n.text("暂停并退出")); alert.addButton(withTitle: L10n.text("取消"))
             guard alert.runModal() == .alertFirstButtonReturn else { return .terminateCancel }
         }
         store.prepareToQuit()
@@ -73,6 +73,9 @@ struct WorkbenchCommands: Commands {
             Button(L10n.text("下一个标签")) { workspace?.selectNextTab() }.keyboardShortcut("]", modifiers: [.command, .shift]).disabled(workspace?.page != .terminal)
         }
         CommandMenu(L10n.text("工作区")) {
+            Button(L10n.text("常用命令…")) { workspace?.showCommandSnippets = true }.keyboardShortcut("p", modifiers: [.command, .shift]).disabled(workspace == nil)
+            Button(L10n.text("定位终端当前目录")) { workspace?.openTerminalDirectory() }.keyboardShortcut("o", modifiers: [.command, .shift]).disabled(workspace?.selectedTerminal == nil)
+            Divider()
             Button(L10n.text("展开 / 折叠主机侧栏")) { workspace?.toggleSidebar() }.keyboardShortcut("s", modifiers: [.command, .option]).disabled(workspace == nil)
             ForEach(Array(WorkspacePage.allCases.enumerated()), id: \.element) { index, page in
                 Button(page.title) { workspace?.page = page }.keyboardShortcut(KeyEquivalent(Character(String(index + 1))))

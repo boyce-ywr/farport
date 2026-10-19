@@ -14,7 +14,11 @@ final class AppStore: ObservableObject {
     @Published var transfers: [TransferJob] = []
     @Published var errorMessage: String?
     @Published var tunnels: [TunnelSession] = []
+    @Published var screenSharingSessions: [ScreenSharingSession] = []
     @Published var fileClipboard: [FileEndpoint] = []
+    @Published var workspaceTools = WorkspaceToolsState()
+    private var toolsSave: Task<Void, Never>?
+    private var toolsWritable = true
     @Published var automaticallyInsertAttachments = UserDefaults.standard.object(forKey: "automaticallyInsertAttachments") as? Bool ?? true {
         didSet { UserDefaults.standard.set(automaticallyInsertAttachments, forKey: "automaticallyInsertAttachments") }
     }
@@ -46,12 +50,18 @@ final class AppStore: ObservableObject {
 
     init() throws {
         let custom = ProcessInfo.processInfo.environment["SWB_HOME"]
-        isTestWorkspace = custom != nil
-        let root = custom.map { URL(fileURLWithPath: $0) } ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("SSH Workbench")
+        let preview = Bundle.main.bundleIdentifier == "local.sshworkbench.preview"
+        isTestWorkspace = custom != nil || preview
+        let root = custom.map { URL(fileURLWithPath: $0) } ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent(preview ? "Farport Preview" : "SSH Workbench")
         paths = try ApplicationPaths(root: root)
         let bundled = Bundle.main.bundleURL.appendingPathComponent("Contents/MacOS/workbench-askpass").path
         let sibling = URL(fileURLWithPath: CommandLine.arguments[0]).deletingLastPathComponent().appendingPathComponent("workbench-askpass").path
         transport = SSHTransport(paths: paths, askpass: FileManager.default.isExecutableFile(atPath: bundled) ? bundled : sibling)
+        let toolsURL = paths.root.appendingPathComponent("workspace-tools.json")
+        if FileManager.default.fileExists(atPath: toolsURL.path) {
+            do { workspaceTools = try paths.load(WorkspaceToolsState.self, from: toolsURL) }
+            catch { toolsWritable = false; errorMessage = L10n.text("无法读取工作工具记录；原文件未修改，请先检查数据目录。") }
+        }
         if FileManager.default.fileExists(atPath: paths.hosts.path) { hosts = try paths.load([HostProfile].self, from: paths.hosts) }
         if FileManager.default.fileExists(atPath: paths.transfers.path) {
             transfers = try paths.load([TransferJob].self, from: paths.transfers).map { original in
@@ -162,11 +172,26 @@ final class AppStore: ObservableObject {
         }
     }
     func prepareToQuit() {
+        flushWorkspaceTools()
         previewServers.forEach { $0.stop() }; previewServers.removeAll()
         tunnels.forEach { $0.stop() }
+        screenSharingSessions.forEach { $0.stop() }
         active.values.forEach { $0.cancel() }
         for index in transfers.indices where transfers[index].status == .running || transfers[index].status == .queued { transfers[index].status = .paused }
         persistTransfers(force: true); persistence.sync {}
+    }
+    func saveWorkspaceTools() {
+        toolsSave?.cancel()
+        toolsSave = Task { [weak self] in
+            do { try await Task.sleep(for: .milliseconds(300)) } catch { return }
+            self?.flushWorkspaceTools()
+        }
+    }
+    @discardableResult func flushWorkspaceTools() -> Bool {
+        toolsSave?.cancel(); toolsSave = nil
+        guard toolsWritable else { errorMessage = L10n.text("无法读取工作工具记录；原文件未修改，请先检查数据目录。"); return false }
+        do { try paths.save(workspaceTools, to: paths.root.appendingPathComponent("workspace-tools.json")); return true }
+        catch { errorMessage = error.localizedDescription; return false }
     }
     func savePreferences() {
         UserDefaults.standard.set(fontSize, forKey: "fontSize"); UserDefaults.standard.set(fontName, forKey: "fontName"); UserDefaults.standard.set(appearance, forKey: "appearance")
