@@ -25,8 +25,9 @@ enum MonitorProcessSortChecks {
                     let point = header.convert(NSPoint(x: rect.midX, y: rect.midY), to: nil)
                     for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
                         guard let event = NSEvent.mouseEvent(with: type, location: point, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber, context: nil, eventNumber: click, clickCount: 1, pressure: 1) else { throw WorkbenchError.message("不能创建表头点击事件") }
-                        NSApp.postEvent(event, atStart: false); try await Task.sleep(for: .milliseconds(80))
+                        NSApp.postEvent(event, atStart: false)
                     }
+                    try await Task.sleep(for: .milliseconds(160))
                     guard click == 3 ? model.processSort.column == nil : (model.processSort.column == column && model.processSort.descending == (click == 2)) else { throw WorkbenchError.message("表头\(column)第\(click)次点击状态错误") }
                     let order = click == 1 ? SortOrder.forward : .reverse
                     let expected = snapshot.processes.sorted(using: MonitorProcessComparator(column: click == 3 ? .cpu : column, order: order)).map(\.id)
