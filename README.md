@@ -6,6 +6,8 @@
 
 macOS 14+ · Apple Silicon / Intel · [MIT 开源](LICENSE)
 
+**预发布测试：** [0.1.11 ARM64 预发布](docs/releases/0.1.11.md) 使用独立的 `Farport Preview.app` 和配置目录，可与稳定版并存，不自动迁移旧版主机配置。默认下载入口仍指向稳定版。
+
 ![Farport：同一标签内连接两台主机，左右分栏操作](docs/images/terminal.png)
 
 ## 能做什么

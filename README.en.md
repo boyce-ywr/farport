@@ -6,6 +6,8 @@
 
 macOS 14+ · Apple Silicon / Intel · [MIT license](LICENSE)
 
+**Preview testing:** The [0.1.11 ARM64 prerelease](docs/releases/0.1.11.md) uses `Farport Preview.app` and a separate configuration directory. It can coexist with the stable app and does not automatically migrate saved hosts. The default download link still points to the stable release.
+
 ![Two SSH hosts in a split terminal tab](docs/images/terminal.png)
 
 ## What you can do
