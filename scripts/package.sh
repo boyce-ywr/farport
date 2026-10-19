@@ -3,8 +3,19 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 configuration=release
 architectures=(arm64 x86_64)
-if [ "${1:-}" = "--debug" ]; then configuration=debug; architectures=("$(uname -m)"); fi
-if [ "${1:-}" = "--arm64-only" ]; then architectures=(arm64); fi
+preview=false
+for argument in "$@"; do
+  case "$argument" in
+    --debug) configuration=debug; architectures=("$(uname -m)") ;;
+    --arm64-only) architectures=(arm64) ;;
+    --preview) preview=true ;;
+    *) echo "用法：$0 [--debug] [--arm64-only] [--preview]" >&2; exit 2 ;;
+  esac
+done
+appName=Farport
+outputRoot="$PWD/dist"
+variant=""
+if [ "$preview" = true ]; then appName="Farport Preview"; outputRoot="$PWD/dist/preview"; variant="-preview"; fi
 if nc -z -w 1 127.0.0.1 7897 2>/dev/null; then
   export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.proxy GIT_CONFIG_VALUE_0=http://127.0.0.1:7897
 fi
@@ -17,17 +28,23 @@ for architecture in "${architectures[@]}"; do
   fi
 done
 version=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' Resources/Info.plist)
-mkdir -p .build/AppIcon.iconset dist
+archiveBase="Farport-$version$variant"
+mkdir -p .build/AppIcon.iconset "$outputRoot"
 swift scripts/icon.swift "$PWD/.build/AppIcon.iconset"
 iconutil -c icns .build/AppIcon.iconset -o .build/AppIcon.icns
 artifacts=()
 packages=("${architectures[@]}")
 if [ "${#architectures[@]}" -eq 2 ]; then packages+=(universal); fi
 for architecture in "${packages[@]}"; do
-app="$PWD/dist/$architecture/Farport.app"
+app="$outputRoot/$architecture/$appName.app"
 if [ -d "$app" ]; then rm -rf "$app"; fi
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources/ThirdParty"
 cp Resources/Info.plist "$app/Contents/Info.plist"
+if [ "$preview" = true ]; then
+  /usr/libexec/PlistBuddy -c 'Set :CFBundleName Farport Preview' "$app/Contents/Info.plist"
+  /usr/libexec/PlistBuddy -c 'Set :CFBundleDisplayName 栖远 Farport 预览' "$app/Contents/Info.plist"
+  /usr/libexec/PlistBuddy -c 'Set :CFBundleIdentifier local.sshworkbench.preview' "$app/Contents/Info.plist"
+fi
 install -m 644 LICENSE "$app/Contents/Resources/LICENSE.txt"
 cp .build/AppIcon.icns "$app/Contents/Resources/AppIcon.icns"
 for executable in SSHWorkbench workbench-askpass; do
@@ -53,22 +70,22 @@ plutil -lint "$app/Contents/Info.plist"
 lipo -info "$app/Contents/MacOS/SSHWorkbench"
 if [ "$configuration" = "release" ]; then
   suffix="$architecture"
-  archive="$PWD/dist/Farport-$version-$suffix.zip"
+  archive="$outputRoot/$archiveBase-$suffix.zip"
   ditto -c -k --sequesterRsrc --keepParent "$app" "$archive"
-  staging="$PWD/.build/dmg-staging-$architecture"
+  staging="$PWD/.build/dmg-staging$variant-$architecture"
   mkdir -p "$staging"
   if [ -d "$staging/SSH Workbench.app" ]; then rm -rf "$staging/SSH Workbench.app"; fi
-  if [ -d "$staging/Farport.app" ]; then rm -rf "$staging/Farport.app"; fi
-  cp -R "$app" "$staging/Farport.app"
+  if [ -d "$staging/$appName.app" ]; then rm -rf "$staging/$appName.app"; fi
+  cp -R "$app" "$staging/$appName.app"
   ln -sfn /Applications "$staging/Applications"
-  hdiutil create -volname "Farport" -srcfolder "$staging" -ov -format UDZO "$PWD/dist/Farport-$version-$suffix.dmg"
-  artifacts+=("Farport-$version-$suffix.dmg" "Farport-$version-$suffix.zip")
+  hdiutil create -volname "$appName" -srcfolder "$staging" -ov -format UDZO "$outputRoot/$archiveBase-$suffix.dmg"
+  artifacts+=("$archiveBase-$suffix.dmg" "$archiveBase-$suffix.zip")
 fi
 printf '\n应用已生成：%s\n' "$app"
 done
 native="$(uname -m)"
-if [ -d "dist/$native/Farport.app" ]; then
-  if [ -d dist/Farport.app ]; then rm -rf dist/Farport.app; fi
-  ditto "dist/$native/Farport.app" dist/Farport.app
+if [ -d "$outputRoot/$native/$appName.app" ]; then
+  if [ -d "$outputRoot/$appName.app" ]; then rm -rf "$outputRoot/$appName.app"; fi
+  ditto "$outputRoot/$native/$appName.app" "$outputRoot/$appName.app"
 fi
-if [ "${#artifacts[@]}" -gt 0 ]; then (cd dist && shasum -a 256 "${artifacts[@]}" > "Farport-$version-SHA256SUMS"); fi
+if [ "${#artifacts[@]}" -gt 0 ]; then (cd "$outputRoot" && shasum -a 256 "${artifacts[@]}" > "$archiveBase-SHA256SUMS"); fi

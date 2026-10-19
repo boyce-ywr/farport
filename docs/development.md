@@ -21,6 +21,16 @@ bash scripts/package.sh
 
 输出 `dist/Farport-<版本>-arm64.dmg`、`-x86_64.dmg`、`-universal.dmg`，以及各自 ZIP 和 SHA-256 清单。`dist/Farport.app` 是当前机器架构的副本。自有代码的 MIT 许可证和第三方声明会随新构建包提供。
 
+独立预发布构建：
+
+```bash
+python3 scripts/check-package-layout.py
+bash scripts/package.sh --preview --arm64-only
+open "dist/preview/Farport Preview.app"
+```
+
+预览包与正式包共用 `Resources/Info.plist` 的版本号，仅在输出副本中设置预览身份。应用名称为 `Farport Preview.app`，Bundle ID 为 `local.sshworkbench.preview`，文件输出在 `dist/preview/`，不会覆盖 `dist/Farport.app` 或正式版打包目录。ZIP/DMG 使用 `Farport-<版本>-preview-<架构>` 文件名，预发布不得设为 GitHub Latest。布局检查使用构建工具夹具，只验证打包规则，不替代真实构建、签名和安装启动验收。
+
 当前 CLT 环境使用 `--build-system native`。Intel 构建还需要脚本中的运行时兼容参数，不建议手动删掉；原因见 [构建兼容记录](issues/2026-10-13-命令行工具链构建兼容.md) 和 [Intel 链接记录](issues/2026-10-13-Intel兼容库链接.md)。
 
 脚本在检测到本机 `127.0.0.1:7897` 代理时，仅为本次 Git 网络请求启用它，不修改全局配置。生产分发目前使用 ad-hoc 签名；Developer ID 签名和 Apple 公证尚未完成。
