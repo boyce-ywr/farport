@@ -42,8 +42,13 @@ enum AttachmentAutoInsertChecks {
             let transport = store.transport
             let receivedPath = host == nil ? store.paths.root.appendingPathComponent("attachment-input-\(UUID().uuidString)").path : "/tmp/farport-attachment-input-\(UUID().uuidString)"
             defer { let client = try? transport.files(host); try? client?.removeRecursively(receivedPath); client?.close() }
-            session.terminal.send(txt: "stty -echo -icanon; cat > \(RemotePath.quote(receivedPath))\n")
-            try await Task.sleep(for: .milliseconds(300))
+            let readySuffix = UUID().uuidString
+            session.terminal.send(txt: "stty -echo -icanon; : > \(RemotePath.quote(receivedPath)); printf '\\n%s%s\\n' 'FARPORT_ATTACHMENT_' '\(readySuffix)'; cat >> \(RemotePath.quote(receivedPath))\n")
+            try await wait {
+                let terminal = session.terminal.getTerminal()
+                return (0..<terminal.rows).contains { terminal.getLine(row: $0)?.translateToString(trimRight: true, skipNullCellsFollowingWide: true).trimmingCharacters(in: .whitespaces) == "FARPORT_ATTACHMENT_" + readySuffix }
+            }
+            print("PASS · \(host == nil ? "本机" : "隔离 SSH") 附件接收器已实际启动，开始发送剪贴板内容")
             clipboard.clearContents(); clipboard.setString("FARPORT_PASTE_TEXT", forType: .string)
             let before = session.inputGeneration
             try paste(session.terminal)
@@ -107,6 +112,7 @@ enum AttachmentAutoInsertChecks {
                     }
                 }
                 focusSubscription?.cancel(); temporaryWindow?.orderOut(nil)
+                print("PASS · \(host == nil ? "本机" : "隔离 SSH") 附件案例 \(kind)")
                 await draft.deleteUploaded(); draft.dispose(); workspace.attachmentDraft = nil
                 if kind == "switch", let other = workspace.selectedTerminal, other !== session { workspace.close(other); workspace.selectTerminal(session) }
             }
@@ -118,7 +124,7 @@ enum AttachmentAutoInsertChecks {
             let name = "farport-autopaste-" + UUID().uuidString
             try service.create(name: name)
             defer { try? service.kill(session: name) }
-            let command = "stty -echo; printf 'FARPORT_WAITING'; IFS= read -r line; printf '\\nFARPORT_UNEXPECTED_ENTER\\n'"
+            let command = "stty -echo; printf 'FARPORT_WAITING'; IFS= read -r line; printf '\\nFARPORT_ATTACHMENT_RECEIVED\\n%s\\n' \"$line\"; sleep 5"
             _ = try service.execute("respawn-pane -k -t \(RemotePath.quote(name)) \(RemotePath.quote(command))").checked()
             guard let tmux = try service.sessions().first(where: { $0.name == name }) else { throw WorkbenchError.message("tmux 附件测试会话未创建") }
             workspace.attachTmux(host, session: tmux)
@@ -133,12 +139,18 @@ enum AttachmentAutoInsertChecks {
             guard let draft = workspace.attachmentDraft else { throw WorkbenchError.message("tmux 粘贴没有创建附件") }
             session.terminal.feed(text: "\u{1b}[6n\u{1b}[c")
             try await wait { draft.inserted || draft.failure != nil }
-            guard draft.inserted, draft.target != nil else { throw WorkbenchError.message(draft.failure ?? "tmux 附件未自动插入") }
+            guard draft.inserted, draft.target != nil, let uploaded = draft.result else { throw WorkbenchError.message(draft.failure ?? "tmux 附件未自动插入") }
             try await Task.sleep(for: .milliseconds(250))
-            guard try !service.execute("capture-pane -p -t \(RemotePath.quote(name))").checked().text.contains("FARPORT_UNEXPECTED_ENTER") else { throw WorkbenchError.message("tmux 自动插入错误发送了回车") }
+            guard try !service.execute("capture-pane -p -t \(RemotePath.quote(name))").checked().text.contains("FARPORT_ATTACHMENT_RECEIVED") else { throw WorkbenchError.message("tmux 自动插入错误发送了回车") }
+            _ = try service.execute("send-keys -t \(RemotePath.quote(name)) Enter").checked()
+            let reference = try AttachmentReference.text(paths: uploaded.paths).trimmingCharacters(in: .whitespacesAndNewlines)
+            try await wait {
+                guard let received = try? service.execute("capture-pane -p -J -t \(RemotePath.quote(name))").checked().text else { return false }
+                return received.contains("FARPORT_ATTACHMENT_RECEIVED") && received.components(separatedBy: reference).count == 2
+            }
             await draft.deleteUploaded(); draft.dispose(); workspace.attachmentDraft = nil
             workspace.close(session)
-            print("PASS · \(host == nil ? "本机" : "隔离 SSH") tmux Cmd+V 自动插入原窗格，未自动回车")
+            print("PASS · \(host == nil ? "本机" : "隔离 SSH") tmux Cmd+V 原窗格实际收到一次路径，只有测试主动回车才提交")
         }
     }
     private static func paste(_ terminal: SafeTerminalView) throws {
