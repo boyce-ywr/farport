@@ -10,7 +10,7 @@ enum LocalTerminalChecks {
         workspace.openLocalTerminal()
         guard let local = workspace.selectedTerminal, local.isLocal else { throw WorkbenchError.message("未创建本机终端") }
         try await wait("本机 Shell 未启动") { local.connected && local.terminal.process.running }
-        local.terminal.send(txt: "if [ -t 0 ] && [ -t 1 ]; then printf '\\n%s%s\\n' 'FARPORT_' 'LOCAL_PTY_OK'; fi; case $- in *i*) printf '%s%s\\n' 'FARPORT_' 'INTERACTIVE_OK';; esac; case \"$0\" in -*) printf '%s%s\\n' 'FARPORT_' 'LOGIN_OK';; esac; if [ \"$PWD\" = \"$HOME\" ]; then printf '%s%s\\n' 'FARPORT_' 'HOME_OK'; fi; printf '%s%s\\n' '中文输入输出' '验证'; if [ \"$TERM\" = 'xterm-256color' ]; then printf '%s%s\\n' 'FARPORT_' 'TERM_OK'; fi\n")
+        local.terminal.send(txt: "if [ -t 0 ] && [ -t 1 ]; then printf '\\n%s%s\\n' 'FARPORT_' 'LOCAL_PTY_OK'; fi; case $- in *i*) printf '%s%s\\n' 'FARPORT_' 'INTERACTIVE_OK';; esac; case \"$0\" in -*) printf '%s%s\\n' 'FARPORT_' 'LOGIN_OK';; esac; if [ \"$(/bin/pwd -P)\" = \"$(cd -- \"$HOME\" && /bin/pwd -P)\" ]; then printf '%s%s\\n' 'FARPORT_' 'HOME_OK'; fi; printf '%s%s\\n' '中文输入输出' '验证'; if [ \"$TERM\" = 'xterm-256color' ]; then printf '%s%s\\n' 'FARPORT_' 'TERM_OK'; fi\n")
         for marker in ["FARPORT_LOCAL_PTY_OK", "FARPORT_INTERACTIVE_OK", "FARPORT_LOGIN_OK", "FARPORT_HOME_OK", "FARPORT_TERM_OK", "中文输入输出验证"] {
             try await wait("本机终端未返回预期标记：\(marker)") { hasLine(marker, session: local) }
         }

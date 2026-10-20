@@ -16,6 +16,7 @@ func rejects(_ message: String, _ operation: () throws -> Void) throws {
 }
 
 do {
+    if CommandLine.arguments.contains("--local-tmux-directory-check") { try checkLocalTmuxDirectory(); exit(0) }
     try checkFileEndpointSnapshots()
     if CommandLine.arguments.contains("--file-endpoint-check") { print("PASS · \(checks) 项文件引用与主机身份断言"); exit(0) }
     try checkConnectionRecovery()
@@ -153,6 +154,14 @@ do {
     let temporaryRoot = FileManager.default.temporaryDirectory.appendingPathComponent("farport-core-" + UUID().uuidString)
     let paths = try ApplicationPaths(root: temporaryRoot)
     defer { try? FileManager.default.removeItem(at: temporaryRoot); try? FileManager.default.removeItem(at: paths.sockets) }
+    let processDirectory = temporaryRoot.appendingPathComponent("中文 空格 ' $;目录")
+    try FileManager.default.createDirectory(at: processDirectory, withIntermediateDirectories: true)
+    try Data("cwd-not-environment".utf8).write(to: processDirectory.appendingPathComponent("cwd-check.txt"))
+    let parentDirectory = FileManager.default.currentDirectoryPath
+    let processResult = try ProcessRunner.run(executable: "/bin/cat", arguments: ["cwd-check.txt"], environment: ["HOME": "/", "PWD": "/"], currentDirectory: processDirectory).checked()
+    try expect(processResult.text == "cwd-not-environment", "子进程真实工作目录不依赖HOME/PWD，支持空格和特殊字符")
+    try expect(FileManager.default.currentDirectoryPath == parentDirectory, "设置子进程目录不改变应用全局目录")
+    try rejects("无效工作目录不能退回应用目录启动") { _ = try ProcessRunner.run(executable: "/bin/pwd", arguments: [], currentDirectory: processDirectory.appendingPathComponent("missing")) }
     let shell = try LocalShellConfiguration(shell: "/bin/zsh", home: temporaryRoot, inheritedEnvironment: [
         "PATH": "/example/bin:/usr/bin:/bin", "LANG": "zh_CN.UTF-8", "TERM": "dumb", "HOME": "/incorrect",
         "SHELL": "/bin/false", "SWB_CREDENTIAL_ACCOUNT": "fixture", "SWB_QA_OUTPUT": "fixture.png",

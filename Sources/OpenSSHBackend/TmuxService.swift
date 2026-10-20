@@ -29,9 +29,11 @@ public struct TmuxService: Sendable {
             try transport.requirePosixShell(host, cancellation: cancellation)
             return try transport.run(host, command: RemoteTmuxCommand.wrap(command), cancellation: cancellation)
         }
-        var environment = try LocalShellConfiguration().environment
+        let configuration = try LocalShellConfiguration()
+        var environment = configuration.environment
         environment.removeValue(forKey: "TMUX"); environment.removeValue(forKey: "TMUX_PANE")
-        return try ProcessRunner.run(executable: "/bin/sh", arguments: ["-c", command], environment: environment, cancellation: cancellation)
+        return try ProcessRunner.run(executable: "/bin/sh", arguments: ["-c", command], environment: environment, cancellation: cancellation,
+                                     currentDirectory: URL(fileURLWithPath: configuration.directory))
     }
     public func sessions() throws -> [TmuxSession] {
         let result = try execute("list-sessions -F '#{session_id}\t#{session_name}\t#{session_windows}\t#{session_attached}\t#{session_created}'")
@@ -60,14 +62,20 @@ public struct TmuxService: Sendable {
         _ = try execute("rename-session -t \(RemotePath.quote(session)) \(RemotePath.quote(name))").checked()
     }
     public func kill(session: String) throws { _ = try execute("kill-session -t \(RemotePath.quote(session))").checked() }
-    public func createWindow(session: String) throws { _ = try execute("new-window -t \(RemotePath.quote(session))").checked() }
+    public func createWindow(session: String) throws {
+        let directory = host == nil ? " -c '#{pane_current_path}'" : ""
+        _ = try execute("new-window -t \(RemotePath.quote(session))" + directory).checked()
+    }
     public func mouseEnabled(session: String) throws -> Bool {
         try execute("show-options -v -t \(RemotePath.quote(session)) mouse").checked().text.trimmingCharacters(in: .whitespacesAndNewlines) == "on"
     }
     public func enableMouse(session: String) throws {
         _ = try execute("set-option -t \(RemotePath.quote(session)) mouse on").checked()
     }
-    public func split(pane: String) throws { _ = try execute("split-window -h -t \(RemotePath.quote(pane))").checked() }
+    public func split(pane: String) throws {
+        let directory = host == nil ? " -c '#{pane_current_path}'" : ""
+        _ = try execute("split-window -h -t \(RemotePath.quote(pane))" + directory).checked()
+    }
     public func select(pane: TmuxPane) throws {
         _ = try execute("select-window -t \(RemotePath.quote(pane.windowID)) \\; select-pane -t \(RemotePath.quote(pane.id))").checked()
     }

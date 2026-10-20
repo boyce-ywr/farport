@@ -63,10 +63,11 @@ final class CapturedOutput: @unchecked Sendable {
 public enum ProcessRunner {
     public static func run(executable: String, arguments: [String], environment: [String: String]? = nil,
                            cancellation: CancellationFlag = CancellationFlag(), timeout: TimeInterval = 45,
-                           outputLimit: Int = 8 * 1024 * 1024, input: Data? = nil) throws -> CommandResult {
+                           outputLimit: Int = 8 * 1024 * 1024, input: Data? = nil, currentDirectory: URL? = nil) throws -> CommandResult {
         try cancellation.check()
         let process = Process(); process.executableURL = URL(fileURLWithPath: executable); process.arguments = arguments
         if let environment { process.environment = environment }
+        if let currentDirectory { process.currentDirectoryURL = currentDirectory }
         let output = Pipe(); let error = Pipe()
         let inputPipe = input == nil ? nil : Pipe()
         process.standardOutput = output; process.standardError = error; process.standardInput = inputPipe ?? FileHandle.nullDevice as Any

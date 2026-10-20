@@ -30,6 +30,8 @@ Haven 仅作为需求参考；未引入 Android Context、Service、Compose 或 
 
 0.1.2 的本机终端不保存伪 SSH 主机：`TerminalSession.host == nil` 明确表示本机进程。现有 macOS 适配模块中的 `LocalShellConfiguration` 从系统账户读取 Shell，检查可执行文件和主目录，设置登录进程名与终端环境。相同 `TerminalSurface` 处理本机/远端的渲染与输入，`TerminalLayout` 的窗格/焦点逻辑不按连接类型分叉。SSH 认证提示和应用内部测试变量不会传递给本机 Shell，用户的 PATH、locale、SSH Agent 等正常环境仍保留。
 
+本机 tmux 管理命令同样显式设置子进程的真实工作目录为 `LocalShellConfiguration.directory`；仅设置 `HOME` / `PWD` 不能替代进程目录。`ProcessRunner` 的可选 `currentDirectory` 仅影响该子进程，不修改应用全局 cwd。新建本机 tmux 窗口/分割窗格使用目标 `pane_current_path`；远端命令与重新附着旧会话不改变目录语义。
+
 0.1.3：`FileBrowserSource` 将文件来源与终端布局分离，Workspace 缓存每个来源的 `FileModel`，`SessionTabs` 同时显示在终端与文件页。`AttachmentUploader` 只负责源→目标复制和实际回读；`TerminalAttachmentDraft` 管理图片暂存、目标确认、身份快照和插入许可。`AttachmentDeliveryIdentity` 把连接、会话、窗口焦点、输入世代纳入比较。tmux 复用同一服务，但本机调用已有二进制，远端走 OpenSSH；定向粘贴使用一次性 tmux buffer，不修改全局配置。
 
 ## 关键约束
