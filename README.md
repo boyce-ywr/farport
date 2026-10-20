@@ -69,13 +69,13 @@ HTML 报告也能在浏览器打开。Farport 在 Mac 本机提供临时访问�
 
 **旧版 0.1.8 构建 9 用户请更新**：当前版本包含预览服务闪退修复。
 
-从 [GitHub Releases](https://github.com/boyce-ywr/farport/releases/latest) 下载稳定版。**当前正式版为 0.1.12（16）**，包含文件分栏、跨主机复制粘贴、连接恢复和此前预览改进；验证范围及已知边界见 [版本说明](docs/releases/0.1.12.md)。
+从 [GitHub Releases](https://github.com/boyce-ywr/farport/releases/latest) 下载稳定版。**当前正式版为 0.1.13（18）**，包含本机 tmux 主目录修复、Docker 容器附件以及文件分栏与连接恢复；验证范围及已知边界见 [版本说明](docs/releases/0.1.13.md)。
 
 | 你的 Mac | 下载 |
 | --- | --- |
-| Apple Silicon（M 系列） | [Apple Silicon 版](https://github.com/boyce-ywr/farport/releases/download/v0.1.12/Farport-0.1.12-arm64.dmg) |
-| Intel 芯片 | [Intel 版](https://github.com/boyce-ywr/farport/releases/download/v0.1.12/Farport-0.1.12-x86_64.dmg) |
-| 不确定芯片，或需要两种架构 | [Universal 通用版](https://github.com/boyce-ywr/farport/releases/download/v0.1.12/Farport-0.1.12-universal.dmg) |
+| Apple Silicon（M 系列） | [Apple Silicon 版](https://github.com/boyce-ywr/farport/releases/download/v0.1.13/Farport-0.1.13-arm64.dmg) |
+| Intel 芯片 | [Intel 版](https://github.com/boyce-ywr/farport/releases/download/v0.1.13/Farport-0.1.13-x86_64.dmg) |
+| 不确定芯片，或需要两种架构 | [Universal 通用版](https://github.com/boyce-ywr/farport/releases/download/v0.1.13/Farport-0.1.13-universal.dmg) |
 
 1. 打开 DMG，将 **Farport.app** 拖入 **Applications（应用程序）**。
 2. 从“应用程序”打开 Farport。升级前请先保存工作并退出旧版。
