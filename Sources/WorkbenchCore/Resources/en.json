@@ -943,5 +943,7 @@
   "已取消容器选择，未发送附件。": "Container selection cancelled. No attachments were sent.",
   "附件位于已确认容器的私有目录，使用已核对用户读回验证。绑定仅在当前 Docker 进程与容器未变化时复用；容器内再 SSH 或切换用户不会自动穿透。": "Attachments are in a private directory inside the confirmed container and verified as the receiving user. The binding is reused only while the Docker process and container remain unchanged. Nested SSH or user switching inside the container is not handled automatically.",
   "仅支持本机 tmux 中直接运行的 docker exec -it 或 docker attach；请使用实际容器连接。": "Only direct docker exec -it or docker attach in local tmux is supported. Use the actual container connection.",
-  "Docker 默认 context 配置在进入容器后发生变化，请显式指定 --context 重新连接容器。": "The default Docker context configuration changed after entering the container. Reconnect with an explicit --context."
+  "Docker 默认 context 配置在进入容器后发生变化，请显式指定 --context 重新连接容器。": "The default Docker context configuration changed after entering the container. Reconnect with an explicit --context.",
+  "容器附件仅支持本机 Unix socket；TCP、SSH 或无效 Docker 地址不会接收附件。": "Container attachments only support local Unix sockets. TCP, SSH, or invalid Docker endpoints will not receive attachments.",
+  "Docker 连接：{0} · 原窗格：{1}": "Docker connection: {0} · Original pane: {1}"
 }

@@ -13,8 +13,8 @@ struct ContainerAttachmentPicker: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             Text(L10n.text("选择目标容器")).font(.headline)
-            Text(L10n.text("Docker context：\(selection.daemon.context) · 原窗格：\(selection.terminal.target.paneID)"))
-                .font(.caption).foregroundStyle(.secondary)
+            Text(L10n.text("Docker 连接：\(selection.daemon.connectionDescription) · 原窗格：\(selection.terminal.target.paneID)"))
+                .font(.caption).foregroundStyle(.secondary).lineLimit(2).textSelection(.enabled)
             Text(L10n.text("只允许选择已核对为原窗格目标的容器。按该 docker exec 用户或容器配置用户复制，不提权、不自动回车。"))
                 .font(.caption).fixedSize(horizontal: false, vertical: true)
             List(selection.containers, selection: $selectedID) { container in

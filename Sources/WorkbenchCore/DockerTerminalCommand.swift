@@ -4,19 +4,38 @@ public struct DockerTerminalCommand: Equatable, Sendable {
     public let container: String
     public let user: String?
     public let context: String?
+    public let host: String?
     public let attachesExistingProcess: Bool
+    public var connectionArguments: [String] {
+        if let context { return ["--context", context] }
+        if let host { return ["--host", host] }
+        return []
+    }
 
     public init(arguments: [String]) throws {
         func unsupported() -> Error { WorkbenchError.message(L10n.text("仅支持本机 tmux 中直接运行的 docker exec -it 或 docker attach；请使用实际容器连接。")) }
         guard arguments.count >= 3, (arguments[0] as NSString).lastPathComponent == "docker" else { throw unsupported() }
         var index = 1
         var context: String?
-        if arguments[index] == "--context" || arguments[index] == "-c" {
-            guard arguments.count > index + 2 else { throw unsupported() }
-            context = arguments[index + 1]; index += 2
-        } else if arguments[index].hasPrefix("--context=") {
-            context = String(arguments[index].dropFirst(10)); index += 1
+        var host: String?
+        while index < arguments.count, arguments[index].hasPrefix("-") {
+            let option = arguments[index]; index += 1
+            if ["--context", "-c", "--host", "-H"].contains(option) {
+                guard index < arguments.count else { throw unsupported() }
+                if option == "--context" || option == "-c" {
+                    guard context == nil else { throw unsupported() }; context = arguments[index]
+                } else {
+                    guard host == nil else { throw unsupported() }; host = arguments[index]
+                }
+                index += 1
+            } else if option.hasPrefix("--context=") || (option.hasPrefix("-c") && !option.hasPrefix("--")) {
+                guard context == nil else { throw unsupported() }; context = String(option.dropFirst(option.hasPrefix("--") ? 10 : 2))
+            } else if option.hasPrefix("--host=") || (option.hasPrefix("-H") && !option.hasPrefix("--")) {
+                guard host == nil else { throw unsupported() }; host = String(option.dropFirst(option.hasPrefix("--") ? 7 : 2))
+            } else { throw unsupported() }
         }
+        guard context == nil || host == nil, context?.isEmpty != true, host?.isEmpty != true else { throw unsupported() }
+        if let host { try DockerUnixEndpoint.validate(host) }
         guard index < arguments.count else { throw unsupported() }
         if arguments[index] == "container" { index += 1 }
         guard index < arguments.count, ["exec", "attach"].contains(arguments[index]) else { throw unsupported() }
@@ -53,6 +72,6 @@ public struct DockerTerminalCommand: Equatable, Sendable {
             let command = (arguments[index + 1] as NSString).lastPathComponent
             guard !["ssh", "mosh", "docker", "podman", "su", "sudo"].contains(command) else { throw unsupported() }
         }
-        self.container = container; self.user = user; self.context = context; attachesExistingProcess = operation == "attach"
+        self.container = container; self.user = user; self.context = context; self.host = host; attachesExistingProcess = operation == "attach"
     }
 }

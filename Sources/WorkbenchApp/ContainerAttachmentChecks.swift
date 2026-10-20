@@ -27,7 +27,13 @@ enum ContainerAttachmentChecks {
         }
         store.automaticallyInsertAttachments = interactive
         let receiver = "stty -echo; printf 'FARPORT_CONTAINER_READY'; for index in 1 2; do IFS= read -r line; printf '\\nFARPORT_RECEIVED_%s\\n%s\\n' \"$index\" \"$line\"; done; sleep 60"
-        let command = [executable, "exec", "-it", "--user", "tester", identifier, "sh", "-c", receiver].map(RemotePath.quote).joined(separator: " ")
+        var launch = [executable, "exec", "-it", "--user", "tester", identifier, "sh", "-c", receiver]
+        if environment["SWB_QA_DOCKER_ENDPOINT_MODE"] == "host" {
+            let endpoint = try ProcessRunner.run(executable: executable, arguments: ["context", "inspect", "--format", "{{.Endpoints.docker.Host}}"] ).checked().text.trimmingCharacters(in: .whitespacesAndNewlines)
+            try DockerUnixEndpoint.validate(endpoint)
+            launch = ["/usr/bin/env", "-u", "DOCKER_CONTEXT", "DOCKER_HOST=" + endpoint] + launch
+        }
+        let command = launch.map(RemotePath.quote).joined(separator: " ")
         _ = try service.execute("respawn-pane -k -t \(RemotePath.quote(name)) \(RemotePath.quote(command))").checked()
         guard let tmux = try service.sessions().first(where: { $0.name == name }) else { throw WorkbenchError.message("没有容器测试会话") }
         workspace.attachTmux(nil, session: tmux)

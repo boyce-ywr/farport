@@ -9,6 +9,20 @@ func checkDockerTerminalCommands() throws {
     try expect(attached.user == nil && attached.container == "test", "attach使用容器配置用户")
     let compact = try DockerTerminalCommand(arguments: ["docker", "container", "exec", "-ti", "-utester", "--workdir=/tmp", "test", "sh"])
     try expect(compact.user == "tester", "Docker选项紧凑写法")
+    for flags in [["-H", "unix:///tmp/docker.sock"], ["--host=unix:///tmp/docker.sock"], ["-Hunix:///tmp/docker.sock"]] {
+        let direct = try DockerTerminalCommand(arguments: ["docker"] + flags + ["exec", "-it", "test", "sh"])
+        try expect(direct.connectionArguments == ["--host", "unix:///tmp/docker.sock"], "本机Unix socket显式-H/--host参数")
+    }
+    for endpoint in ["unix:///tmp/docker.sock", "unix:///Users/example/.colima/default/docker.sock"] {
+        try DockerUnixEndpoint.validate(endpoint)
+        try expect(true, "本机Unix socket可用于容器附件")
+    }
+    for endpoint in ["tcp://localhost:2375", "ssh://host", "https://host", "/tmp/docker.sock", "unix://remote/tmp/docker.sock", "unix:///tmp/docker.sock?host=remote", "unix:///tmp/docker.sock#fragment", "unix:///", "unix:///tmp/bad\0", "unix:///tmp/%00", "unix://user@remote/tmp/docker.sock"] {
+        try rejects("不允许远程或畸形Docker地址") { try DockerUnixEndpoint.validate(endpoint) }
+    }
+    for flags in [["--context", "test", "--host", "unix:///tmp/docker.sock"], ["-H", "unix:///tmp/a", "-H", "unix:///tmp/b"], ["--host"], ["--host="], ["--context="]] {
+        try rejects("冲突或缺失的Docker全局参数") { _ = try DockerTerminalCommand(arguments: ["docker"] + flags + ["exec", "-it", "test", "sh"]) }
+    }
     for arguments in [["docker", "exec", "test", "sh"], ["docker", "exec", "-i", "test", "sh"], ["docker", "compose", "exec", "test", "sh"], ["docker", "--host", "tcp://host", "exec", "-it", "test", "sh"], ["docker", "run", "-it", "image"], ["docker", "exec", "-dit", "test", "sh"], ["docker", "exec", "-it", "--user"], ["docker", "exec", "-it", "test", "sudo", "sh"], ["docker", "exec", "-it", "../bad", "sh"], ["docker", "exec", "-it", "test"], ["docker", "attach", "--no-stdin", "test"]] {
         try rejects("不明确或不安全的Docker命令") { _ = try DockerTerminalCommand(arguments: arguments) }
     }
@@ -29,7 +43,15 @@ func checkDockerAttachments(arguments: [String]) throws {
     defer { _ = try? tmux.execute("kill-server"); try? FileManager.default.removeItem(at: root); try? FileManager.default.removeItem(at: paths.sockets) }
     _ = try ProcessRunner.run(executable: TmuxService.localExecutable(), arguments: ["-L", socket, "-f", "/dev/null", "new-session", "-d", "-s", "docker", "-x", "180", "-y", "40", "sleep 300"]).checked()
     let receiver = "stty -echo; printf 'FARPORT_CONTAINER_READY'; IFS= read -r line; printf '\\nFARPORT_CONTAINER_RECEIVED\\n%s\\n' \"$line\"; sleep 60"
-    let command = [executable, "exec", "-it", "--user", "tester", container, "sh", "-c", receiver].map(RemotePath.quote).joined(separator: " ")
+    var launch = [executable, "exec", "-it", "--user", "tester", container, "sh", "-c", receiver]
+    let endpointMode = ProcessInfo.processInfo.environment["SWB_QA_DOCKER_ENDPOINT_MODE"] ?? "context"
+    if endpointMode == "host" || endpointMode == "flag" {
+        let endpoint = try ProcessRunner.run(executable: executable, arguments: ["context", "inspect", "--format", "{{.Endpoints.docker.Host}}"] ).checked().text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard endpoint.hasPrefix("unix:///") else { throw WorkbenchError.message("测试仅允许本机Unix socket") }
+        if endpointMode == "host" { launch = ["/usr/bin/env", "-u", "DOCKER_CONTEXT", "DOCKER_HOST=" + endpoint] + launch }
+        else { launch.insert(contentsOf: ["--host", endpoint], at: 1) }
+    }
+    let command = launch.map(RemotePath.quote).joined(separator: " ")
     _ = try tmux.execute("respawn-pane -k -t docker \(RemotePath.quote(command))").checked()
     let deadline = Date().addingTimeInterval(10)
     while !(try tmux.execute("capture-pane -p -t docker").checked().text.contains("FARPORT_CONTAINER_READY")) {
@@ -38,6 +60,9 @@ func checkDockerAttachments(arguments: [String]) throws {
     let terminal = try tmux.localDockerTerminal(session: "docker")
     try rejects("未确认容器时原安全入口继续禁止docker") { _ = try tmux.target(session: "docker") }
     let selection = try DockerAttachmentDaemon.discover(terminal: terminal, cancellation: CancellationFlag())
+    if endpointMode == "host" || endpointMode == "flag" {
+        try expect(selection.daemon.endpoint.hasPrefix("unix:///") && selection.daemon.connectionDescription.hasPrefix("Unix socket"), "保留已识别Unix socket，不换到默认context")
+    }
     try expect(selection.detectedContainerID == container, "从真实前台Docker进程匹配容器ID")
     try rejects("不能选择另一个容器") { _ = try selection.daemon.confirm(other, terminal: terminal, cancellation: CancellationFlag()) }
     let binding = try selection.daemon.confirm(container, terminal: terminal, cancellation: CancellationFlag())

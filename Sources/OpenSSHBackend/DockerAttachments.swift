@@ -37,6 +37,8 @@ public struct DockerAttachmentDaemon: Equatable, Sendable {
     public let identifier: String
     private let executable: String
     private let environment: [String: String]
+    private let usesHost: Bool
+    public var connectionDescription: String { usesHost ? "Unix socket · " + endpoint : context }
     private static let containerFormat = "{\"id\":{{json .Id}},\"name\":{{json .Name}},\"user\":{{json .Config.User}},\"running\":{{json .State.Running}},\"paused\":{{json .State.Paused}},\"restarting\":{{json .State.Restarting}},\"started\":{{json .State.StartedAt}},\"restarts\":{{json .RestartCount}},\"terminal\":{{json .Config.Tty}},\"openInput\":{{json .Config.OpenStdin}}}"
 
     public static func discover(terminal: LocalDockerTerminal, cancellation: CancellationFlag) throws -> DockerAttachmentSelection {
@@ -46,10 +48,8 @@ public struct DockerAttachmentDaemon: Equatable, Sendable {
         if let configuration = environment["DOCKER_CONFIG"], !configuration.hasPrefix("/") {
             throw WorkbenchError.message(L10n.text("Docker context 无效，未发送附件。"))
         }
-        guard terminal.invocation.context != nil || environment["DOCKER_CONTEXT"]?.isEmpty == false || environment["DOCKER_HOST"]?.isEmpty != false else {
-            throw WorkbenchError.message(L10n.text("容器附件暂不支持 DOCKER_HOST，请使用本机 Unix socket 的 Docker context。"))
-        }
-        if terminal.invocation.context == nil, environment["DOCKER_CONTEXT"]?.isEmpty != false {
+        if terminal.invocation.context == nil, terminal.invocation.host == nil,
+           environment["DOCKER_CONTEXT"]?.isEmpty != false, environment["DOCKER_HOST"]?.isEmpty != false {
             let directory = environment["DOCKER_CONFIG"].map { URL(fileURLWithPath: $0) } ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".docker")
             let configuration = directory.appendingPathComponent("config.json")
             let started = Double(terminal.startedSeconds) + Double(terminal.startedMicroseconds) / 1_000_000
@@ -58,19 +58,20 @@ public struct DockerAttachmentDaemon: Equatable, Sendable {
                 throw WorkbenchError.message(L10n.text("Docker 默认 context 配置在进入容器后发生变化，请显式指定 --context 重新连接容器。"))
             }
         }
-        let context = try terminal.invocation.context ?? environment["DOCKER_CONTEXT"].flatMap { $0.isEmpty ? nil : $0 }
-            ?? ProcessRunner.run(executable: terminal.executable, arguments: ["context", "show"], environment: environment, cancellation: cancellation, timeout: 10).checked().text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !context.isEmpty, !context.hasPrefix("-"), context.rangeOfCharacter(from: .controlCharacters) == nil else { throw WorkbenchError.message(L10n.text("Docker context 无效，未发送附件。")) }
-        environment.removeValue(forKey: "DOCKER_CONTEXT"); environment.removeValue(forKey: "DOCKER_HOST")
         func run(_ arguments: [String]) throws -> String {
-            try ProcessRunner.run(executable: terminal.executable, arguments: ["--context", context] + arguments, environment: environment,
+            try ProcessRunner.run(executable: terminal.executable, arguments: terminal.invocation.connectionArguments + arguments, environment: environment,
                                   cancellation: cancellation, timeout: 10).checked().text.trimmingCharacters(in: .whitespacesAndNewlines)
         }
+        let context = try run(["context", "show"])
+        guard !context.isEmpty, !context.hasPrefix("-"), context.rangeOfCharacter(from: .controlCharacters) == nil else { throw WorkbenchError.message(L10n.text("Docker context 无效，未发送附件。")) }
         let endpoint = try run(["context", "inspect", context, "--format", "{{.Endpoints.docker.Host}}"])
-        guard endpoint.hasPrefix("unix:///"), !endpoint.contains("\n") else { throw WorkbenchError.message(L10n.text("容器附件首版只支持本机 Docker context，不会向远程 Docker 发送文件。")) }
-        let identifier = try run(["info", "--format", "{{.ID}}"])
+        try DockerUnixEndpoint.validate(endpoint)
+        let usesHost = terminal.invocation.host != nil || (context == "default" && environment["DOCKER_HOST"]?.isEmpty == false)
+        environment.removeValue(forKey: "DOCKER_CONTEXT"); environment.removeValue(forKey: "DOCKER_HOST")
+        let identifier = try ProcessRunner.run(executable: terminal.executable, arguments: ["--host", endpoint, "info", "--format", "{{.ID}}"],
+                                               environment: environment, cancellation: cancellation, timeout: 10).checked().text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !identifier.isEmpty else { throw WorkbenchError.message(L10n.text("无法确认 Docker 服务身份。")) }
-        let daemon = DockerAttachmentDaemon(context: context, endpoint: endpoint, identifier: identifier, executable: terminal.executable, environment: environment)
+        let daemon = DockerAttachmentDaemon(context: context, endpoint: endpoint, identifier: identifier, executable: terminal.executable, environment: environment, usesHost: usesHost)
         let detected = try daemon.inspect(terminal.invocation.container, cancellation: cancellation)
         let identifiers = try daemon.run(["ps", "--no-trunc", "--format", "{{.ID}}"], cancellation: cancellation).text.split(separator: "\n").map(String.init)
         guard !identifiers.isEmpty, identifiers.count <= 100 else { throw WorkbenchError.message(L10n.text("没有可用容器或容器数量超过本次选择范围。")) }
@@ -106,8 +107,10 @@ public struct DockerAttachmentDaemon: Equatable, Sendable {
         }
     }
     private func validate(cancellation: CancellationFlag) throws {
-        let currentEndpoint = try run(["context", "inspect", context, "--format", "{{.Endpoints.docker.Host}}"], cancellation: cancellation).text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard currentEndpoint == endpoint else { throw WorkbenchError.message(L10n.text("Docker 服务、容器身份或启动状态已变化，请重新确认附件目标。")) }
+        if !usesHost {
+            let result = try ProcessRunner.run(executable: executable, arguments: ["--context", context, "context", "inspect", context, "--format", "{{.Endpoints.docker.Host}}"], environment: environment, cancellation: cancellation, timeout: 10).checked()
+            guard result.text.trimmingCharacters(in: .whitespacesAndNewlines) == endpoint else { throw WorkbenchError.message(L10n.text("Docker 服务、容器身份或启动状态已变化，请重新确认附件目标。")) }
+        }
         let current = try run(["info", "--format", "{{.ID}}"], cancellation: cancellation).text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard current == identifier else { throw WorkbenchError.message(L10n.text("Docker 服务、容器身份或启动状态已变化，请重新确认附件目标。")) }
     }
@@ -116,7 +119,7 @@ public struct DockerAttachmentDaemon: Equatable, Sendable {
         return try JSONDecoder().decode(DockerContainer.self, from: result.output)
     }
     private func run(_ arguments: [String], input: Data? = nil, cancellation: CancellationFlag) throws -> CommandResult {
-        let result = try ProcessRunner.run(executable: executable, arguments: ["--context", context] + arguments, environment: environment,
+        let result = try ProcessRunner.run(executable: executable, arguments: ["--host", endpoint] + arguments, environment: environment,
                                           cancellation: cancellation, timeout: input == nil ? 15 : 120, outputLimit: 2 * 1024 * 1024, input: input)
         guard result.status == 0 else { throw WorkbenchError.message(L10n.text("Docker 操作失败，请检查容器状态、目标用户权限及所需命令；未插入附件路径。")) }
         return result
