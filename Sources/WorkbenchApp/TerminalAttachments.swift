@@ -50,9 +50,14 @@ final class TerminalAttachmentDraft: ObservableObject, Identifiable {
     @Published var result: UploadedAttachments?
     @Published var inserted = false
     @Published var target: TmuxTarget?
+    @Published var containerSelection: DockerAttachmentSelection?
+    @Published var showContainerPicker = false
+    @Published private(set) var dockerBinding: DockerAttachmentBinding?
+    private var dockerResult: DockerUploadedAttachments?
     private var cancellation = CancellationFlag()
     private var disposed = false
     private let transport: SSHTransport
+    var targetDescription: String { dockerBinding.map { session.displayName + " → Docker · " + $0.container.displayName + " · " + $0.user } ?? session.displayName }
     init(session: TerminalSession, payload: TerminalAttachmentPayload, workspace: Workspace) {
         self.session = session; self.payload = payload; self.workspace = workspace; transport = workspace.store.transport
         identity = workspace.attachmentIdentity(session)
@@ -61,33 +66,89 @@ final class TerminalAttachmentDraft: ObservableObject, Identifiable {
     }
     private func prepare() {
         let host = session.host; let tmux = session.tmuxID; let transport = transport; let flag = cancellation
+        let remembered = session.dockerAttachmentBinding
         Task {
             do {
-                let context = try await Task.detached { () -> (String, TmuxTarget?) in
+                let context = try await Task.detached { () -> (String, TmuxTarget?, DockerAttachmentSelection?, DockerAttachmentBinding?) in
+                    if host == nil, let tmux {
+                        let service = TmuxService(transport: transport, host: nil)
+                        if try service.attachmentTarget(session: tmux).command == "docker" {
+                            let terminal = try service.localDockerTerminal(session: tmux)
+                            if let remembered, remembered.terminal == terminal, (try? remembered.daemon.validate(remembered, cancellation: flag)) != nil {
+                                return ("", terminal.target, nil, remembered)
+                            }
+                            return ("", terminal.target, try DockerAttachmentDaemon.discover(terminal: terminal, cancellation: flag), nil)
+                        }
+                    }
                     let pane = try tmux.map { try TmuxService(transport: transport, host: host).target(session: $0) }
                     let temporary = try AttachmentUploader(transport: transport).temporaryDirectory(host: host, cancellation: flag)
-                    return (temporary, pane)
+                    return (temporary, pane, nil, nil)
                 }.value
-                guard !disposed else { return }
+                guard !disposed, !flag.isCancelled else { preparing = false; return }
                 target = context.1
                 directory = context.0
+                dockerBinding = context.3
+                if let selection = context.2 {
+                    session.dockerAttachmentBinding = nil
+                    containerSelection = selection; preparing = false
+                    status = L10n.text("请选择并确认原窗格的目标容器，确认前不会复制附件。")
+                    showContainerPicker = true; return
+                }
                 preparing = false; status = L10n.text("目标：\(session.displayName)\(target.map { L10n.text(" · 窗格 ") + $0.paneID } ?? "")")
                 upload()
             } catch { guard !disposed else { return }; preparing = false; failure = error.localizedDescription }
         }
     }
+    func chooseContainer(_ identifier: String) async {
+        guard let selection = containerSelection, !preparing, !disposed, let tmux = session.tmuxID else { return }
+        preparing = true; failure = nil
+        let transport = transport; let flag = cancellation
+        do {
+            let binding = try await Task.detached {
+                let current = try TmuxService(transport: transport, host: nil).localDockerTerminal(session: tmux)
+                guard current == selection.terminal else { throw WorkbenchError.message(L10n.text("Docker 进程或原 tmux 窗格已变化，请重新确认容器。")) }
+                return try selection.daemon.confirm(identifier, terminal: current, cancellation: flag)
+            }.value
+            guard !disposed, !flag.isCancelled, session.connectionID == identity.connectionID,
+                  workspace?.selectedTerminalID == session.id, session.inputGeneration == identity.inputGeneration else {
+                throw WorkbenchError.message(L10n.text("插入前目标发生变化，附件未发送。"))
+            }
+            dockerBinding = binding; session.dockerAttachmentBinding = binding
+            containerSelection = nil; showContainerPicker = false; preparing = false
+            for _ in 0..<20 {
+                guard !disposed, !flag.isCancelled, NSApp.isActive, workspace?.selectedTerminalID == session.id,
+                      workspace?.page == .terminal, session.inputGeneration == identity.inputGeneration,
+                      let window = session.terminal.window else { break }
+                if window.isKeyWindow, window.attachedSheet == nil, NSApp.modalWindow == nil {
+                    if !(window.firstResponder is NSTextView), !(window.firstResponder is NSTextField) { window.makeFirstResponder(session.terminal) }
+                    break
+                }
+                try await Task.sleep(for: .milliseconds(50))
+            }
+            upload()
+        } catch { preparing = false; failure = error.localizedDescription }
+    }
     func upload() {
         guard !running, !preparing, !disposed, session.connected, session.connectionID == identity.connectionID else { return }
         running = true; failure = nil; result = nil; cancellation = CancellationFlag()
         let flag = cancellation; let host = session.host; let files = payload.files; let destination = directory; let transport = transport
+        let binding = dockerBinding; let tmux = session.tmuxID
         Task {
             do {
-                let uploaded = try await Task.detached {
-                    try AttachmentUploader(transport: transport).upload(files, host: host, directory: destination, cancellation: flag) { [weak owner = self] message, value in
+                let outcome = try await Task.detached { () -> (UploadedAttachments, DockerUploadedAttachments?) in
+                    let progress: (String, Double) -> Void = { [weak owner = self] message, value in
                         DispatchQueue.main.async { guard owner?.disposed == false, owner?.running == true, !flag.isCancelled else { return }; owner?.status = message; owner?.progress = value }
                     }
+                    if let binding, let tmux {
+                        guard try TmuxService(transport: transport, host: nil).localDockerTerminal(session: tmux) == binding.terminal else { throw WorkbenchError.message(L10n.text("Docker 进程或原 tmux 窗格已变化，请重新确认容器。")) }
+                        let uploaded = try DockerAttachmentUploader(binding: binding).upload(files, transport: transport, cancellation: flag, progress: progress)
+                        return (uploaded.uploaded, uploaded)
+                    }
+                    return (try AttachmentUploader(transport: transport).upload(files, host: host, directory: destination, cancellation: flag, progress: progress), nil)
                 }.value
                 guard !disposed else { return }
+                let uploaded = outcome.0; dockerResult = outcome.1
+                directory = uploaded.directory
                 running = false; result = uploaded; status = L10n.text("目标机器的 \(uploaded.fileCount) 个文件回读校验通过")
                 if !automaticallyInsert { status += L10n.text("；已按设置等待手动插入。") }
                 else if await waitForAutomaticTarget() { await insert(requireOriginalFocus: true) }
@@ -123,7 +184,11 @@ final class TerminalAttachmentDraft: ObservableObject, Identifiable {
         inserting = true; defer { inserting = false }
         do {
             let transport = transport; let host = session.host
+            let binding = dockerBinding; let dockerResult = dockerResult; let flag = cancellation
             try await Task.detached {
+                if let binding, let dockerResult {
+                    try DockerAttachmentUploader(binding: binding).verify(dockerResult, cancellation: flag); return
+                }
                 let client = try transport.files(host); defer { client.close() }
                 for path in result.paths {
                     let attributes = try client.stat(path)
@@ -138,7 +203,10 @@ final class TerminalAttachmentDraft: ObservableObject, Identifiable {
                 throw WorkbenchError.message(L10n.text("插入前目标发生变化，附件未发送。"))
             }
             let text = try AttachmentReference.text(paths: result.paths)
-            if let tmuxID = session.tmuxID, let target {
+            if let binding, let tmuxID = session.tmuxID {
+                let service = TmuxService(transport: transport, host: nil)
+                try await Task.detached { try service.pasteDocker(text, session: tmuxID, expected: binding.terminal) }.value
+            } else if let tmuxID = session.tmuxID, let target {
                 let service = TmuxService(transport: transport, host: session.host)
                 try await Task.detached { try service.paste(text, session: tmuxID, expected: target) }.value
             } else {
@@ -149,9 +217,10 @@ final class TerminalAttachmentDraft: ObservableObject, Identifiable {
     }
     func deleteUploaded() async {
         guard let result, !running, !inserting else { return }
-        let transport = transport; let host = session.host
+        let transport = transport; let host = session.host; let binding = dockerBinding
         do {
             try await Task.detached {
+                if let binding { try DockerAttachmentUploader(binding: binding).cleanup(result.directory, cancellation: CancellationFlag()); return }
                 let client = try transport.files(host); defer { client.close() }
                 guard (result.directory as NSString).lastPathComponent.hasPrefix(".farport-attachments-") else { throw WorkbenchError.message(L10n.text("拒绝清理非附件目录")) }
                 try client.removeRecursively(result.directory)
@@ -159,14 +228,20 @@ final class TerminalAttachmentDraft: ObservableObject, Identifiable {
             self.result = nil; status = L10n.text("附件已清理，之前插入的路径将不再可读。")
         } catch { failure = error.localizedDescription }
     }
-    func cancel() { cancellation.cancel() }
+    func cancel() {
+        cancellation.cancel()
+        if containerSelection != nil { failure = L10n.text("已取消容器选择，未发送附件。") }
+        containerSelection = nil; showContainerPicker = false
+    }
     func retry() {
         guard !busy, !disposed else { return }
-        failure = nil; preparing = true; cancellation = CancellationFlag(); prepare()
+        failure = nil; containerSelection = nil; dockerBinding = nil; dockerResult = nil
+        preparing = true; cancellation = CancellationFlag(); prepare()
     }
-    var busy: Bool { preparing || running || inserting || settlingFocus }
+    var busy: Bool { preparing || running || inserting || settlingFocus || containerSelection != nil }
     func dispose() {
         disposed = true; cancellation.cancel()
+        showContainerPicker = false; containerSelection = nil
         if let directory = payload.temporaryDirectory { try? FileManager.default.removeItem(at: directory) }
     }
 }
@@ -180,21 +255,25 @@ struct TerminalAttachmentBanner: View {
             Image(systemName: draft.inserted ? "checkmark.circle.fill" : (draft.failure == nil ? "paperclip" : "exclamationmark.triangle"))
                 .foregroundStyle(draft.failure == nil ? Color.teal : .orange)
             VStack(alignment: .leading, spacing: 4) {
-                Text(L10n.text("\(draft.payload.files.count) 个附件 → \(draft.session.displayName)")).font(.system(size: 11, weight: .semibold))
+                Text(L10n.text("\(draft.payload.files.count) 个附件 → \(draft.targetDescription)")).font(.system(size: 11, weight: .semibold))
                 Text(draft.failure ?? draft.status).font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(2)
             }
             if draft.running { ProgressView(value: draft.progress).frame(width: 90) }
             else if draft.preparing || draft.inserting { ProgressView().controlSize(.small) }
             Spacer(minLength: 4)
+            if draft.containerSelection != nil { Button(L10n.text("选择目标容器…")) { draft.showContainerPicker = true } }
             if draft.preparing || draft.running { Button(L10n.text("取消")) { draft.cancel() } }
             if !draft.busy, draft.result != nil, !draft.inserted { Button(L10n.text("插入原终端")) { Task { await draft.insert() } } }
             if !draft.busy, draft.result == nil, draft.failure != nil { Button(L10n.text("重试")) { draft.retry() } }
             Button(L10n.text("详情")) { showDetails.toggle() }.popover(isPresented: $showDetails) {
                 VStack(alignment: .leading, spacing: 12) {
-                    Text(L10n.text("附件目标 · \(draft.session.displayName)")).font(.headline)
+                    Text(L10n.text("附件目标 · \(draft.targetDescription)")).font(.headline)
                     Text(draft.session.subtitle).font(.caption).textSelection(.enabled)
                     Text(draft.result?.paths.joined(separator: "\n") ?? draft.directory).font(.system(size: 10, design: .monospaced)).textSelection(.enabled)
-                    Text(L10n.text("已按当前连接机器上传到私有临时目录，不自动回车。若终端内又 SSH 到其他主机、进入容器或切换用户，此路径不一定可读，请改用实际目标连接。临时文件可能被系统清理，需要长期保留时请移动到工作目录。")).font(.caption).foregroundStyle(.secondary)
+                    Text(draft.dockerBinding == nil
+                         ? L10n.text("已按当前连接机器上传到私有临时目录，不自动回车。若终端内又 SSH 到其他主机、进入容器或切换用户，此路径不一定可读，请改用实际目标连接。临时文件可能被系统清理，需要长期保留时请移动到工作目录。")
+                         : L10n.text("附件位于已确认容器的私有目录，使用已核对用户读回验证。绑定仅在当前 Docker 进程与容器未变化时复用；容器内再 SSH 或切换用户不会自动穿透。"))
+                        .font(.caption).foregroundStyle(.secondary)
                     if draft.result != nil {
                         Button(L10n.text("清理本批附件…"), role: .destructive) {
                             if confirm(L10n.text("清理本批附件？"), L10n.text("Agent 之后将无法读取这些路径，源文件不受影响。")) { Task { await draft.deleteUploaded() } }
@@ -204,5 +283,8 @@ struct TerminalAttachmentBanner: View {
             }
             Button { draft.dispose(); dismiss() } label: { Image(systemName: "xmark").frame(width: 24, height: 28).contentShape(Rectangle()) }.disabled(draft.inserting).help(L10n.text("关闭附件状态"))
         }.buttonStyle(.borderless).padding(.horizontal, 18).padding(.vertical, 10).background(.teal.opacity(0.06))
+            .sheet(isPresented: $draft.showContainerPicker) {
+                if let selection = draft.containerSelection { ContainerAttachmentPicker(draft: draft, selection: selection) }
+            }
     }
 }

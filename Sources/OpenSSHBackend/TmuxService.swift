@@ -80,14 +80,25 @@ public struct TmuxService: Sendable {
         _ = try execute("select-window -t \(RemotePath.quote(pane.windowID)) \\; select-pane -t \(RemotePath.quote(pane.id))").checked()
     }
     public func target(session: String) throws -> TmuxTarget {
+        let target = try attachmentTarget(session: session)
+        guard !["ssh", "mosh", "docker", "podman", "su", "sudo"].contains(target.command) else { throw WorkbenchError.message(L10n.text("窗格可能处于嵌套主机、容器或其他用户环境，请配置实际目标，不会自动发送附件。")) }
+        return target
+    }
+    public func attachmentTarget(session: String) throws -> TmuxTarget {
         let result = try execute("display-message -p -t \(RemotePath.quote(session)) '#{pane_id}\t#{pane_pid}\t#{pane_current_command}\t#{pane_current_path}\t#{pane_in_mode}\t#{pane_dead}'").checked()
         let parts = result.text.trimmingCharacters(in: .newlines).split(separator: "\t", omittingEmptySubsequences: false).map(String.init)
         guard parts.count == 6, parts[4] == "0", parts[5] == "0" else { throw WorkbenchError.message(L10n.text("tmux 窗格处于复制模式、已退出或不可识别，未发送附件。")) }
-        guard !["ssh", "mosh", "docker", "podman", "su", "sudo"].contains(parts[2]) else { throw WorkbenchError.message(L10n.text("窗格可能处于嵌套主机、容器或其他用户环境，请配置实际目标，不会自动发送附件。")) }
         return TmuxTarget(paneID: parts[0], processID: parts[1], command: parts[2], directory: parts[3])
     }
     public func paste(_ text: String, session: String, expected: TmuxTarget) throws {
         guard try target(session: session) == expected else { throw WorkbenchError.message(L10n.text("tmux 窗格或前台程序发生变化，附件未插入。")) }
+        try pasteValidated(text, session: session, expected: expected)
+    }
+    public func pasteDocker(_ text: String, session: String, expected: LocalDockerTerminal) throws {
+        guard try localDockerTerminal(session: session) == expected else { throw WorkbenchError.message(L10n.text("Docker 进程或原 tmux 窗格已变化，请重新确认容器。")) }
+        try pasteValidated(text, session: session, expected: expected.target)
+    }
+    private func pasteValidated(_ text: String, session: String, expected: TmuxTarget) throws {
         let buffer = "farport-" + UUID().uuidString
         let tmux = try prefix
         let fingerprint = [expected.paneID, expected.processID, expected.command, expected.directory, "0", "0"].joined(separator: "\t")

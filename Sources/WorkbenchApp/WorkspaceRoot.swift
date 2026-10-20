@@ -208,6 +208,11 @@ struct WorkspaceRoot: View {
         guard !didPrepareQA, store.isTestWorkspace, let output = ProcessInfo.processInfo.environment["SWB_QA_OUTPUT"] else { return }
         didPrepareQA = true
         let screen = ProcessInfo.processInfo.environment["SWB_QA_SCREEN"] ?? "terminal"
+        if screen == "docker-attachments" || screen == "docker-attachment-models" {
+            do { try await ContainerAttachmentChecks.run(workspace: workspace, output: URL(fileURLWithPath: output), interactive: screen == "docker-attachments"); NSApp.terminate(nil) }
+            catch { fputs("FAIL · \(error.localizedDescription)\n", stderr); exit(1) }
+            return
+        }
         if screen == "file-pane-models" || screen == "file-panes" {
             do {
                 if screen == "file-pane-models" { try await FilePaneChecks.runModels(store: store) }

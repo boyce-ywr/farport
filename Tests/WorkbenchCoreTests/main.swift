@@ -16,6 +16,8 @@ func rejects(_ message: String, _ operation: () throws -> Void) throws {
 }
 
 do {
+    try checkDockerTerminalCommands()
+    if let index = CommandLine.arguments.firstIndex(of: "--docker-attachments-check") { try checkDockerAttachments(arguments: Array(CommandLine.arguments.dropFirst(index + 1))); exit(0) }
     if CommandLine.arguments.contains("--local-tmux-directory-check") { try checkLocalTmuxDirectory(); exit(0) }
     try checkFileEndpointSnapshots()
     if CommandLine.arguments.contains("--file-endpoint-check") { print("PASS · \(checks) 项文件引用与主机身份断言"); exit(0) }

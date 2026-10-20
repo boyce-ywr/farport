@@ -9,7 +9,7 @@ struct CompactAttachmentNotice: View {
         if draft.inserted {
             HStack(spacing: 8) {
                 Image(systemName: "checkmark.circle.fill").foregroundStyle(.teal)
-                Text(L10n.text("附件已发送至 \(draft.session.displayName)")).lineLimit(1)
+                Text(L10n.text("附件已发送至 \(draft.targetDescription)")).lineLimit(1)
                 Spacer()
                 Button(L10n.text("详情")) { showDetails.toggle() }
                 Button(action: close) { Image(systemName: "xmark") }

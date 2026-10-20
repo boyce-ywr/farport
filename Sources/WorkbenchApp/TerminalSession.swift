@@ -284,6 +284,7 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable, LocalProc
     private var probe = CancellationFlag()
     private var preparingTmuxMenu = false
     private let transport: SSHTransport
+    var dockerAttachmentBinding: DockerAttachmentBinding?
     var isLocal: Bool { host == nil }
     var displayName: String { host?.name ?? L10n.text("此 Mac") }
     var subtitle: String { host?.subtitle ?? L10n.text("\(NSUserName()) · \(LocalShellConfiguration.userShell) · 登录 Shell") }

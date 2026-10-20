@@ -45,6 +45,9 @@ bash scripts/check-attachments.sh    # 附件上传、回读和 tmux
 bash scripts/check-file-preview.sh   # 中英文、目录历史、源码高亮与媒体播放
 bash scripts/check-file-panes.sh --ssh # 中英文文件分栏、跨主机复制、拖拽数据链和焦点隔离
 bash scripts/check-local-tmux-directory.sh # 从根目录和测试目录启动，验证本机tmux目录与原窗格保持
+bash scripts/check-docker-attachments.sh # 创建两个隔离容器，验证识别、权限、复制与目标变化保护
+bash scripts/check-docker-attachments.sh --models # 中英文附件准备/确认/手动插入/清理链，不要求前台
+bash scripts/check-docker-attachments.sh --ui # 中英文真实Cmd+V、确认弹窗与自动焦点；需要解锁构建机
 bash scripts/check-host-monitor.sh  # 本机/Linux监控、菜单及附件策略
 ```
 
