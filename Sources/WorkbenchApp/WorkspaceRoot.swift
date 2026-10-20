@@ -165,8 +165,9 @@ struct WorkspaceRoot: View {
             }
             Spacer()
             Menu {
-                Button(L10n.text("新建本机终端")) { workspace.connectLocal() }
-                ForEach(store.hosts) { host in Button(host.name) { workspace.connectPreferred(host) } }
+                if workspace.page == .files { Button(L10n.text("此 Mac 的文件")) { workspace.browseFiles(.local) } }
+                else { Button(L10n.text("新建本机终端")) { workspace.connectLocal() } }
+                ForEach(store.hosts) { host in Button(host.name) { if workspace.page == .files { workspace.browseFiles(.host(host.id)) } else { workspace.connectPreferred(host) } } }
                 Divider(); Button(L10n.text("添加 SSH 主机…")) { editingHost = HostProfile() }
             } label: { Label(displayHost?.name ?? L10n.text("此 Mac"), systemImage: "server.rack").lineLimit(1) }.menuStyle(.borderlessButton).frame(maxWidth: 160)
             WorkspaceToolsMenu(workspace: workspace, store: store)
@@ -183,12 +184,7 @@ struct WorkspaceRoot: View {
         case .tmux:
             TmuxWorkspace(host: workspace.host, store: store, workspace: workspace).id(workspace.host)
         case .files:
-            VStack(spacing: 0) {
-                FileSourceBar(workspace: workspace)
-                Divider()
-                if let browser = workspace.currentFileBrowser { FileWorkspace(model: browser, store: store).id(browser.id) }
-                else { Text(L10n.text("请选择有效的文件来源")).foregroundStyle(.secondary).frame(maxWidth: .infinity, maxHeight: .infinity) }
-            }
+            FilePaneWorkspace(workspace: workspace, store: store)
         case .transfers: TransferWorkspace(store: store)
         case .monitor: HostMonitorWorkspace(workspace: workspace, store: store).id(workspace.host?.connectionKey ?? "local")
         case .tunnels:
@@ -212,6 +208,14 @@ struct WorkspaceRoot: View {
         guard !didPrepareQA, store.isTestWorkspace, let output = ProcessInfo.processInfo.environment["SWB_QA_OUTPUT"] else { return }
         didPrepareQA = true
         let screen = ProcessInfo.processInfo.environment["SWB_QA_SCREEN"] ?? "terminal"
+        if screen == "file-pane-models" || screen == "file-panes" {
+            do {
+                if screen == "file-pane-models" { try await FilePaneChecks.runModels(store: store) }
+                else { try await FilePaneChecks.runUI(workspace: workspace, output: URL(fileURLWithPath: output)) }
+                NSApp.terminate(nil)
+            } catch { fputs("FAIL · \(error.localizedDescription)\n", stderr); exit(1) }
+            return
+        }
         if screen == "upgrade-compatibility" {
             do { try UpgradeCompatibilityChecks.run(store: store); NSApp.terminate(nil) }
             catch { fputs("FAIL · \(error.localizedDescription)\n", stderr); exit(1) }

@@ -16,6 +16,8 @@ func rejects(_ message: String, _ operation: () throws -> Void) throws {
 }
 
 do {
+    try checkFileEndpointSnapshots()
+    if CommandLine.arguments.contains("--file-endpoint-check") { print("PASS · \(checks) 项文件引用与主机身份断言"); exit(0) }
     try checkConnectionRecovery()
     if CommandLine.arguments.contains("--connection-recovery-check") { print("PASS · \(checks) 项连接恢复断言"); exit(0) }
     try checkWorkflowRefinements()

@@ -58,8 +58,8 @@ struct WorkbenchCommands: Commands {
             Button(L10n.text("新建窗口")) { openWindow(id: "workspace") }.keyboardShortcut("n")
             Button(L10n.text("新建终端")) { workspace?.newTerminal() }.keyboardShortcut("t").disabled(workspace == nil)
             Button(L10n.text("新建本机终端")) { workspace?.connectLocal() }.keyboardShortcut("t", modifiers: [.command, .shift]).disabled(workspace == nil)
-            Button(L10n.text("左右分栏")) { workspace?.newTerminal(split: true) }.keyboardShortcut("d").disabled(workspace?.page != .terminal)
-            Button(L10n.text("上下分栏")) { workspace?.newTerminal(split: true, axis: .topBottom) }.keyboardShortcut("d", modifiers: [.command, .shift]).disabled(workspace?.page != .terminal)
+            Button(L10n.text("左右分栏")) { workspace?.splitCurrentWorkspace() }.keyboardShortcut("d").disabled(workspace?.page != .terminal && workspace?.page != .files)
+            Button(L10n.text("上下分栏")) { workspace?.splitCurrentWorkspace(axis: .topBottom) }.keyboardShortcut("d", modifiers: [.command, .shift]).disabled(workspace?.page != .terminal && workspace?.page != .files)
         }
         CommandGroup(after: .appInfo) {
             Button(L10n.text("检查更新…")) { openWindow(id: "updates"); UpdateController.shared.check() }
@@ -68,9 +68,9 @@ struct WorkbenchCommands: Commands {
             Button(L10n.text("重新连接当前终端")) { workspace?.selectedTerminal?.requestManualReconnect() }.keyboardShortcut("r", modifiers: [.command, .shift]).disabled(workspace?.selectedTerminal == nil)
             Button(L10n.text("复制连接诊断")) { workspace?.selectedTerminal?.copyConnectionDiagnostics() }.disabled(workspace?.selectedTerminal == nil)
             Divider()
-            Button(L10n.text("上一个分栏")) { workspace?.focusNextPane(backward: true) }.keyboardShortcut("[").disabled(workspace?.page != .terminal)
-            Button(L10n.text("下一个分栏")) { workspace?.focusNextPane() }.keyboardShortcut("]").disabled(workspace?.page != .terminal)
-            Button(L10n.text("最大化 / 还原当前分栏")) { workspace?.togglePaneZoom() }.keyboardShortcut(.return, modifiers: [.command, .shift]).disabled(workspace?.page != .terminal)
+            Button(L10n.text("上一个分栏")) { workspace?.focusNextPane(backward: true) }.keyboardShortcut("[").disabled(workspace?.page != .terminal && workspace?.page != .files)
+            Button(L10n.text("下一个分栏")) { workspace?.focusNextPane() }.keyboardShortcut("]").disabled(workspace?.page != .terminal && workspace?.page != .files)
+            Button(L10n.text("最大化 / 还原当前分栏")) { workspace?.togglePaneZoom() }.keyboardShortcut(.return, modifiers: [.command, .shift]).disabled(workspace?.page != .terminal && workspace?.page != .files)
             Divider()
             Button(L10n.text("上一个标签")) { workspace?.selectNextTab(backward: true) }.keyboardShortcut("[", modifiers: [.command, .shift]).disabled(workspace?.page != .terminal)
             Button(L10n.text("下一个标签")) { workspace?.selectNextTab() }.keyboardShortcut("]", modifiers: [.command, .shift]).disabled(workspace?.page != .terminal)

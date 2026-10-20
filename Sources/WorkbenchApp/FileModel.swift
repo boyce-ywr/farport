@@ -27,6 +27,17 @@ final class FileModel: ObservableObject {
     @Published var webURL: URL?
     @Published var webScripts = false
     @Published var previewRatio = 0.38
+    @Published var showPreview = true {
+        didSet {
+            if !showPreview {
+                previewCancellation.cancel(); generation = UUID(); stopMediaPreview()
+                previewBusy = false; followLog = false
+            }
+        }
+    }
+    @Published var transferNotice: String?
+    @Published var focusRequest: UInt64 = 0
+    weak var tableView: NSTableView?
     @Published var fileSort = FileSort() { didSet { visibleFilesCache = nil } }
     @Published private(set) var history = DirectoryHistory()
     @Published var mediaURL: URL?
@@ -136,7 +147,7 @@ final class FileModel: ObservableObject {
         followLog = false
         openingLink = file.attributes.isSymbolicLink ? file.path : nil
         if file.attributes.isDirectory { load(file.path) }
-        else { selection = [file.path]; preview(file, openLinkedDirectory: file.attributes.isSymbolicLink) }
+        else { showPreview = true; selection = [file.path]; preview(file, openLinkedDirectory: file.attributes.isSymbolicLink) }
     }
     func preview(_ file: RemoteFile, offset: UInt64 = 0, tail: Bool = false, openLinkedDirectory: Bool = false) {
         if let previousFailure = previewFailure, errorMessage == previousFailure { errorMessage = nil }

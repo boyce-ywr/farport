@@ -17,10 +17,23 @@ struct FileWorkspace: View {
     @ViewState private var dropTarget = false
     @ViewState private var showHTMLSource = false
     @ViewState private var showMarkdownSource = false
-    init(model: FileModel, store: AppStore) { self.model = model; self.store = store }
+    @ViewState private var mounted = false
+    let keyboardFocused: Bool
+    let visible: Bool
+    let focus: () -> Void
+    let canReceiveFiles: () -> Bool
+    init(model: FileModel, store: AppStore, keyboardFocused: Bool = true, visible: Bool = true,
+         focus: @escaping () -> Void = {}, canReceiveFiles: @escaping () -> Bool = { true }) {
+        self.model = model; self.store = store; self.keyboardFocused = keyboardFocused; self.visible = visible
+        self.focus = focus; self.canReceiveFiles = canReceiveFiles
+    }
     var body: some View {
         VStack(spacing: 0) {
             toolbar
+            if let notice = model.transferNotice {
+                HStack { Text(notice).lineLimit(2); Spacer(); Button { model.transferNotice = nil } label: { Image(systemName: "xmark") } }
+                    .font(.caption).foregroundStyle(.secondary).buttonStyle(.borderless).padding(.horizontal, 12).padding(.bottom, 6)
+            }
             if let loadingPath = model.loadingPath {
                 HStack(spacing: 10) {
                     ProgressView().controlSize(.small)
@@ -37,12 +50,12 @@ struct FileWorkspace: View {
             }
             Divider()
             GeometryReader { geometry in
-                let available = max(0, geometry.size.width - 10)
-                let previewWidth = min(max(240, available * model.previewRatio), max(240, available - 340))
+                let available = max(0, geometry.size.width - (model.showPreview ? 10 : 0))
+                let previewWidth = model.showPreview ? min(max(240, available * model.previewRatio), max(240, available - 340)) : 0
                 HStack(spacing: 0) {
                 VStack(spacing: 0) {
                     HStack { Image(systemName: "magnifyingglass").foregroundStyle(.tertiary); TextField(L10n.text("筛选当前目录"), text: $model.filter).textFieldStyle(.plain); Spacer(); Toggle(L10n.text("隐藏文件"), isOn: $model.showHidden).toggleStyle(.checkbox) }.font(.system(size: 11)).padding(14)
-                    Table(model.visibleFiles, selection: $model.selection, sortOrder: $model.sortOrder) {
+                    Table(of: RemoteFile.self, selection: $model.selection, sortOrder: $model.sortOrder) {
                         TableColumn(L10n.text("名称"), sortUsing: FileSortComparator(column: .name)) { file in
                             HStack(spacing: 9) {
                                 Image(systemName: fileIcon(file)).foregroundStyle(file.attributes.isDirectory ? Color.teal : .secondary).font(.system(size: 15))
@@ -54,9 +67,13 @@ struct FileWorkspace: View {
                         TableColumn(L10n.text("大小"), sortUsing: FileSortComparator(column: .size)) { file in Text(file.attributes.isDirectory ? "—" : bytes(file.attributes.size)).font(.system(size: 10, design: .monospaced)).foregroundStyle(.secondary) }.width(min: 55, ideal: 70)
                         TableColumn(L10n.text("修改时间"), sortUsing: FileSortComparator(column: .modified)) { file in Text(file.attributes.date, format: .dateTime.month(.twoDigits).day(.twoDigits).hour().minute()).font(.system(size: 10)).foregroundStyle(.secondary) }.width(min: 100, ideal: 120)
                         TableColumn(L10n.text("权限"), sortUsing: FileSortComparator(column: .permissions)) { file in Text(file.attributes.permissionText).font(.system(size: 10, design: .monospaced)).foregroundStyle(.tertiary) }.width(min: L10n.language == .english ? 78 : 50, ideal: L10n.language == .english ? 80 : 55)
+                    } rows: {
+                        ForEach(model.visibleFiles) { file in TableRow(file).itemProvider { dragProvider(for: file) } }
                     }.alternatingRowBackgrounds(.disabled)
-                        .background(FileKeyboardCommands(copy: { copyFiles(model.selectedFiles) }, paste: { pasteFiles() }, selectAll: { model.selection = Set(model.visibleFiles.map(\.path)) }).frame(width: 0, height: 0))
-                        .background(TableHeaderSorting(titles: FileSortColumn.allCases.map(\.title)) { model.fileSort.cycle(FileSortColumn.allCases[$0]) }.frame(width: 0, height: 0))
+                        .background(FileKeyboardCommands(model: model, focused: keyboardFocused, visible: visible,
+                                                         focus: focus, copy: { copyFiles(model.selectedFiles) }, paste: { pasteFiles() },
+                                                         selectAll: { model.selection = Set(model.visibleFiles.map(\.path)) }).frame(width: 0, height: 0))
+                        .background(TableHeaderSorting(titles: FileSortColumn.allCases.map(\.title), enabled: visible) { model.fileSort.cycle(FileSortColumn.allCases[$0]) }.frame(width: 0, height: 0))
                         .contextMenu(forSelectionType: String.self) { identifiers in
                             let selected = model.files.filter { identifiers.contains($0.path) }
                             if selected.count == 1, let file = selected.first { fileActions(file) }
@@ -64,7 +81,7 @@ struct FileWorkspace: View {
                         } primaryAction: { identifiers in
                             if let file = model.files.first(where: { identifiers.contains($0.path) }) { model.activate(file) }
                         }
-                        .onChange(of: model.selection) { _, _ in model.followLog = false; if let file = model.selectedFile { model.preview(file) } else { model.stopMediaPreview(); model.previewFile = nil } }
+                        .onChange(of: model.selection) { _, _ in model.followLog = false; if model.showPreview, let file = model.selectedFile { model.preview(file) } else { model.stopMediaPreview(); model.previewFile = nil } }
                         .onChange(of: model.filter) { _, _ in model.selection.formIntersection(Set(model.visibleFiles.map(\.path))) }
                     Divider()
                     HStack {
@@ -75,6 +92,7 @@ struct FileWorkspace: View {
                         .help(L10n.text("点击列标题依次切换升序、降序、默认；文件夹始终优先。类型依据名称后缀，不读取文件内容。"))
                     HStack { Text(L10n.text("\(model.visibleFiles.count) 项 · 已选 \(model.selectedFiles.count) 项")); Spacer(); Text(L10n.text("⌘ / ⇧ 多选 · ⌘C 复制 · ⌘V 粘贴")) }.font(.system(size: 10)).foregroundStyle(.secondary).padding(12)
                 }.frame(width: max(0, available - previewWidth))
+                if model.showPreview {
                 Rectangle().fill(Color.primary.opacity(0.08)).frame(width: 10)
                     .interactionFrame("file.previewDivider")
                     .overlay { Capsule().fill(.secondary.opacity(0.5)).frame(width: 3, height: 32) }
@@ -85,20 +103,13 @@ struct FileWorkspace: View {
                     .onTapGesture(count: 2) { model.previewRatio = 0.38 }
                     .onHover { inside in if inside { NSCursor.resizeLeftRight.set() } else { NSCursor.arrow.set() } }
                 preview.frame(width: previewWidth).clipped()
+                }
                 }.coordinateSpace(name: "file-split")
             }
         }
         .overlay { if dropTarget { RoundedRectangle(cornerRadius: 12).strokeBorder(.teal, style: StrokeStyle(lineWidth: 2, dash: [7])).padding(8).allowsHitTesting(false) } }
-        .onDrop(of: [.fileURL], isTargeted: $dropTarget) { providers in
-            for provider in providers {
-                _ = provider.loadDataRepresentation(forTypeIdentifier: UTType.fileURL.identifier) { data, _ in
-                    if let data, let url = URL(dataRepresentation: data, relativeTo: nil) {
-                        DispatchQueue.main.async { queueUpload(url) }
-                    }
-                }
-            }
-            return !providers.isEmpty
-        }
+        .onDrop(of: [.workbenchFiles, .fileURL], isTargeted: $dropTarget, perform: transferTarget.receiveDrop)
+        .onAppear { mounted = true }
         .sheet(item: $transferSelection) { selection in TransferComposer(sources: selection.sources, store: store) }
         .sheet(item: $editDocument) { document in RemoteEditor(document: document, host: host, store: store) { model.load(); if let file = model.previewFile { model.preview(file) } } }
         .onChange(of: model.previewData) { _, _ in
@@ -118,7 +129,7 @@ struct FileWorkspace: View {
                 if !Task.isCancelled && model.followLog, let file = model.previewFile { model.preview(file, tail: true) }
             }
         }
-        .onDisappear { model.stop() }
+        .onDisappear { mounted = false; model.stop() }
         .onChange(of: store.transfers.filter { $0.status == .completed }.map(\.id)) { _, _ in if !model.busy { model.load() } }
         .onChange(of: model.files) { _, files in
             if store.isTestWorkspace, ProcessInfo.processInfo.environment["SWB_QA_SCREEN"] == "files",
@@ -129,7 +140,7 @@ struct FileWorkspace: View {
         }
     }
     private var toolbar: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: 7) {
             Button { model.goBack() } label: { Image(systemName: "chevron.left") }
                 .help(L10n.text("返回上次访问的目录")).accessibilityLabel(L10n.text("返回上次访问的目录"))
                 .disabled(model.history.backDestination == nil || model.busy).interactionFrame("file.goBack")
@@ -138,6 +149,7 @@ struct FileWorkspace: View {
             HStack { Image(systemName: host == nil ? "internaldrive" : "folder").foregroundStyle(.teal); TextField(L10n.text("目录路径"), text: $model.pathInput).textFieldStyle(.plain).font(.system(size: 11, design: .monospaced)).onSubmit { model.load(model.pathInput) } }.padding(8).background(.quaternary.opacity(0.22), in: RoundedRectangle(cornerRadius: 6))
             if model.busy { ProgressView().controlSize(.small) }
             Button { model.load() } label: { Image(systemName: "arrow.clockwise") }.help(L10n.text("刷新目录"))
+            Button { model.showPreview.toggle(); if model.showPreview, let file = model.selectedFile { model.preview(file) } } label: { Image(systemName: model.showPreview ? "sidebar.right" : "rectangle") }.help(L10n.text("显示 / 隐藏文件预览"))
             Menu {
                 Button(L10n.text("新建文件夹")) {
                     if let name = promptText(L10n.text("新建文件夹")), RemotePath.validName(name) { let path = RemotePath.join(model.path, name); model.perform { try $0.mkdir(path) } }
@@ -153,8 +165,8 @@ struct FileWorkspace: View {
                 Button(L10n.text("粘贴 \(store.fileClipboard.count) 项到此目录")) { pasteFiles() }.disabled(store.fileClipboard.isEmpty || model.busy)
                 Button(host == nil ? L10n.text("从本机选择文件…") : L10n.text("上传本地文件…")) { let panel = NSOpenPanel(); panel.allowsMultipleSelection = true; panel.canChooseDirectories = true; if panel.runModal() == .OK { queueSources(panel.urls.map { FileEndpoint(path: $0.path) }) } }
             } label: { Image(systemName: "doc.on.doc") }.menuStyle(.borderlessButton).frame(width: 26)
-            Button { transferSelection = FileTransferSelection(sources: model.selectedEndpoints) } label: { Label(L10n.text("传输到…"), systemImage: "arrow.left.arrow.right") }.buttonStyle(.borderedProminent).disabled(model.selectedFiles.isEmpty)
-        }.buttonStyle(.borderless).padding(16)
+            Button { transferSelection = FileTransferSelection(sources: model.selectedEndpoints) } label: { Image(systemName: "arrow.left.arrow.right") }.help(L10n.text("传输到…")).buttonStyle(.borderedProminent).disabled(model.selectedFiles.isEmpty)
+        }.buttonStyle(.borderless).padding(10)
     }
     @ViewBuilder private var preview: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -257,15 +269,30 @@ struct FileWorkspace: View {
         if confirm(title, L10n.text("位置：\(host?.name ?? L10n.text("此 Mac")) · \(model.path)\n\n\(names)\n\n文件夹中的内容也会被删除，不经过废纸篓，无法撤销。")) { model.deleteFiles(files) }
     }
     private func copyFiles(_ files: [RemoteFile]) {
-        store.fileClipboard = files.map { FileEndpoint(hostID: host?.id, path: $0.path) }
+        do {
+            try store.copyFileReferences(files.map { FileEndpoint(hostID: host?.id, path: $0.path) }, sourceHost: host)
+            model.transferNotice = L10n.text("已复制 \(files.count) 项，可在目标文件分栏按 ⌘V 粘贴。")
+        } catch { model.errorMessage = error.localizedDescription }
     }
-    private func pasteFiles() { queueSources(store.fileClipboard) }
-    private func queueSources(_ sources: [FileEndpoint]) {
-        guard !model.busy, model.path.hasPrefix("/") else { return }
-        do { try store.queueFiles(sources, to: FileEndpoint(hostID: host?.id, path: model.path)) }
+    private func pasteFiles() {
+        do { try queueReferences(store.pastedFileReferences(), target: destination()) }
         catch { model.errorMessage = error.localizedDescription }
     }
-    private func queueUpload(_ url: URL) { queueSources([FileEndpoint(path: url.path)]) }
+    private var transferTarget: FileTransferTarget { FileTransferTarget(model: model, store: store, isAvailable: { mounted && canReceiveFiles() }) }
+    private func destination() throws -> FileEndpointSnapshot { try transferTarget.snapshot() }
+    private func queueReferences(_ source: FileEndpointSnapshot, target: FileEndpointSnapshot) throws {
+        try transferTarget.queue(source, to: target)
+    }
+    private func queueSources(_ sources: [FileEndpoint]) {
+        do { try queueReferences(FileEndpointSnapshot(endpoints: sources, hosts: store.hosts), target: destination()) }
+        catch { model.errorMessage = error.localizedDescription }
+    }
+    private func dragProvider(for file: RemoteFile) -> NSItemProvider {
+        focus()
+        let files = model.selection.contains(file.path) ? model.selectedFiles : [file]
+        do { return try store.fileDragProvider(files.map { FileEndpoint(hostID: host?.id, path: $0.path) }, sourceHost: host) }
+        catch { model.errorMessage = error.localizedDescription; return NSItemProvider() }
+    }
     @MainActor private func verifyDirectoryActivation() async {
         for _ in 0..<100 {
             if !model.busy && model.path == "/home/tester/workspace" { break }

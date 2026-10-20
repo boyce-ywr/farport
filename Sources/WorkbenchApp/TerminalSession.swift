@@ -528,7 +528,21 @@ final class Workspace: ObservableObject {
     @Published var browsingLocalFiles = false
     @Published var showTransferTray = false
     @Published var hostSearch = ""
-    @Published var fileSource: FileBrowserSource?
+    @Published var filePanes: [FilePane] = []
+    @Published var fileLayout = TerminalLayout()
+    var fileSource: FileBrowserSource? {
+        get { focusedFilePane?.source }
+        set {
+            if page == .files, let window = currentFileBrowser?.tableView?.window, window.isKeyWindow,
+               window.attachedSheet == nil, NSApp.modalWindow == nil { window.makeFirstResponder(nil) }
+            objectWillChange.send()
+            if let pane = focusedFilePane { pane.source = newValue }
+            else if let source = newValue {
+                let pane = FilePane(source: source); filePanes.append(pane); fileLayout.select(pane.id)
+            }
+            currentFileBrowser?.focusRequest &+= 1
+        }
+    }
     @Published var attachmentDraft: TerminalAttachmentDraft?
     @Published var sidebarCollapsed = false
     @Published var showTerminalSearch = false
@@ -549,7 +563,6 @@ final class Workspace: ObservableObject {
         fileTerminalOrder.remove(at: source); fileTerminalOrder.insert(identifier, at: destination)
     }
     private var focusGeneration: UInt64 = 0
-    private var fileBrowsers: [FileBrowserSource: FileModel] = [:]
     private var terminalNumbers: [UUID: Int] = [:]
     private var hostTerminalCounts: [UUID?: Int] = [:]
     let store: AppStore
@@ -576,6 +589,7 @@ final class Workspace: ObservableObject {
     }
     var activeTabID: UUID? { page == .files ? fileSource?.terminalID : selectedTerminalID }
     var fileSourceName: String {
+        guard fileSourceAvailable else { return L10n.text("文件来源已失效") }
         if let identifier = fileSource?.terminalID, let session = sessions.first(where: { $0.id == identifier }) { return sessionLabel(session) }
         return fileHost.map { L10n.text("\($0.name) · 主机文件") } ?? L10n.text("此 Mac · 本地文件")
     }
@@ -584,11 +598,10 @@ final class Workspace: ObservableObject {
         return fileBrowser(for: source, host: fileHost)
     }
     private func fileBrowser(for source: FileBrowserSource, host: HostProfile?) -> FileModel {
-        if let existing = fileBrowsers[source], existing.host?.connectionKey == host?.connectionKey { return existing }
-        fileBrowsers[source]?.stop()
-        let browser = FileModel(host: host, store: store)
-        fileBrowsers[source] = browser
-        return browser
+        if let pane = focusedFilePane { return pane.browser(for: source, host: host, store: store, showPreview: filePanes.count == 1) }
+        let pane = FilePane(source: source)
+        filePanes.append(pane); fileLayout.select(pane.id)
+        return pane.browser(for: source, host: host, store: store, showPreview: filePanes.count == 1)
     }
     func sessionLabel(_ session: TerminalSession) -> String {
         "\(session.displayName) · \(session.isLocal ? L10n.text("本机") : (session.tmuxID == nil ? L10n.text("终端") : "tmux")) \(terminalNumbers[session.id] ?? 1)"
@@ -805,6 +818,7 @@ final class Workspace: ObservableObject {
         return true
     }
     func focusNextPane(backward: Bool = false) {
+        if page == .files { fileLayout.focusNext(backward: backward); currentFileBrowser?.focusRequest &+= 1; return }
         layout.focusNext(backward: backward)
         if let session = selectedTerminal { selectTerminal(session) }
     }
@@ -812,7 +826,7 @@ final class Workspace: ObservableObject {
         layout.selectNextTab(backward: backward)
         if let session = selectedTerminal { selectTerminal(session) }
     }
-    func togglePaneZoom() { layout.toggleZoom() }
+    func togglePaneZoom() { if page == .files { fileLayout.toggleZoom() } else { layout.toggleZoom() } }
     func confirmClosePane(_ session: TerminalSession) {
         let detail = session.tmuxID != nil ? L10n.text("只分离此终端，tmux 会话继续运行。") : L10n.text("当前 Shell 和前台任务可能随连接关闭。")
         if session.connected && !confirm(L10n.text("关闭此分栏？"), detail) { return }
@@ -844,7 +858,11 @@ final class Workspace: ObservableObject {
             let next = sessions.last(where: { $0.id != session.id })
             fileSource = next.map { .terminal($0.id) } ?? session.host.map { .host($0.id) } ?? .local
         }
-        fileBrowsers.removeValue(forKey: source)?.stop()
+        objectWillChange.send()
+        for pane in filePanes {
+            pane.remove(source)
+            if pane.source == source { pane.source = session.host.map { .host($0.id) } ?? .local }
+        }
         terminalNumbers.removeValue(forKey: session.id)
         session.close(); sessions.removeAll { $0.id == session.id }
         fileTerminalOrder.removeAll { $0 == session.id }

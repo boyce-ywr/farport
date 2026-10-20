@@ -3,8 +3,9 @@ import SwiftUI
 
 struct TableHeaderSorting: NSViewRepresentable {
     let titles: [String]
+    var enabled = true
     let clicked: (Int) -> Void
-    func makeCoordinator() -> Coordinator { Coordinator(titles: titles, clicked: clicked) }
+    func makeCoordinator() -> Coordinator { Coordinator(titles: titles, enabled: enabled, clicked: clicked) }
     func makeNSView(context: Context) -> NSView {
         let view = NSView(frame: .zero); context.coordinator.anchor = view
         context.coordinator.monitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .leftMouseUp]) { [weak coordinator = context.coordinator] event in
@@ -12,7 +13,7 @@ struct TableHeaderSorting: NSViewRepresentable {
         }
         return view
     }
-    func updateNSView(_ view: NSView, context: Context) { context.coordinator.titles = titles; context.coordinator.clicked = clicked }
+    func updateNSView(_ view: NSView, context: Context) { context.coordinator.titles = titles; context.coordinator.enabled = enabled; context.coordinator.clicked = clicked }
     static func dismantleNSView(_ view: NSView, coordinator: Coordinator) {
         if let monitor = coordinator.monitor { NSEvent.removeMonitor(monitor) }; coordinator.monitor = nil
     }
@@ -20,19 +21,23 @@ struct TableHeaderSorting: NSViewRepresentable {
         weak var anchor: NSView?
         var monitor: Any?
         var titles: [String]
+        var enabled: Bool
         var clicked: (Int) -> Void
         private var pressed: (column: Int, title: String, point: NSPoint)?
-        init(titles: [String], clicked: @escaping (Int) -> Void) { self.titles = titles; self.clicked = clicked }
-        private func findTable(_ view: NSView) -> NSTableView? {
-            if let table = view as? NSTableView { return table }
-            for child in view.subviews { if let table = findTable(child) { return table } }
+        init(titles: [String], enabled: Bool, clicked: @escaping (Int) -> Void) { self.titles = titles; self.enabled = enabled; self.clicked = clicked }
+        private func findTable(_ view: NSView, at point: NSPoint) -> NSTableView? {
+            if let table = view as? NSTableView, let scroll = table.enclosingScrollView,
+               scroll.convert(scroll.bounds, to: nil).contains(point) { return table }
+            for child in view.subviews { if let table = findTable(child, at: point) { return table } }
             return nil
         }
         func handle(_ event: NSEvent) -> NSEvent? {
+            guard enabled else { pressed = nil; return event }
             guard let anchor, anchor.window === event.window, !anchor.isHiddenOrHasHiddenAncestor else { return event }
             var ancestor: NSView? = anchor.superview
             var table: NSTableView?
-            while let view = ancestor { if let found = findTable(view) { table = found; break }; ancestor = view.superview }
+            let location = anchor.convert(NSPoint.zero, to: nil)
+            while let view = ancestor { if let found = findTable(view, at: location) { table = found; break }; ancestor = view.superview }
             guard let table, let header = table.headerView else { return event }
             let point = header.convert(event.locationInWindow, from: nil)
             let index = header.column(at: point)

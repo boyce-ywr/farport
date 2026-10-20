@@ -43,6 +43,7 @@ bash scripts/check.sh --integration   # Docker 隔离 SSH 环境与集成检查
 bash scripts/check-workbench-ux.sh    # 实际界面回归，需要先准备隔离主机
 bash scripts/check-attachments.sh    # 附件上传、回读和 tmux
 bash scripts/check-file-preview.sh   # 中英文、目录历史、源码高亮与媒体播放
+bash scripts/check-file-panes.sh --ssh # 中英文文件分栏、跨主机复制、拖拽数据链和焦点隔离
 bash scripts/check-host-monitor.sh  # 本机/Linux监控、菜单及附件策略
 ```
 

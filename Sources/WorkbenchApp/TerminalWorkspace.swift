@@ -65,16 +65,16 @@ struct TerminalWorkspace: View {
     }
 }
 
-private struct TerminalDivider: Identifiable {
+struct WorkspacePaneDivider: Identifiable {
     let id: UUID
     let axis: TerminalSplitAxis
     let container: CGRect
     let frame: CGRect
 }
 
-private struct TerminalPaneGeometry {
+struct WorkspacePaneGeometry {
     var panes: [UUID: CGRect] = [:]
-    var dividers: [TerminalDivider] = []
+    var dividers: [WorkspacePaneDivider] = []
     init(root: TerminalPaneNode, bounds: CGRect) { arrange(root, in: bounds) }
     private mutating func arrange(_ node: TerminalPaneNode, in bounds: CGRect) {
         switch node {
@@ -89,7 +89,7 @@ private struct TerminalPaneGeometry {
                                       width: vertical ? 6 : bounds.width, height: vertical ? bounds.height : 6)
             let secondFrame = CGRect(x: vertical ? dividerFrame.maxX : bounds.minX, y: vertical ? bounds.minY : dividerFrame.maxY,
                                      width: vertical ? length - leading : bounds.width, height: vertical ? bounds.height : length - leading)
-            dividers.append(TerminalDivider(id: identifier, axis: axis, container: bounds, frame: dividerFrame))
+            dividers.append(WorkspacePaneDivider(id: identifier, axis: axis, container: bounds, frame: dividerFrame))
             arrange(first, in: firstFrame); arrange(second, in: secondFrame)
         }
     }
@@ -102,7 +102,7 @@ private struct TerminalTabContent: View {
     var body: some View {
         GeometryReader { geometry in
             let bounds = CGRect(origin: .zero, size: geometry.size)
-            let layout = TerminalPaneGeometry(root: tab.root, bounds: bounds)
+            let layout = WorkspacePaneGeometry(root: tab.root, bounds: bounds)
             ZStack(alignment: .topLeading) {
                 ForEach(tab.terminals, id: \.self) { identifier in
                     if let session = workspace.sessions.first(where: { $0.id == identifier }), let pane = layout.panes[identifier] {

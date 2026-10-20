@@ -25,7 +25,9 @@ final class AppStore: ObservableObject {
         didSet { UserDefaults.standard.set(notifyLongTasks, forKey: "notifyLongTasks") }
     }
     private var transferStarted: [UUID: Date] = [:]
-    @Published var fileClipboard: [FileEndpoint] = []
+    @Published var copiedFiles: FileEndpointSnapshot?
+    var copiedFilesChangeCount = -1
+    var draggedFiles: FileEndpointSnapshot?
     @Published var workspaceTools = WorkspaceToolsState()
     private var toolsSave: Task<Void, Never>?
     private var toolsWritable = true
