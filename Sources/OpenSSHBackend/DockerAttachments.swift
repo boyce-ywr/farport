@@ -128,6 +128,11 @@ public struct DockerAttachmentDaemon: Equatable, Sendable {
         try validate(binding, cancellation: cancellation)
         return try run(["exec", "-i", "--user", binding.user, binding.container.id, "sh", "-c", script, "farport-attachments"] + arguments, input: input, cancellation: cancellation)
     }
+    public func agentTerminal(_ binding: DockerAttachmentBinding, command: String, cancellation: CancellationFlag) throws -> TerminalProcessLaunch {
+        try validate(binding, cancellation: cancellation)
+        return TerminalProcessLaunch(executable: executable, arguments: ["--host", endpoint, "exec", "-it", "--user", binding.user, binding.container.id,
+                                                                       "sh", "-c", "exec \"${SHELL:-/bin/sh}\" -l -c \"$1\"", "farport-agent", command], environment: environment)
+    }
 }
 
 public struct DockerUploadedAttachments: Sendable {

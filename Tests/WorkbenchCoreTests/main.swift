@@ -16,6 +16,9 @@ func rejects(_ message: String, _ operation: () throws -> Void) throws {
 }
 
 do {
+    try checkAgentSessions()
+    if CommandLine.arguments.contains("--agent-session-check") { print("PASS · \(checks) 项会话与导航断言"); exit(0) }
+    if let index = CommandLine.arguments.firstIndex(of: "--agent-session-ssh"), CommandLine.arguments.indices.contains(index + 1) { try checkAgentRemote(root: CommandLine.arguments[index + 1]); exit(0) }
     try checkDockerTerminalCommands()
     if let index = CommandLine.arguments.firstIndex(of: "--docker-attachments-check") { try checkDockerAttachments(arguments: Array(CommandLine.arguments.dropFirst(index + 1))); exit(0) }
     if CommandLine.arguments.contains("--local-tmux-directory-check") { try checkLocalTmuxDirectory(); exit(0) }

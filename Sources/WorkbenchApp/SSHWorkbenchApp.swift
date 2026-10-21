@@ -72,8 +72,15 @@ struct WorkbenchCommands: Commands {
             Button(L10n.text("下一个分栏")) { workspace?.focusNextPane() }.keyboardShortcut("]").disabled(workspace?.page != .terminal && workspace?.page != .files)
             Button(L10n.text("最大化 / 还原当前分栏")) { workspace?.togglePaneZoom() }.keyboardShortcut(.return, modifiers: [.command, .shift]).disabled(workspace?.page != .terminal && workspace?.page != .files)
             Divider()
-            Button(L10n.text("上一个标签")) { workspace?.selectNextTab(backward: true) }.keyboardShortcut("[", modifiers: [.command, .shift]).disabled(workspace?.page != .terminal)
-            Button(L10n.text("下一个标签")) { workspace?.selectNextTab() }.keyboardShortcut("]", modifiers: [.command, .shift]).disabled(workspace?.page != .terminal)
+            Button(L10n.text("上一个标签")) { workspace?.navigateTerminal(.previous) }.keyboardShortcut("[", modifiers: [.command, .shift]).disabled(workspace?.canNavigateTerminalTabs != true)
+            Button(L10n.text("下一个标签")) { workspace?.navigateTerminal(.next) }.keyboardShortcut("]", modifiers: [.command, .shift]).disabled(workspace?.canNavigateTerminalTabs != true)
+            Button(L10n.text("上一个标签 · ⌘⌥←")) { workspace?.navigateTerminal(.previous) }.keyboardShortcut(.leftArrow, modifiers: [.command, .option]).disabled(workspace?.canNavigateTerminalTabs != true)
+            Button(L10n.text("下一个标签 · ⌘⌥→")) { workspace?.navigateTerminal(.next) }.keyboardShortcut(.rightArrow, modifiers: [.command, .option]).disabled(workspace?.canNavigateTerminalTabs != true)
+            ForEach(1...9, id: \.self) { number in
+                Button(number == 9 ? L10n.text("最后一个标签") : L10n.text("切换到标签 \(number)")) { workspace?.navigateTerminal(.number(number)) }
+                    .keyboardShortcut(KeyEquivalent(Character(String(number))), modifiers: [.command, .option]).disabled(workspace?.canNavigateTerminalTabs != true)
+            }
+            Button(L10n.text("Agent 会话…")) { workspace?.showAgentSessions = true }.keyboardShortcut("j", modifiers: [.command, .option]).disabled(workspace?.canNavigateTerminalTabs != true)
         }
         CommandMenu(L10n.text("工作区")) {
             Button(L10n.text("常用命令…")) { workspace?.showCommandSnippets = true }.keyboardShortcut("p", modifiers: [.command, .shift]).disabled(workspace == nil)

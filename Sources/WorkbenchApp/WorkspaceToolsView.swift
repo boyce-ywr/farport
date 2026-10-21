@@ -8,6 +8,7 @@ struct WorkspaceToolsMenu: View {
     var body: some View {
         Menu {
             Button(L10n.text("常用命令…")) { workspace.showCommandSnippets = true }
+            Button(L10n.text("Agent 会话… · ⌘⌥J")) { workspace.showAgentSessions = true }.disabled(workspace.selectedTerminal == nil)
             Button(L10n.text("打开远程 Mac 桌面…")) { workspace.screenSharingHost = workspace.toolsHost }.disabled(workspace.toolsHost == nil)
             Button(L10n.text("远端网页与服务模板…")) { workspace.webServiceHost = workspace.toolsHost }.disabled(workspace.toolsHost == nil)
             Menu(L10n.text("恢复工作区")) {

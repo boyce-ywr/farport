@@ -67,6 +67,28 @@ func checkDockerAttachments(arguments: [String]) throws {
     try rejects("不能选择另一个容器") { _ = try selection.daemon.confirm(other, terminal: terminal, cancellation: CancellationFlag()) }
     let binding = try selection.daemon.confirm(container, terminal: terminal, cancellation: CancellationFlag())
     try expect(binding.user != "0:0", "使用docker exec用户而非默认root")
+    let catalog = AgentSessionCatalog(target: .docker(binding), transport: transport)
+    let listing = try catalog.list(history: false, cancellation: CancellationFlag())
+    try expect(listing.user == binding.user.split(separator: ":").first.map(String.init) && listing.sessions.isEmpty, "Agent面板读取容器原用户，不扫描宿主历史")
+    _ = try ProcessRunner.run(executable: executable, arguments: ["exec", container, "mv", "/usr/bin/python3", "/usr/bin/python3.farport-check"]).checked()
+    do {
+        defer { _ = try? ProcessRunner.run(executable: executable, arguments: ["exec", container, "mv", "/usr/bin/python3.farport-check", "/usr/bin/python3"]) }
+        let fallback = try catalog.list(history: true, cancellation: CancellationFlag())
+        try expect(fallback.sessions.isEmpty && fallback.notices.contains("python3-unavailable") && fallback.tools.count == 3, "容器缺Python时降级工具选择器，不误报空历史")
+    }
+    let plan = try AgentLaunchPlan(tool: .codex, directory: "/tmp", executable: "/bin/pwd", action: .newSession)
+    let agentLaunch = try catalog.prepare(plan)
+    let launchCommand = ([agentLaunch.executable] + agentLaunch.arguments).map(RemotePath.quote).joined(separator: " ") + "; sleep 15"
+    let agentWindow = try tmux.execute("new-window -d -P -F '#{window_id}' -n agent-check -t docker: " + RemotePath.quote(launchCommand)).checked().text.trimmingCharacters(in: .whitespacesAndNewlines)
+    defer { _ = try? tmux.execute("kill-window -t " + RemotePath.quote(agentWindow)) }
+    let launchDeadline = Date().addingTimeInterval(10)
+    var launched = ""
+    repeat {
+        launched = try tmux.execute("capture-pane -p -J -t " + RemotePath.quote(agentWindow)).checked().text
+        if launched.trimmingCharacters(in: .whitespacesAndNewlines) == "/tmp" { break }
+        Thread.sleep(forTimeInterval: 0.1)
+    } while Date() < launchDeadline
+    try expect(launched.trimmingCharacters(in: .whitespacesAndNewlines) == "/tmp", "新容器Agent真实TTY使用容器工作目录")
     let file = root.appendingPathComponent("图片 空格'$;.png")
     let data = Data("container-attachment-".utf8) + Data(UUID().uuidString.utf8)
     try data.write(to: file)

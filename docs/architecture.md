@@ -32,6 +32,8 @@ Haven 仅作为需求参考；未引入 Android Context、Service、Compose 或 
 
 本机 tmux 管理命令同样显式设置子进程的真实工作目录为 `LocalShellConfiguration.directory`；仅设置 `HOME` / `PWD` 不能替代进程目录。`ProcessRunner` 的可选 `currentDirectory` 仅影响该子进程，不修改应用全局 cwd。新建本机 tmux 窗口/分割窗格使用目标 `pane_current_path`；远端命令与重新附着旧会话不改变目录语义。
 
+Agent 会话入口复用现有 `Workspace` / `TerminalLayout` / `TerminalSession`：`TerminalNavigationCommands` 负责限定终端焦点的事件消费，`TerminalNavigationAction` 定义无平台的精确键组合；不另建标签状态。`AgentSessionCatalog` 按本机、SSH、已确认 Docker 目标执行受限元数据读取与启动预检，`AgentLaunchPlan` 只从结构化工具、目录和记录生成安全参数。启动在全新 PTY 或独立 tmux 中执行，当前运行终端不接收恢复命令；记录主键包含工具数据根，启动复核同一原生会话，不以历史文件时间判断在线状态。`agent_sessions.py` 是按用户授权运行的受限只读元数据适配，不充当三工具的完整官方 SDK，也不写入它们的会话数据库。
+
 容器附件在本机 tmux 的基础上使用 `LocalDockerTerminal` 读取同用户窗格的前台进程组、PID/启动时间与 Docker argv，仅保留识别所需字段，不把全部进程环境或参数落盘。`DockerTerminalCommand` 拒绝不明确的调用；`DockerAttachmentDaemon` 固定 context、daemon、完整容器 ID/启动状态和接收 UID/GID，先确认再写入。`DockerAttachmentUploader` 对私有本地快照与容器文件做清单/内容复核，通过目标用户的 exec stdin 写入，避免 `docker cp` 默认所有者与接收用户不一致。`TerminalAttachmentDraft` 仍管理确认、取消、焦点/输入世代和最终定向插入；普通本机、SSH 和未确认 Docker 的原有保护不变。
 
 0.1.3：`FileBrowserSource` 将文件来源与终端布局分离，Workspace 缓存每个来源的 `FileModel`，`SessionTabs` 同时显示在终端与文件页。`AttachmentUploader` 只负责源→目标复制和实际回读；`TerminalAttachmentDraft` 管理图片暂存、目标确认、身份快照和插入许可。`AttachmentDeliveryIdentity` 把连接、会话、窗口焦点、输入世代纳入比较。tmux 复用同一服务，但本机调用已有二进制，远端走 OpenSSH；定向粘贴使用一次性 tmux buffer，不修改全局配置。

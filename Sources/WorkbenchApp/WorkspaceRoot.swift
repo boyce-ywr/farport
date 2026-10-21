@@ -32,6 +32,7 @@ struct WorkspaceRoot: View {
         .coordinateSpace(name: "workspace-interactions")
         .onPreferenceChange(InteractionFrames.self) { interactionFrames = $0 }
         .focusedSceneObject(workspace)
+        .background(TerminalNavigationCommands(workspace: workspace).frame(width: 0, height: 0))
         .onChange(of: store.automaticallyReconnectSSH) { _, enabled in workspace.sessions.forEach { $0.setAutomaticReconnect(enabled) } }
         .overlay(alignment: .topTrailing) {
             if let notice = store.taskNotice {
@@ -42,6 +43,7 @@ struct WorkspaceRoot: View {
             }
         }
         .sheet(isPresented: $workspace.showCommandSnippets) { CommandSnippetsView(workspace: workspace, store: store) }
+        .sheet(isPresented: $workspace.showAgentSessions) { AgentSessionsView(workspace: workspace) }
         .sheet(item: $workspace.screenSharingHost) { host in ScreenSharingView(host: host, store: store) }
         .sheet(item: $workspace.webServiceHost) { host in WebServicesView(host: host, store: store) }
         .background(WindowTitlebar().frame(width: 0, height: 0))
@@ -208,6 +210,15 @@ struct WorkspaceRoot: View {
         guard !didPrepareQA, store.isTestWorkspace, let output = ProcessInfo.processInfo.environment["SWB_QA_OUTPUT"] else { return }
         didPrepareQA = true
         let screen = ProcessInfo.processInfo.environment["SWB_QA_SCREEN"] ?? "terminal"
+        if screen == "agent-workspace" || screen == "agent-workspace-models" {
+            do {
+                if screen == "agent-workspace-models" { try await AgentWorkspaceChecks.runModels(workspace: workspace) }
+                else { try await AgentWorkspaceChecks.run(workspace: workspace, output: URL(fileURLWithPath: output)) }
+                NSApp.terminate(nil)
+            }
+            catch { fputs("FAIL · \(error.localizedDescription)\n", stderr); exit(1) }
+            return
+        }
         if screen == "docker-claude-live" {
             do { try await DockerClaudeLiveChecks.run(workspace: workspace, output: URL(fileURLWithPath: output)); NSApp.terminate(nil) }
             catch { fputs("FAIL · \(error.localizedDescription)\n", stderr); exit(1) }

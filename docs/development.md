@@ -48,6 +48,10 @@ bash scripts/check-local-tmux-directory.sh # 从根目录和测试目录启动�
 bash scripts/check-docker-attachments.sh # 创建两个隔离容器，验证识别、权限、复制与目标变化保护
 bash scripts/check-docker-attachments.sh --models # 中英文附件准备/确认/手动插入/清理链，不要求前台
 bash scripts/check-docker-attachments.sh --ui # 中英文真实Cmd+V、确认弹窗与自动焦点；需要解锁构建机
+bash scripts/check-agent-workspace.sh # 中英文标签事件不泄漏、面板与新PTY工作目录；需前台解锁
+bash scripts/check-agent-workspace.sh --models # 中英文非前台Agent启动/重新附着/取消/失效目标处理链
+.build/debug/workbench-tests --agent-session-check # 三工具元数据、恢复参数、数据根和路径安全
+.build/debug/workbench-tests --agent-session-ssh .test/app # 两个隔离SSH目标，工具夹具验证cwd/argv
 SWB_QA_DOCKER_ENDPOINT_MODE=host bash scripts/check-docker-attachments.sh --ui # DOCKER_HOST本机socket完整回归
 SWB_QA_DOCKER_ENDPOINT_MODE=flag bash scripts/check-docker-attachments.sh # 显式-H/--host连接回归
 bash scripts/check-host-monitor.sh  # 本机/Linux监控、菜单及附件策略

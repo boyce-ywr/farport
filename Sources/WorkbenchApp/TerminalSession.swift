@@ -285,6 +285,8 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable, LocalProc
     private var preparingTmuxMenu = false
     private let transport: SSHTransport
     var dockerAttachmentBinding: DockerAttachmentBinding?
+    var agentLaunch: (AgentSessionCatalog, AgentLaunchPlan)?
+    var agentRecordKey: String?
     var isLocal: Bool { host == nil }
     var displayName: String { host?.name ?? L10n.text("此 Mac") }
     var subtitle: String { host?.subtitle ?? L10n.text("\(NSUserName()) · \(LocalShellConfiguration.userShell) · 登录 Shell") }
@@ -319,7 +321,23 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable, LocalProc
         Task {
             do {
                 guard !disposed, !cancellation.isCancelled, connectionID == attemptID else { return }
-                if let host {
+                if let (catalog, plan) = agentLaunch {
+                    let tmux = tmuxID
+                    let launch = try await Task.detached { () -> TerminalProcessLaunch in
+                        if let tmux {
+                            let service = TmuxService(transport: transport, host: host)
+                            guard try service.sessions().contains(where: { $0.name == tmux || $0.id == tmux }) else { throw WorkbenchError.message(L10n.text("原 Agent tmux 会话已不存在，不会自动重新执行恢复命令。")) }
+                            if let host { return TerminalProcessLaunch(executable: "/usr/bin/ssh", arguments: try transport.terminalArguments(for: host, tmuxSession: tmux), environment: transport.environment(for: host)) }
+                            let configuration = try LocalShellConfiguration()
+                            return TerminalProcessLaunch(executable: try TmuxService.localExecutable(), arguments: ["attach-session", "-t", tmux], environment: configuration.environment, directory: configuration.directory)
+                        }
+                        return try catalog.prepare(plan, cancellation: cancellation)
+                    }.value
+                    guard !disposed, !cancellation.isCancelled, connectionID == attemptID else { return }
+                    guard connectionConfigurationValid() else { connecting = false; started = false; stateKey = "主机配置已变化，请重新打开终端"; releaseNetworkActivity(); return }
+                    terminal.prepareProcessStart()
+                    terminal.startProcess(executable: launch.executable, args: launch.arguments, environment: launch.environment.map { "\($0.key)=\($0.value)" }, currentDirectory: launch.directory)
+                } else if let host {
                     let tmux = tmuxID != nil
                     let graphicsCompatible = try await Task.detached {
                         _ = try transport.run(host, command: SSHTransport.connectionProbe, cancellation: cancellation, timeout: automatic ? 20 : 120).checked()
@@ -377,7 +395,7 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable, LocalProc
         reconnect()
     }
     func setAutomaticReconnect(_ enabled: Bool) {
-        automaticReconnectEnabled = enabled
+        automaticReconnectEnabled = enabled && agentLaunch == nil
         if !enabled { pauseAutomaticReconnect() }
         else { autoReconnectPaused = false; if recoveryNeeded { scheduleAutomaticReconnect(immediate: true) } }
     }
@@ -548,6 +566,7 @@ final class Workspace: ObservableObject {
     @Published var sidebarCollapsed = false
     @Published var showTerminalSearch = false
     @Published var showCommandSnippets = false
+    @Published var showAgentSessions = false
     @Published var screenSharingHost: HostProfile?
     @Published var webServiceHost: HostProfile?
     @Published var followTerminalDirectory = false
@@ -605,7 +624,8 @@ final class Workspace: ObservableObject {
         return pane.browser(for: source, host: host, store: store, showPreview: filePanes.count == 1)
     }
     func sessionLabel(_ session: TerminalSession) -> String {
-        "\(session.displayName) · \(session.isLocal ? L10n.text("本机") : (session.tmuxID == nil ? L10n.text("终端") : "tmux")) \(terminalNumbers[session.id] ?? 1)"
+        if let (catalog, plan) = session.agentLaunch { return (plan.isShell ? L10n.text("终端") : plan.tool.title) + " · " + catalog.target.label + " · " + (plan.directory as NSString).lastPathComponent }
+        return "\(session.displayName) · \(session.isLocal ? L10n.text("本机") : (session.tmuxID == nil ? L10n.text("终端") : "tmux")) \(terminalNumbers[session.id] ?? 1)"
     }
     private func register(_ session: TerminalSession) {
         let next = (hostTerminalCounts[session.host?.id] ?? 0) + 1
@@ -787,6 +807,14 @@ final class Workspace: ObservableObject {
         if split && layout.primary != nil { layout.split(with: session.id, axis: axis) } else { layout.select(session.id) }
         fileSource = .terminal(session.id)
         browsingLocalFiles = true; selectedHostID = nil; page = .terminal
+    }
+    func launchAgent(catalog: AgentSessionCatalog, plan: AgentLaunchPlan, key: String?, tmux: String? = nil) {
+        let session = TerminalSession(host: catalog.target.host, tmuxID: tmux, transport: store.transport)
+        session.agentLaunch = (catalog, plan); session.agentRecordKey = key
+        session.title = (plan.isShell ? L10n.text("终端") : plan.tool.title) + " · " + (plan.directory as NSString).lastPathComponent
+        register(session); session.setAutomaticReconnect(false)
+        layout.select(session.id); fileSource = .terminal(session.id)
+        selectedHostID = session.host?.id; browsingLocalFiles = session.isLocal; page = .terminal
     }
     func openLocalTerminal() {
         if let session = sessions.last(where: \.isLocal) { selectTerminal(session); page = .terminal }
