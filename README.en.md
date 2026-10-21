@@ -69,13 +69,13 @@ This README describes the main branch. Check each release's notes for the featur
 
 **Update from 0.1.8 build 9**: the current version includes the preview shutdown crash fix.
 
-Download the stable version from [GitHub Releases](https://github.com/boyce-ywr/farport/releases/latest). **0.1.10 is a prerelease** with the copy and sorting improvements; see its release notes for the packaged-app validation limitation. The stable version remains 0.1.9.
+Download the stable version from [GitHub Releases](https://github.com/boyce-ywr/farport/releases/latest). **The current stable version is 0.1.14 (build 20)**, adding terminal tab shortcuts, cross-project Agent session lists, split-pane directory inheritance, and clipboard permission settings. See the [release notes (Chinese)](docs/releases/0.1.14.md) for validation coverage and known limitations.
 
 | Mac | Download |
 | --- | --- |
-| Apple Silicon, including M-series chips | [Apple Silicon](https://github.com/boyce-ywr/farport/releases/download/v0.1.10/Farport-0.1.10-arm64.dmg) |
-| Intel | [Intel](https://github.com/boyce-ywr/farport/releases/download/v0.1.10/Farport-0.1.10-x86_64.dmg) |
-| Unsure, or need both architectures | [Universal](https://github.com/boyce-ywr/farport/releases/download/v0.1.10/Farport-0.1.10-universal.dmg) |
+| Apple Silicon, including M-series chips | [Apple Silicon](https://github.com/boyce-ywr/farport/releases/download/v0.1.14/Farport-0.1.14-arm64.dmg) |
+| Intel | [Intel](https://github.com/boyce-ywr/farport/releases/download/v0.1.14/Farport-0.1.14-x86_64.dmg) |
+| Unsure, or need both architectures | [Universal](https://github.com/boyce-ywr/farport/releases/download/v0.1.14/Farport-0.1.14-universal.dmg) |
 
 1. Open the DMG and drag **Farport.app** into **Applications**.
 2. Launch Farport from Applications. Save your work and quit the previous version before upgrading.
