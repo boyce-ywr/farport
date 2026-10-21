@@ -3,6 +3,7 @@ set -euo pipefail
 case "${1:-}" in ""|--models) ;; *) echo "用法：$0 [--models]" >&2; exit 2;; esac
 cd "$(dirname "$0")/.."
 mkdir -p .test
+python3 Tests/WorkbenchCoreTests/agent_session_listing_checks.py
 swift build --build-system native
 .build/debug/workbench-tests --agent-session-check
 for language in zh-Hans en; do

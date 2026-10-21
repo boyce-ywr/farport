@@ -13,11 +13,16 @@ public struct AgentSessionRecord: Codable, Identifiable, Equatable, Sendable {
     public let file: String
     public let dataRoot: String
     public let modified: Double
+    public let lastActive: Double?
+    public let activitySource: String?
     public let title: String
+    public var activityDate: Date { Date(timeIntervalSince1970: lastActive ?? modified) }
+    public var displayTitle: String { title.isEmpty ? L10n.text("未命名会话") : title }
     public var id: String { tool.rawValue + ":" + dataRoot + ":" + sessionID }
     public func validate() throws {
         guard UUID(uuidString: sessionID) != nil, Self.validPath(directory), Self.validPath(file), Self.validPath(dataRoot), file.hasSuffix(".jsonl"),
-              modified.isFinite, modified >= 0, title.count <= 300, title.rangeOfCharacter(from: .controlCharacters) == nil else {
+              modified.isFinite, modified >= 0, lastActive.map({ $0.isFinite && $0 >= 0 }) != false,
+              title.count <= 300, title.rangeOfCharacter(from: .controlCharacters) == nil else {
             throw WorkbenchError.message(L10n.text("会话记录无效或不兼容，未启动恢复。"))
         }
     }

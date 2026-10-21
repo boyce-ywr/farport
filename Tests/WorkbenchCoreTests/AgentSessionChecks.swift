@@ -51,6 +51,8 @@ func checkAgentSessions() throws {
     try expect(!result.text.contains("SECRET"), "历史输出不包含聊天正文/系统指令")
     let listing = try JSONDecoder().decode(AgentSessionListing.self, from: result.output)
     try expect(listing.sessions.count == 3, "三Agent会话元数据发现")
+    let codexOnly = try JSONDecoder().decode(AgentSessionListing.self, from: query(["--history", "--tool", "codex"]).checked().output)
+    try expect(codexOnly.sessions.count == 1 && codexOnly.sessions[0].tool == .codex, "按Agent读取跨项目历史，不混入其他工具")
     for record in listing.sessions {
         try record.validate()
         try expect(record.sessionID == identifiers[record.tool] && record.directory == directory.path, "历史ID与真实cwd一致")

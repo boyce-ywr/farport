@@ -19,6 +19,10 @@ private final class TmuxRightMouseEvent: NSEvent {
 
 final class SafeTerminalView: LocalProcessTerminalView {
     let clipboard = TerminalClipboardState()
+    var allowsClipboardInteraction: Bool {
+        NSApp.isActive && NSApp.keyWindow === window && window?.firstResponder === self
+            && window?.attachedSheet == nil && NSApp.modalWindow == nil && !isHiddenOrHasHiddenAncestor
+    }
     private var proxy: TerminalSecurityProxy!
     var attachmentStagingRoot: URL?
     var onAttachments: ((TerminalAttachmentPayload) -> Void)?
@@ -228,13 +232,19 @@ private final class TerminalSecurityProxy: TerminalViewDelegate {
     func scrolled(source: TerminalView, position: Double) { owner?.scrolled(source: source, position: position) }
     func requestOpenLink(source: TerminalView, link: String, params: [String: String]) { owner?.requestOpenLink(source: source, link: link, params: params) }
     func bell(source: TerminalView) { NSSound.beep() }
-    func clipboardRead(source: TerminalView) -> Data? { nil }
+    func clipboardRead(source: TerminalView) -> Data? {
+        guard Thread.isMainThread else { return nil }
+        return MainActor.assumeIsolated {
+            guard let owner else { return nil }
+            return owner.clipboard.read(interactive: owner.allowsClipboardInteraction)
+        }
+    }
     func clipboardCopy(source: TerminalView, content: Data) {
         DispatchQueue.main.async { [weak owner] in
             guard let owner else { return }
-            let interactive = NSApp.isActive && NSApp.keyWindow === owner.window && owner.window?.firstResponder === owner
-            owner.clipboard.receive(content, interactive: interactive) {
-                let alert = NSAlert(); alert.messageText = L10n.text("允许此终端写入 Mac 剪贴板？"); alert.informativeText = L10n.text("终端程序请求复制内容（例如 tmux 复制模式）。通过终端协议读取剪贴板的请求始终被拒绝。"); alert.addButton(withTitle: L10n.text("允许本终端写入")); alert.addButton(withTitle: L10n.text("拒绝"))
+            let interactive = owner.allowsClipboardInteraction
+            owner.clipboard.receive(content, interactive: interactive, isStillInteractive: { owner.allowsClipboardInteraction }) {
+                let alert = NSAlert(); alert.messageText = L10n.text("允许此终端写入 Mac 剪贴板？"); alert.informativeText = L10n.text("终端程序请求复制内容。可在设置 → 隐私与安全 → 终端剪贴板中选择始终允许写入，不再询问。读取权限单独设置。"); alert.addButton(withTitle: L10n.text("允许本终端写入")); alert.addButton(withTitle: L10n.text("拒绝"))
                 return alert.runModal() == .alertFirstButtonReturn
             }
         }
@@ -287,12 +297,15 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable, LocalProc
     var dockerAttachmentBinding: DockerAttachmentBinding?
     var agentLaunch: (AgentSessionCatalog, AgentLaunchPlan)?
     var agentRecordKey: String?
+    var initialDirectory: String?
+    var initialDirectoryResolver: (() async -> String?)?
     var isLocal: Bool { host == nil }
     var displayName: String { host?.name ?? L10n.text("此 Mac") }
     var subtitle: String { host?.subtitle ?? L10n.text("\(NSUserName()) · \(LocalShellConfiguration.userShell) · 登录 Shell") }
     var restartLabel: String { isLocal ? L10n.text("重新打开") : L10n.text("重连") }
-    init(host: HostProfile? = nil, tmuxID: String? = nil, transport: SSHTransport, id: UUID = UUID()) {
+    init(host: HostProfile? = nil, tmuxID: String? = nil, transport: SSHTransport, id: UUID = UUID(), directoryResolver: (() async -> String?)? = nil) {
         self.id = id; self.host = host; self.tmuxID = tmuxID; self.transport = transport
+        initialDirectoryResolver = directoryResolver
         title = tmuxID == nil ? (host?.name ?? L10n.text("此 Mac")) : "tmux · \(host?.name ?? L10n.text("此 Mac"))"
         super.init()
         stateKey = isLocal ? "待启动" : "待连接"
@@ -321,6 +334,11 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable, LocalProc
         Task {
             do {
                 guard !disposed, !cancellation.isCancelled, connectionID == attemptID else { return }
+                if let resolver = initialDirectoryResolver {
+                    initialDirectoryResolver = nil
+                    initialDirectory = await resolver()
+                    guard !disposed, !cancellation.isCancelled, connectionID == attemptID else { return }
+                }
                 if let (catalog, plan) = agentLaunch {
                     let tmux = tmuxID
                     let launch = try await Task.detached { () -> TerminalProcessLaunch in
@@ -347,9 +365,9 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable, LocalProc
                     guard !disposed, !cancellation.isCancelled, connectionID == attemptID else { return }
                     guard connectionConfigurationValid() else { connecting = false; started = false; stateKey = "主机配置已变化，请重新打开终端"; releaseNetworkActivity(); return }
                     terminal.prepareProcessStart()
-                    terminal.startProcess(executable: "/usr/bin/ssh", args: try transport.terminalArguments(for: host, tmuxSession: tmuxID, graphicsCompatible: graphicsCompatible), environment: transport.environment(for: host).map { "\($0.key)=\($0.value)" })
+                    terminal.startProcess(executable: "/usr/bin/ssh", args: try transport.terminalArguments(for: host, tmuxSession: tmuxID, graphicsCompatible: graphicsCompatible, currentDirectory: initialDirectory), environment: transport.environment(for: host).map { "\($0.key)=\($0.value)" })
                 } else {
-                    let configuration = try LocalShellConfiguration()
+                    let configuration = try LocalShellConfiguration(currentDirectory: initialDirectory)
                     var environment = configuration.environment
                     environment.removeValue(forKey: "TMUX"); environment.removeValue(forKey: "TMUX_PANE")
                     terminal.prepareProcessStart()
@@ -631,6 +649,8 @@ final class Workspace: ObservableObject {
         let next = (hostTerminalCounts[session.host?.id] ?? 0) + 1
         hostTerminalCounts[session.host?.id] = next; terminalNumbers[session.id] = next
         sessions.append(session)
+        session.terminal.clipboard.writePolicy = { [weak store] in store?.terminalClipboardWritePolicy ?? .ask }
+        session.terminal.clipboard.readAllowed = { [weak store] in store?.terminalClipboardReadAllowed == true }
         session.terminal.onContextFocus = { [weak self, weak session] in
             guard let self, let session, layout.selectedTab?.terminals.contains(session.id) == true else { return }
             if selectedTerminalID != session.id { selectTerminal(session) }
@@ -790,9 +810,9 @@ final class Workspace: ObservableObject {
             if let session = sessions.last(where: { $0.host?.id == selectedHostID }) { layout.select(session.id) }
         }
     }
-    func connect(_ host: HostProfile, tmux: String? = nil, split: Bool = false, sessionName: String? = nil, axis: TerminalSplitAxis = .leftRight) {
+    func connect(_ host: HostProfile, tmux: String? = nil, split: Bool = false, sessionName: String? = nil, axis: TerminalSplitAxis = .leftRight, directoryResolver: (() async -> String?)? = nil) {
         let preserveSplit = split && layout.primary != nil
-        let session = TerminalSession(host: host, tmuxID: tmux, transport: store.transport)
+        let session = TerminalSession(host: host, tmuxID: tmux, transport: store.transport, directoryResolver: directoryResolver)
         register(session)
         if preserveSplit { layout.split(with: session.id, axis: axis) } else { layout.select(session.id) }
         fileSource = .terminal(session.id)
@@ -801,8 +821,8 @@ final class Workspace: ObservableObject {
         page = .terminal
         if let tmux { store.rememberSession(host, session: sessionName ?? tmux) }
     }
-    func connectLocal(split: Bool = false, tmux: String? = nil, axis: TerminalSplitAxis = .leftRight) {
-        let session = TerminalSession(tmuxID: tmux, transport: store.transport)
+    func connectLocal(split: Bool = false, tmux: String? = nil, axis: TerminalSplitAxis = .leftRight, directoryResolver: (() async -> String?)? = nil) {
+        let session = TerminalSession(tmuxID: tmux, transport: store.transport, directoryResolver: directoryResolver)
         register(session)
         if split && layout.primary != nil { layout.split(with: session.id, axis: axis) } else { layout.select(session.id) }
         fileSource = .terminal(session.id)
@@ -824,6 +844,26 @@ final class Workspace: ObservableObject {
         if let host { connect(host, tmux: session.id, sessionName: session.name) } else { connectLocal(tmux: session.id) }
     }
     func newTerminal(split: Bool = false, axis: TerminalSplitAxis = .leftRight) {
+        if split, let source = selectedTerminal {
+            let connection = source.connectionID
+            let transport = store.transport
+            let resolver: () async -> String? = { [weak source] in
+                guard let source, source.connected, source.connectionID == connection, source.connectionConfigurationValid() else { return nil }
+                if case .docker = source.agentLaunch?.0.target { return nil }
+                let directory: String?
+                if let tmux = source.tmuxID {
+                    let host = source.host
+                    directory = await Task.detached { try? TmuxService(transport: transport, host: host).target(session: tmux).directory }.value
+                } else if source.isLocal {
+                    directory = LocalProcessDirectory.current(shellPID: source.terminal.process.shellPid)
+                } else { directory = source.reportedDirectory }
+                guard source.connected, source.connectionID == connection, source.connectionConfigurationValid() else { return nil }
+                return directory
+            }
+            if let host = source.host { connect(host, split: true, axis: axis, directoryResolver: resolver) }
+            else { connectLocal(split: true, axis: axis, directoryResolver: resolver) }
+            return
+        }
         if let host { connect(host, split: split, axis: axis) } else { connectLocal(split: split, axis: axis) }
     }
     func selectTerminal(_ session: TerminalSession) {

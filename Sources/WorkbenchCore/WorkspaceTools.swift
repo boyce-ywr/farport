@@ -67,6 +67,9 @@ public struct DirectoryBookmark: Codable, Equatable, Identifiable {
 }
 
 public enum TerminalDirectory {
+    public static func validPath(_ path: String) -> Bool {
+        path.hasPrefix("/") && path.utf8.count <= 4096 && path.rangeOfCharacter(from: .controlCharacters) == nil
+    }
     public static func path(from report: String?, allowedHosts: Set<String>) -> String? {
         guard let report, report.utf8.count <= 16384, let url = URLComponents(string: report),
               url.scheme?.lowercased() == "file", url.user == nil, url.password == nil,

@@ -15,7 +15,8 @@ public struct LocalShellConfiguration: Sendable {
 
     public init(shell: String = LocalShellConfiguration.userShell,
                 home: URL = FileManager.default.homeDirectoryForCurrentUser,
-                inheritedEnvironment: [String: String] = ProcessInfo.processInfo.environment) throws {
+                inheritedEnvironment: [String: String] = ProcessInfo.processInfo.environment,
+                currentDirectory: String? = nil) throws {
         var isDirectory: ObjCBool = false
         guard shell.hasPrefix("/"), !shell.contains("\0"),
               FileManager.default.fileExists(atPath: shell, isDirectory: &isDirectory), !isDirectory.boolValue,
@@ -27,13 +28,16 @@ public struct LocalShellConfiguration: Sendable {
         }
         executable = shell
         executableName = "-" + (shell as NSString).lastPathComponent
-        directory = home.path
+        if let currentDirectory, TerminalDirectory.validPath(currentDirectory),
+           FileManager.default.fileExists(atPath: currentDirectory, isDirectory: &isDirectory), isDirectory.boolValue,
+           FileManager.default.isExecutableFile(atPath: currentDirectory) { directory = currentDirectory }
+        else { directory = home.path }
         var environment = inheritedEnvironment
         for key in environment.keys where key.hasPrefix("SWB_") || ["FARPORT_LANGUAGE", "SSH_ASKPASS", "SSH_ASKPASS_REQUIRE", "SSH_CONNECTION", "SSH_CLIENT", "SSH_TTY"].contains(key) {
             environment.removeValue(forKey: key)
         }
         environment["HOME"] = home.path
-        environment["PWD"] = home.path
+        environment["PWD"] = directory
         environment["SHELL"] = shell
         environment["USER"] = NSUserName()
         environment["LOGNAME"] = NSUserName()

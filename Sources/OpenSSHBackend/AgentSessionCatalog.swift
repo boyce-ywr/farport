@@ -53,26 +53,27 @@ public struct AgentSessionCatalog: Sendable {
         guard let url = bundle.url(forResource: "agent_sessions", withExtension: "py", subdirectory: "Resources") else { throw WorkbenchError.message(L10n.text("找不到会话读取脚本。")) }
         let script = try String(contentsOf: url, encoding: .utf8)
         let command = (["python3", "-c", script] + arguments).map(RemotePath.quote).joined(separator: " ")
-        let result = try runCommand(command, cancellation: cancellation)
+        let result = try runCommand(command, cancellation: cancellation, timeout: 75)
         guard result.status == 0 else { throw WorkbenchError.message(L10n.text("无法读取该设备的会话：需要可用的 Python 3、工具数据权限和有效工作目录；不会安装依赖或修改历史。")) }
         return result
     }
-    private func runCommand(_ command: String, cancellation: CancellationFlag) throws -> CommandResult {
+    private func runCommand(_ command: String, cancellation: CancellationFlag, timeout: TimeInterval = 25) throws -> CommandResult {
         let result: CommandResult
         switch target {
         case .local:
             let configuration = try LocalShellConfiguration()
             result = try ProcessRunner.run(executable: configuration.executable, arguments: ["-l", "-c", command], environment: configuration.environment,
-                                           cancellation: cancellation, timeout: 20, outputLimit: 1024 * 1024, currentDirectory: URL(fileURLWithPath: configuration.directory))
+                                           cancellation: cancellation, timeout: timeout, outputLimit: 16 * 1024 * 1024, currentDirectory: URL(fileURLWithPath: configuration.directory))
         case .ssh(let host):
             try transport.requirePosixShell(host, cancellation: cancellation)
-            result = try transport.run(host, command: "\"${SHELL:-/bin/sh}\" -l -c " + RemotePath.quote(command), cancellation: cancellation, timeout: 25)
+            result = try ProcessRunner.run(executable: "/usr/bin/ssh", arguments: transport.options(for: host) + [host.address, "\"${SHELL:-/bin/sh}\" -l -c " + RemotePath.quote(command)],
+                                           environment: transport.environment(for: host), cancellation: cancellation, timeout: timeout, outputLimit: 16 * 1024 * 1024)
         case .docker(let binding):
-            result = try binding.daemon.execute(binding, script: "exec \"${SHELL:-/bin/sh}\" -l -c \"$1\"", arguments: [command], cancellation: cancellation)
+            result = try binding.daemon.execute(binding, script: "exec \"${SHELL:-/bin/sh}\" -l -c \"$1\"", arguments: [command], cancellation: cancellation, timeout: timeout, outputLimit: 16 * 1024 * 1024)
         }
         return result
     }
-    public func list(history: Bool, cancellation: CancellationFlag) throws -> AgentSessionListing {
+    public func list(history: Bool, tool: CodingAgent? = nil, cancellation: CancellationFlag) throws -> AgentSessionListing {
         let python = try runCommand("if command -v python3 >/dev/null 2>&1; then printf '\\nFARPORT_PYTHON=1\\n'; else printf '\\nFARPORT_PYTHON=0\\n'; fi", cancellation: cancellation).checked()
         if !python.text.split(separator: "\n").contains("FARPORT_PYTHON=1") {
             let output = try runCommand("printf 'FARPORT_HOME\\t%s\\n' \"$HOME\"; printf 'FARPORT_USER\\t'; id -u; for tool in claude codex pi; do printf 'FARPORT_TOOL\\t%s\\t' \"$tool\"; command -v \"$tool\" || printf '\\n'; done", cancellation: cancellation).checked().text
@@ -85,10 +86,11 @@ public struct AgentSessionCatalog: Sendable {
             }
             return AgentSessionListing(home: home, user: user, tools: tools, sessions: [], notices: ["python3-unavailable"], truncated: false)
         }
-        let output = try query(arguments: history ? ["--history"] : [], cancellation: cancellation).text
+        let arguments = (history ? ["--history"] : []) + (tool.map { ["--tool", $0.rawValue] } ?? [])
+        let output = try query(arguments: arguments, cancellation: cancellation).text
         guard let line = output.split(separator: "\n").last, let data = String(line).data(using: .utf8) else { throw WorkbenchError.message(L10n.text("会话元数据无法识别。")) }
         let listing = try JSONDecoder().decode(AgentSessionListing.self, from: data)
-        guard AgentSessionRecord.validPath(listing.home), listing.sessions.count <= 200 else { throw WorkbenchError.message(L10n.text("会话元数据无法识别。")) }
+        guard AgentSessionRecord.validPath(listing.home), listing.sessions.allSatisfy({ tool == nil || $0.tool == tool }) else { throw WorkbenchError.message(L10n.text("会话元数据无法识别。")) }
         for record in listing.sessions { try record.validate() }
         return listing
     }

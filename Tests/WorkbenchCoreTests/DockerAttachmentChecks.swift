@@ -58,6 +58,7 @@ func checkDockerAttachments(arguments: [String]) throws {
         guard Date() < deadline else { throw WorkbenchError.message("Docker终端夹具未启动") }; Thread.sleep(forTimeInterval: 0.1)
     }
     let terminal = try tmux.localDockerTerminal(session: "docker")
+    try expect(LocalProcessDirectory.current(shellPID: Int32(terminal.target.processID)!) == nil, "Docker窗格目录不能作为宿主机新分屏目录")
     try rejects("未确认容器时原安全入口继续禁止docker") { _ = try tmux.target(session: "docker") }
     let selection = try DockerAttachmentDaemon.discover(terminal: terminal, cancellation: CancellationFlag())
     if endpointMode == "host" || endpointMode == "flag" {

@@ -131,7 +131,14 @@ struct PreferencesView: View {
                 Text(L10n.text("默认使用复制、粘贴等普通菜单。Shift＋右键临时使用普通菜单；仅识别应用附着的 tmux。")).font(.caption).foregroundStyle(.secondary)
                 Label(L10n.text("配置和传输记录仅保存在本机"), systemImage: "internaldrive")
                 Label(L10n.text("凭据使用 macOS 钥匙串；不包含在主机配置中"), systemImage: "key")
-                Label(L10n.text("拒绝远端读取剪贴板；多行粘贴需要确认"), systemImage: "lock.shield")
+                Picker(L10n.text("终端写入剪贴板"), selection: $store.terminalClipboardWritePolicy) {
+                    ForEach(TerminalClipboardWritePolicy.allCases) { Text($0.title).tag($0) }
+                }
+                Toggle(L10n.text("允许当前终端读取 Mac 文本剪贴板"), isOn: $store.terminalClipboardReadAllowed)
+                Text(L10n.text("开启读取后，当前有焦点的本机、SSH 或 tmux 程序可取得剪贴板文本（可能包含密码），不会逐次询问。仅对可信终端开启。图片/文件仍走附件流程。"))
+                    .font(.caption).foregroundStyle(store.terminalClipboardReadAllowed ? .orange : .secondary)
+                Text(L10n.text("设置立即生效并保存；只允许前台有焦点的终端，后台请求不会读写剪贴板。多行粘贴确认不受此设置影响。"))
+                    .font(.caption).foregroundStyle(.secondary)
                 Button(L10n.text("在 Finder 中显示数据目录")) { NSWorkspace.shared.open(store.paths.root) }
             }
             Section(L10n.text("软件更新")) {

@@ -210,6 +210,21 @@ struct WorkspaceRoot: View {
         guard !didPrepareQA, store.isTestWorkspace, let output = ProcessInfo.processInfo.environment["SWB_QA_OUTPUT"] else { return }
         didPrepareQA = true
         let screen = ProcessInfo.processInfo.environment["SWB_QA_SCREEN"] ?? "terminal"
+        if screen == "agent-list" {
+            do { try await AgentListChecks.run(workspace: workspace, output: URL(fileURLWithPath: output)); NSApp.terminate(nil) }
+            catch { fputs("FAIL · \(error.localizedDescription)\n", stderr); exit(1) }
+            return
+        }
+        if screen == "split-directory" {
+            do { try await TerminalSplitDirectoryChecks.run(workspace: workspace); NSApp.terminate(nil) }
+            catch { fputs("FAIL · \(error.localizedDescription)\n", stderr); exit(1) }
+            return
+        }
+        if screen == "clipboard-policy" {
+            do { try ClipboardPolicyChecks.run(store: store); NSApp.terminate(nil) }
+            catch { fputs("FAIL · \(error.localizedDescription)\n", stderr); exit(1) }
+            return
+        }
         if screen == "agent-workspace" || screen == "agent-workspace-models" {
             do {
                 if screen == "agent-workspace-models" { try await AgentWorkspaceChecks.runModels(workspace: workspace) }

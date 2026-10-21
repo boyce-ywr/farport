@@ -31,7 +31,7 @@ enum AgentWorkspaceChecks {
         guard try Data(contentsOf: input).isEmpty, launched !== original else { throw WorkbenchError.message("Agent启动影响原前台输入") }
         let model = AgentSessionsModel(workspace: workspace)
         await model.refresh()
-        guard model.failure == nil, model.directory == cwd.path, model.listing?.sessions.isEmpty == true,
+        guard model.failure == nil, model.directory == cwd.path, model.listing != nil,
               model.running.contains(where: { $0.id == launched.id }) else { throw WorkbenchError.message(model.failure ?? "面板目标、目录或运行登记未保留") }
         let before = try Data(contentsOf: result)
         let sessions = workspace.sessions.count
@@ -117,7 +117,7 @@ enum AgentWorkspaceChecks {
         for file in destinations { guard try Data(contentsOf: file).isEmpty else { throw WorkbenchError.message("启动Agent向原进程注入了命令") } }
         let model = AgentSessionsModel(workspace: workspace)
         await model.refresh()
-        guard model.target?.identity == catalog.target.identity, model.directory == plan.directory, model.listing?.sessions.isEmpty == true else { throw WorkbenchError.message("面板目标/工作目录未继承或默认读取了历史") }
+        guard model.target?.identity == catalog.target.identity, model.directory == plan.directory, model.listing != nil else { throw WorkbenchError.message("面板目标/工作目录未继承或未自动取得会话列表") }
         print("PASS · 外层标签真实按下/连发/松键无PTY泄漏、文本框保护、Agent面板快捷键与新标签进程cwd/参数隔离")
         fflush(stdout)
     }

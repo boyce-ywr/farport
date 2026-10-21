@@ -10,7 +10,6 @@ final class AgentSessionsModel: ObservableObject {
     @Published var tool: CodingAgent = .claude
     @Published var selection: String?
     @Published var search = ""
-    @Published var history = false
     @Published var busy = false
     @Published var failure: String?
     @Published var target: AgentExecutionTarget?
@@ -20,18 +19,22 @@ final class AgentSessionsModel: ObservableObject {
     private let connection: UUID?
     private var cancellation = CancellationFlag()
     private var generation = UUID()
-    init(workspace: Workspace) { self.workspace = workspace; source = workspace.selectedTerminal; connection = source?.connectionID }
+    private var cachedListings: [CodingAgent: AgentSessionListing] = [:]
+    init(workspace: Workspace) {
+        self.workspace = workspace; source = workspace.selectedTerminal; connection = source?.connectionID
+        tool = source?.agentLaunch?.1.tool ?? .claude
+    }
     var records: [AgentSessionRecord] {
-        (history ? listing?.sessions ?? [] : []).filter { search.isEmpty || ($0.title + $0.directory + $0.tool.title + $0.sessionID).localizedCaseInsensitiveContains(search) }
+        (listing?.sessions ?? []).filter { $0.tool == tool && (search.isEmpty || ($0.title + $0.directory + $0.tool.title + $0.sessionID).localizedCaseInsensitiveContains(search)) }
             .sorted { left, right in
-                if (left.directory == directory) != (right.directory == directory) { return left.directory == directory }
-                return left.modified > right.modified
+                if left.activityDate != right.activityDate { return left.activityDate > right.activityDate }
+                return left.sessionID < right.sessionID
             }
     }
     var selected: AgentSessionRecord? { records.first { $0.id == selection } }
     var running: [TerminalSession] {
         guard let workspace, let target else { return [] }
-        return workspace.sessions.filter { $0.connected && $0.agentLaunch?.0.target.identity == target.identity }
+        return workspace.sessions.filter { $0.connected && $0.agentLaunch?.0.target.identity == target.identity && $0.agentLaunch?.1.tool == tool }
     }
     func stop() { cancellation.cancel(); generation = UUID(); busy = false }
     private func validateSource() async throws {
@@ -53,6 +56,8 @@ final class AgentSessionsModel: ObservableObject {
     }
     func refresh() async {
         stop(); busy = true; failure = nil
+        let selectedTool = tool
+        listing = cachedListings[selectedTool]; selection = nil
         let flag = CancellationFlag(); cancellation = flag
         let request = UUID(); generation = request
         defer { if generation == request { busy = false } }
@@ -101,16 +106,16 @@ final class AgentSessionsModel: ObservableObject {
             try await validateSource()
             guard generation == request, !flag.isCancelled else { return }
             let catalog = AgentSessionCatalog(target: target, transport: transport)
-            let allowHistory = history
-            let result = try await Task.detached { try catalog.list(history: allowHistory, cancellation: flag) }.value
+            let result = try await Task.detached { try catalog.list(history: true, tool: selectedTool, cancellation: flag) }.value
             try await validateSource()
             guard generation == request, !flag.isCancelled else { return }
-            listing = result; if directory.isEmpty { directory = result.home }
+            cachedListings[selectedTool] = result; listing = result
+            if directory.isEmpty { directory = result.home }
             if case .docker = target { tmuxPanes = [] }
             else {
                 let panes = await Task.detached { (try? TmuxService(transport: transport, host: target.host).panes()) ?? [] }.value
                 guard generation == request, !flag.isCancelled else { return }
-                tmuxPanes = panes.filter { ["claude", "codex", "pi"].contains($0.command) }
+                tmuxPanes = panes.filter { $0.command == selectedTool.rawValue }
             }
         } catch { if generation == request, !flag.isCancelled { failure = error.localizedDescription } }
     }
@@ -174,6 +179,7 @@ final class AgentSessionsModel: ObservableObject {
 
 struct AgentSessionsView: View {
     @StateObject private var model: AgentSessionsModel
+    @ViewState private var showLaunchOptions = false
     @Environment(\.dismiss) private var dismiss
     init(workspace: Workspace) { _model = StateObject(wrappedValue: AgentSessionsModel(workspace: workspace)) }
     var body: some View {
@@ -182,19 +188,14 @@ struct AgentSessionsView: View {
             Text(model.target?.label ?? L10n.text("正在确认执行目标…")).font(.caption).textSelection(.enabled)
             Text(L10n.text("读取范围为上方设备及用户；终端内再次 SSH、切用户或自定义工具数据目录时，请改用实际连接或工具原生选择器。"))
                 .font(.caption).foregroundStyle(.secondary)
+            Picker(L10n.text("工具"), selection: $model.tool) { ForEach(CodingAgent.allCases) { Text($0.title).tag($0) } }.pickerStyle(.segmented)
+            Text(L10n.text("自动读取所选 Agent 在此设备用户下的全部项目会话；不按启动目录筛选，不发送聊天正文。"))
+                .font(.caption).foregroundStyle(.secondary)
             HStack {
-                TextField(L10n.text("搜索项目、目录或会话 ID"), text: $model.search)
+                TextField(L10n.text("搜索会话名称、路径或完整 ID"), text: $model.search)
                 Button(L10n.text("刷新")) { Task { await model.refresh() } }.disabled(model.busy)
+                if model.busy { Button(L10n.text("取消")) { model.stop() } }
             }
-            HStack {
-                Picker(L10n.text("工具"), selection: $model.tool) { ForEach(CodingAgent.allCases) { Text($0.title).tag($0) } }.frame(width: 180)
-                TextField(L10n.text("目标工作目录"), text: $model.directory).font(.system(.caption, design: .monospaced))
-            }
-            HStack {
-                Button(L10n.text("在此目录新建会话")) { run(.newSession) }
-                Button(L10n.text("打开工具原生会话选择器")) { run(.picker) }
-                Button(L10n.text("在此目录新建终端")) { run(.shell) }
-            }.disabled(model.busy || model.listing == nil)
             if !model.running.isEmpty {
                 Text(L10n.text("本窗口正在运行（点击切回，不重复启动）")).font(.caption).foregroundStyle(.secondary)
                 ScrollView(.horizontal) { HStack { ForEach(model.running) { session in
@@ -208,35 +209,59 @@ struct AgentSessionsView: View {
                     }.help(L10n.text("附着原 tmux 窗格，不重新启动 Agent；共享该会话的客户端也会看到窗格切换。"))
                 } } }.frame(maxHeight: 32).disabled(model.busy)
             }
-            Toggle(L10n.text("允许读取本设备历史会话元数据"), isOn: $model.history)
-                .onChange(of: model.history) { _, enabled in
-                    if enabled, !confirm(L10n.text("读取会话文件中的元数据？"), L10n.text("仅限当前设备用户。读取有大小限制的文件头以提取 ID、目录和时间；部分格式同一行含聊天内容，读取后丢弃，不传回或建全文索引。不安装 SDK、不写历史；未知格式使用原生选择器。")) { model.history = false; return }
-                    Task { await model.refresh() }
-                }
             Table(model.records, selection: $model.selection) {
-                TableColumn(L10n.text("工具")) { Text($0.tool.title) }.width(90)
-                TableColumn(L10n.text("项目 / 工作目录")) { Text($0.directory).lineLimit(1).truncationMode(.middle).help($0.directory) }
-                TableColumn(L10n.text("文件修改时间")) { Text(Date(timeIntervalSince1970: $0.modified), style: .relative) }.width(95)
-                TableColumn(L10n.text("会话 ID")) { Text(String($0.sessionID.prefix(8))).font(.caption.monospaced()) }.width(80)
-            }.frame(height: 225)
-            if model.busy { HStack { ProgressView().controlSize(.small); Text(L10n.text("正在读取，可取消…")); Button(L10n.text("取消")) { model.stop() } }.font(.caption) }
+                TableColumn(L10n.text("会话名称")) { Text($0.displayTitle).lineLimit(1).help($0.displayTitle) }.width(min: 150, ideal: 190)
+                TableColumn(L10n.text("工作路径")) { Text($0.directory).lineLimit(1).truncationMode(.middle).help($0.directory) }.width(min: 180, ideal: 280)
+                TableColumn(L10n.text("最后活跃时间")) { record in
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(record.activityDate.formatted(date: .numeric, time: .shortened))
+                        if record.activitySource == "file" { Text(L10n.text("文件时间估计")).foregroundStyle(.secondary) }
+                    }.font(.caption).help(record.activityDate.formatted())
+                }.width(min: 130, ideal: 155)
+                TableColumn(L10n.text("会话 ID")) { Text($0.sessionID).font(.system(size: 10, design: .monospaced)).textSelection(.enabled).help($0.sessionID) }.width(270)
+            }.alternatingRowBackgrounds(.disabled).frame(height: 280)
+                .overlay {
+                    if model.records.isEmpty {
+                        VStack(spacing: 8) {
+                            if model.busy { ProgressView(); Text(L10n.text("正在读取全部项目会话…")) }
+                            else if model.failure != nil { Image(systemName: "exclamationmark.triangle"); Text(L10n.text("会话读取失败，请查看下方原因后重试。")) }
+                            else if !model.search.isEmpty { Text(L10n.text("没有匹配的会话。")) }
+                            else if model.listing == nil { Text(L10n.text("尚未取得列表，可点击刷新。")) }
+                            else { Text(L10n.text("该 Agent 在此设备用户下没有可识别的会话。")) }
+                        }.font(.callout).foregroundStyle(.secondary).allowsHitTesting(false)
+                    }
+                }
+            if model.busy, !model.records.isEmpty { HStack { ProgressView().controlSize(.small); Text(L10n.text("正在刷新，暂时显示上次列表…")) }.font(.caption) }
             if model.listing?.notices.contains("python3-unavailable") == true {
                 Text(L10n.text("该设备没有 Python 3，历史列表不可用；仍可新建会话或打开工具原生选择器。")) .font(.caption).foregroundStyle(.orange)
+            } else if model.listing?.notices.contains(where: { $0.hasSuffix(":root-missing") }) == true, model.records.isEmpty {
+                Text(L10n.text("没有找到该用户的会话存储目录；容器、其他用户或自定义配置目录中的历史不会出现在这里。"))
+                    .font(.caption).foregroundStyle(.orange)
             } else if let listing = model.listing, listing.truncated || !listing.notices.isEmpty {
                 Text(L10n.text("列表可能不完整：部分记录无权限、格式未知或超过扫描范围。可使用工具原生选择器查看。"))
                     .font(.caption).foregroundStyle(.orange)
             }
             if let failure = model.failure { Text(failure).font(.caption).foregroundStyle(.red).textSelection(.enabled) }
+            DisclosureGroup(L10n.text("新建会话 / 打开目录（不影响上方列表）"), isExpanded: $showLaunchOptions) {
+                VStack(alignment: .leading, spacing: 8) {
+                    TextField(L10n.text("启动目录"), text: $model.directory).font(.system(.caption, design: .monospaced))
+                    HStack {
+                        Button(L10n.text("在此目录新建会话")) { run(.newSession) }
+                        Button(L10n.text("打开工具原生会话选择器")) { run(.picker) }
+                        Button(L10n.text("在此目录新建终端")) { run(.shell) }
+                    }.disabled(model.busy || model.listing == nil)
+                }.padding(.top, 6)
+            }
             Text(L10n.text("历史记录不代表进程已停止。恢复默认新开标签，不向当前 Agent 输入命令；不要同时恢复仍在其他终端运行的同一会话。"))
                 .font(.caption).foregroundStyle(.secondary)
             HStack {
-                Text(model.history ? L10n.text("最近最多 200 条 · 当前目录优先 · 运行状态未知") : L10n.text("历史读取未启用；仍可使用工具原生选择器")) .font(.caption).foregroundStyle(.secondary)
+                Text(L10n.text("\(model.records.count) 个会话 · 最后活跃时间倒序 · 全部项目")) .font(.caption).foregroundStyle(.secondary)
                 Spacer()
                 Button(L10n.text("打开工作目录")) { if let selected = model.selected { model.directory = selected.directory; run(.shell) } }.disabled(model.selected == nil || model.busy)
                 Button(L10n.text("在新标签恢复")) { if let selected = model.selected { run(.resume(selected)) } }.buttonStyle(.borderedProminent).disabled(model.selected == nil || model.busy)
             }
-        }.padding(20).frame(width: 820).textFieldStyle(.roundedBorder)
-            .task { await model.refresh() }.onDisappear { model.stop() }
+        }.padding(20).frame(width: 990).textFieldStyle(.roundedBorder)
+            .task(id: model.tool) { await model.refresh() }.onDisappear { model.stop() }
     }
     private func run(_ action: AgentLaunchAction) { Task { if await model.launch(action) { dismiss() } } }
 }

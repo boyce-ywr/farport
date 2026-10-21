@@ -32,7 +32,11 @@ Haven 仅作为需求参考；未引入 Android Context、Service、Compose 或 
 
 本机 tmux 管理命令同样显式设置子进程的真实工作目录为 `LocalShellConfiguration.directory`；仅设置 `HOME` / `PWD` 不能替代进程目录。`ProcessRunner` 的可选 `currentDirectory` 仅影响该子进程，不修改应用全局 cwd。新建本机 tmux 窗口/分割窗格使用目标 `pane_current_path`；远端命令与重新附着旧会话不改变目录语义。
 
-Agent 会话入口复用现有 `Workspace` / `TerminalLayout` / `TerminalSession`：`TerminalNavigationCommands` 负责限定终端焦点的事件消费，`TerminalNavigationAction` 定义无平台的精确键组合；不另建标签状态。`AgentSessionCatalog` 按本机、SSH、已确认 Docker 目标执行受限元数据读取与启动预检，`AgentLaunchPlan` 只从结构化工具、目录和记录生成安全参数。启动在全新 PTY 或独立 tmux 中执行，当前运行终端不接收恢复命令；记录主键包含工具数据根，启动复核同一原生会话，不以历史文件时间判断在线状态。`agent_sessions.py` 是按用户授权运行的受限只读元数据适配，不充当三工具的完整官方 SDK，也不写入它们的会话数据库。
+Agent 会话入口复用现有 `Workspace` / `TerminalLayout` / `TerminalSession`：`TerminalNavigationCommands` 负责限定终端焦点的事件消费，`TerminalNavigationAction` 定义无平台的精确键组合；不另建标签状态。`AgentSessionCatalog` 按本机、SSH、已确认 Docker 目标执行受限元数据读取与启动预检，`AgentLaunchPlan` 只从结构化工具、目录和记录生成安全参数。启动在全新 PTY 或独立 tmux 中执行，当前运行终端不接收恢复命令；记录主键包含工具数据根，启动复核同一原生会话，不以历史文件时间判断在线状态。构建 20 的 `agent_sessions.py` 自动读取所选 Agent 的跨项目记录，流式提取名称/ID/cwd/事件时间，只返回元数据、明确超时及不完整边界；不充当三工具的完整官方 SDK，也不写入它们的会话数据库。
+
+分屏目录在创建新 `TerminalSession` 时绑定原窗格和连接代次，异步解析后只交给新进程的启动参数。`LocalProcessDirectory` 通过同用户内核进程信息读取前台 cwd，tmux 查询原 pane；未知/嵌套环境不借用其路径。`LocalShellConfiguration` 保留 HOME，只修改新 Shell 的初始 cwd/PWD；POSIX SSH 在新会话启动脚本中引用目录，不向原 PTY 写入 `cd`。
+
+终端 OSC 52 权限由 `TerminalClipboardState` 读取 AppStore 的持久写入策略与独立读开关。设置改变不需要重连；代理检查当前焦点和弹窗，再允许受限 UTF-8 文本读取/写入。默认写入询问、读取关闭，始终允许写入也不放开后台；用户主动 `⌘C/⌘V` 和附件流程仍分开处理。
 
 容器附件在本机 tmux 的基础上使用 `LocalDockerTerminal` 读取同用户窗格的前台进程组、PID/启动时间与 Docker argv，仅保留识别所需字段，不把全部进程环境或参数落盘。`DockerTerminalCommand` 拒绝不明确的调用；`DockerAttachmentDaemon` 固定 context、daemon、完整容器 ID/启动状态和接收 UID/GID，先确认再写入。`DockerAttachmentUploader` 对私有本地快照与容器文件做清单/内容复核，通过目标用户的 exec stdin 写入，避免 `docker cp` 默认所有者与接收用户不一致。`TerminalAttachmentDraft` 仍管理确认、取消、焦点/输入世代和最终定向插入；普通本机、SSH 和未确认 Docker 的原有保护不变。
 

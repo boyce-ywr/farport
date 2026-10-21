@@ -118,15 +118,15 @@ public struct DockerAttachmentDaemon: Equatable, Sendable {
         let result = try run(["inspect", "--type", "container", "--format", Self.containerFormat, reference], cancellation: cancellation)
         return try JSONDecoder().decode(DockerContainer.self, from: result.output)
     }
-    private func run(_ arguments: [String], input: Data? = nil, cancellation: CancellationFlag) throws -> CommandResult {
+    private func run(_ arguments: [String], input: Data? = nil, cancellation: CancellationFlag, timeout: TimeInterval? = nil, outputLimit: Int = 2 * 1024 * 1024) throws -> CommandResult {
         let result = try ProcessRunner.run(executable: executable, arguments: ["--host", endpoint] + arguments, environment: environment,
-                                          cancellation: cancellation, timeout: input == nil ? 15 : 120, outputLimit: 2 * 1024 * 1024, input: input)
+                                          cancellation: cancellation, timeout: timeout ?? (input == nil ? 15 : 120), outputLimit: outputLimit, input: input)
         guard result.status == 0 else { throw WorkbenchError.message(L10n.text("Docker 操作失败，请检查容器状态、目标用户权限及所需命令；未插入附件路径。")) }
         return result
     }
-    func execute(_ binding: DockerAttachmentBinding, script: String, arguments: [String] = [], input: Data? = nil, cancellation: CancellationFlag) throws -> CommandResult {
+    func execute(_ binding: DockerAttachmentBinding, script: String, arguments: [String] = [], input: Data? = nil, cancellation: CancellationFlag, timeout: TimeInterval? = nil, outputLimit: Int = 2 * 1024 * 1024) throws -> CommandResult {
         try validate(binding, cancellation: cancellation)
-        return try run(["exec", "-i", "--user", binding.user, binding.container.id, "sh", "-c", script, "farport-attachments"] + arguments, input: input, cancellation: cancellation)
+        return try run(["exec", "-i", "--user", binding.user, binding.container.id, "sh", "-c", script, "farport-attachments"] + arguments, input: input, cancellation: cancellation, timeout: timeout, outputLimit: outputLimit)
     }
     public func agentTerminal(_ binding: DockerAttachmentBinding, command: String, cancellation: CancellationFlag) throws -> TerminalProcessLaunch {
         try validate(binding, cancellation: cancellation)

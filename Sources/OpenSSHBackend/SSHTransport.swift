@@ -151,10 +151,14 @@ public final class SSHTransport: @unchecked Sendable {
         return arguments
     }
     private func connectionDigest(_ host: HostProfile) -> String { SHA256.hash(data: Data((host.id.uuidString + host.connectionKey).utf8)).map { String(format: "%02x", $0) }.joined() }
-    public func terminalArguments(for host: HostProfile, tmuxSession: String? = nil, graphicsCompatible: Bool = false) throws -> [String] {
+    public func terminalArguments(for host: HostProfile, tmuxSession: String? = nil, graphicsCompatible: Bool = false, currentDirectory: String? = nil) throws -> [String] {
         var result = try options(for: host) + ["-tt", host.address]
         if let tmuxSession { result += [RemoteTmuxCommand.attach(session: tmuxSession)] }
-        else if graphicsCompatible { result += [TerminalGraphics.loginCommand] }
+        else if let currentDirectory, TerminalDirectory.validPath(currentDirectory), graphicsCompatible {
+            let directory = RemotePath.quote(currentDirectory)
+            let command = "if [ -d " + directory + " ] && [ -x " + directory + " ]; then cd -- " + directory + "; else cd -- \"$HOME\"; fi && " + TerminalGraphics.loginCommand
+            result += ["/bin/sh -c " + RemotePath.quote(command)]
+        } else if graphicsCompatible { result += [TerminalGraphics.loginCommand] }
         return result
     }
     public func forwardingArguments(for host: HostProfile, kind: ForwardingKind, port: Int, target: String = "127.0.0.1", targetPort: Int = 80) throws -> [String] {

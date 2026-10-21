@@ -37,6 +37,12 @@ final class AppStore: ObservableObject {
     @Published var useTmuxContextMenu = UserDefaults.standard.bool(forKey: "useTmuxContextMenu") {
         didSet { UserDefaults.standard.set(useTmuxContextMenu, forKey: "useTmuxContextMenu") }
     }
+    @Published var terminalClipboardWritePolicy = TerminalClipboardWritePolicy(stored: UserDefaults.standard.string(forKey: "terminalClipboardWritePolicy")) {
+        didSet { UserDefaults.standard.set(terminalClipboardWritePolicy.rawValue, forKey: "terminalClipboardWritePolicy") }
+    }
+    @Published var terminalClipboardReadAllowed = UserDefaults.standard.bool(forKey: "terminalClipboardReadAllowed") {
+        didSet { UserDefaults.standard.set(terminalClipboardReadAllowed, forKey: "terminalClipboardReadAllowed") }
+    }
     func automaticallyInsertAttachments(for host: HostProfile?) -> Bool {
         let current = host.flatMap { item in hosts.first(where: { $0.id == item.id }) ?? item }
         return (current?.attachmentInsertion ?? .inherit).automatic(defaultValue: automaticallyInsertAttachments)

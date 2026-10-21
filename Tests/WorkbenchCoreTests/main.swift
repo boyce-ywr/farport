@@ -180,6 +180,13 @@ do {
     try expect(!shell.environment.keys.contains(where: { $0.hasPrefix("SWB_") }) && shell.environment["SSH_ASKPASS"] == nil && shell.environment["SSH_ASKPASS_REQUIRE"] == nil && shell.environment["SSH_CONNECTION"] == nil, "本机 Shell 不继承内部凭据提示和测试变量")
     try expect(shell.environment["SSH_AUTH_SOCK"] == "/fixture/agent", "保留用户 SSH Agent")
     let fallbackEnvironment = try LocalShellConfiguration(shell: "/bin/zsh", home: temporaryRoot, inheritedEnvironment: [:])
+    let inheritedDirectory = try LocalShellConfiguration(shell: "/bin/zsh", home: temporaryRoot, inheritedEnvironment: [:], currentDirectory: processDirectory.path)
+    try expect(inheritedDirectory.directory == processDirectory.path && inheritedDirectory.environment["PWD"] == processDirectory.path, "分屏Shell真实起始目录来自父窗格")
+    try expect(inheritedDirectory.environment["HOME"] == temporaryRoot.path, "继承cwd不更改用户HOME")
+    let missingDirectory = try LocalShellConfiguration(shell: "/bin/zsh", home: temporaryRoot, inheritedEnvironment: [:], currentDirectory: processDirectory.appendingPathComponent("missing").path)
+    try expect(missingDirectory.directory == temporaryRoot.path, "源目录消失时回退主目录")
+    let unsafeDirectory = try LocalShellConfiguration(shell: "/bin/zsh", home: temporaryRoot, inheritedEnvironment: [:], currentDirectory: "/bad\npath")
+    try expect(unsafeDirectory.directory == temporaryRoot.path, "控制字符不能成为分屏路径")
     try expect(fallbackEnvironment.environment["PATH"] == "/usr/bin:/bin:/usr/sbin:/sbin" && fallbackEnvironment.environment["LANG"] == "en_US.UTF-8", "Finder 启动时补全基础环境")
     try expect(LocalShellConfiguration.userShell.hasPrefix("/"), "从系统账户读取登录 Shell")
     try rejects("无效 Shell") { _ = try LocalShellConfiguration(shell: "/not-a-shell", home: temporaryRoot) }

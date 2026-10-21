@@ -11,6 +11,10 @@ final class TerminalClipboardState: ObservableObject {
     @Published private(set) var remoteAllowed: Bool?
     @Published private(set) var pendingRemoteText: String?
     @Published var hasSelection = false
+    var writePolicy: () -> TerminalClipboardWritePolicy = { .ask }
+    var readAllowed: () -> Bool = { false }
+    private var lastPolicy: TerminalClipboardWritePolicy = .ask
+    private var lastRead: TimeInterval = -.infinity
     private var prompting = false
     private var notice: Task<Void, Never>?
     private var copyWait: Task<Void, Never>?
@@ -59,8 +63,21 @@ final class TerminalClipboardState: ObservableObject {
               let text = NSPasteboard.general.string(forType: .string), text.utf8.count <= 1024 * 1024 else { return false }
         return SHA256.hash(data: Data(text.utf8)) == proof.digest
     }
-    func receive(_ data: Data, interactive: Bool, confirm: () -> Bool) {
+    private func synchronizePolicy() -> TerminalClipboardWritePolicy {
+        let policy = writePolicy()
+        if policy != lastPolicy { remoteAllowed = nil; lastPolicy = policy }
+        return policy
+    }
+    func read(interactive: Bool) -> Data? {
+        guard interactive, readAllowed(), ProcessInfo.processInfo.systemUptime - lastRead >= 0.1,
+              let text = NSPasteboard.general.string(forType: .string), text.utf8.count <= 1024 * 1024 else { return nil }
+        lastRead = ProcessInfo.processInfo.systemUptime
+        return Data(text.utf8)
+    }
+    func receive(_ data: Data, interactive: Bool, isStillInteractive: () -> Bool = { true }, confirm: () -> Bool) {
         remoteProof = nil
+        let policy = synchronizePolicy()
+        guard policy != .deny else { pendingRemoteText = nil; report(L10n.text("已按设置禁止终端写入剪贴板。"), informational: true); return }
         guard data.count <= 1024 * 1024, let text = String(data: data, encoding: .utf8), !text.isEmpty else {
             report(L10n.text("未复制：终端内容为空、编码无效或超过 1 MiB。"), failed: true); return
         }
@@ -69,25 +86,29 @@ final class TerminalClipboardState: ObservableObject {
             report(L10n.text("后台终端的复制请求已暂存，未改动剪贴板。"), failed: true); return
         }
         pendingRemoteText = text
-        if remoteAllowed == nil {
+        if remoteAllowed == nil, policy == .ask {
             guard !prompting else { return }
             prompting = true
             remoteAllowed = confirm()
             prompting = false
         }
-        if remoteAllowed == true {
+        let currentPolicy = synchronizePolicy()
+        guard isStillInteractive(), currentPolicy != .deny else { return }
+        if remoteAllowed == true || (currentPolicy == .allow && remoteAllowed != false) {
             if let pendingRemoteText, write(pendingRemoteText, remote: true) { self.pendingRemoteText = nil }
         } else { report(L10n.text("终端复制已阻止；可在剪贴板菜单中允许。"), failed: true) }
     }
     func allowRemoteCopy() {
+        guard synchronizePolicy() != .deny else { report(L10n.text("已按设置禁止终端写入剪贴板。"), informational: true); return }
         remoteAllowed = true
         if let pendingRemoteText, write(pendingRemoteText, remote: true) { self.pendingRemoteText = nil }
     }
     func denyRemoteCopy() {
+        _ = synchronizePolicy()
         remoteAllowed = false; pendingRemoteText = nil
         report(L10n.text("已禁止此终端写入剪贴板；本地选中复制不受影响。"))
     }
-    func resetPermission() { remoteAllowed = nil; pendingRemoteText = nil; remoteProof = nil; copyWait?.cancel(); copyWait = nil; copyRequest = UUID(); notice?.cancel(); message = ""; failed = false; informational = false; reportedCopy = false }
+    func resetPermission() { remoteAllowed = nil; pendingRemoteText = nil; remoteProof = nil; lastRead = -.infinity; copyWait?.cancel(); copyWait = nil; copyRequest = UUID(); notice?.cancel(); message = ""; failed = false; informational = false; reportedCopy = false }
 }
 
 struct TerminalClipboardControls: View {

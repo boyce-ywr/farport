@@ -22,7 +22,7 @@ let package = Package(
         .executableTarget(name: "WorkbenchAskpass", dependencies: ["WorkbenchCore"]),
         .executableTarget(name: "WorkbenchCheck", dependencies: ["WorkbenchCore", "OpenSSHBackend"]),
         .executableTarget(name: "WorkbenchAttachmentCheck", dependencies: ["WorkbenchCore", "OpenSSHBackend"]),
-        .executableTarget(name: "WorkbenchCoreTests", dependencies: ["WorkbenchCore", "OpenSSHBackend"], path: "Tests/WorkbenchCoreTests")
+        .executableTarget(name: "WorkbenchCoreTests", dependencies: ["WorkbenchCore", "OpenSSHBackend"], path: "Tests/WorkbenchCoreTests", exclude: ["agent_session_listing_checks.py"])
     ],
     swiftLanguageModes: [.v5]
 )
