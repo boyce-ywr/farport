@@ -137,8 +137,11 @@ struct PreferencesView: View {
                 Toggle(L10n.text("允许当前终端读取 Mac 文本剪贴板"), isOn: $store.terminalClipboardReadAllowed)
                 Text(L10n.text("开启读取后，当前有焦点的本机、SSH 或 tmux 程序可取得剪贴板文本（可能包含密码），不会逐次询问。仅对可信终端开启。图片/文件仍走附件流程。"))
                     .font(.caption).foregroundStyle(store.terminalClipboardReadAllowed ? .orange : .secondary)
-                Text(L10n.text("设置立即生效并保存；只允许前台有焦点的终端，后台请求不会读写剪贴板。多行粘贴确认不受此设置影响。"))
+                Text(L10n.text("设置立即生效并保存；只允许前台有焦点的终端，后台请求不会读写剪贴板。"))
                     .font(.caption).foregroundStyle(.secondary)
+                Toggle(L10n.text("粘贴多行文本前确认"), isOn: $store.confirmMultilinePaste)
+                Text(L10n.text("此开关与终端读写剪贴板权限独立。关闭后，多行文本直接粘贴，可能立即执行其中的命令；图片和文件的附件确认不受影响。"))
+                    .font(.caption).foregroundStyle(store.confirmMultilinePaste ? Color.secondary : Color.orange)
                 Button(L10n.text("在 Finder 中显示数据目录")) { NSWorkspace.shared.open(store.paths.root) }
             }
             Section(L10n.text("软件更新")) {

@@ -53,7 +53,7 @@
   "本机时间": "Local time",
   "已复制到 Mac 剪贴板": "Copied to Mac clipboard",
   "写入 Mac 剪贴板失败，请重试。": "Could not write to the Mac clipboard. Please retry.",
-  "未复制：终端内容为空、编码无效或超过 1 MiB。": "Not copied: empty, invalid encoding, or larger than 1 MiB.",
+  "未复制：终端内容为空、仅含空白、编码无效或超过 1 MiB。": "Not copied: empty, whitespace-only, invalid encoding, or larger than 1 MiB.",
   "后台终端的复制请求已暂存，未改动剪贴板。": "Background copy pending; your clipboard was not changed.",
   "终端复制已阻止；可在剪贴板菜单中允许。": "Terminal copy blocked; allow it in the clipboard menu.",
   "已禁止此终端写入剪贴板；本地选中复制不受影响。": "Terminal clipboard writes blocked; local selection copy still works.",
@@ -1020,5 +1020,7 @@
   "终端写入剪贴板": "Terminal clipboard writes",
   "允许当前终端读取 Mac 文本剪贴板": "Allow the focused terminal to read the Mac text clipboard",
   "开启读取后，当前有焦点的本机、SSH 或 tmux 程序可取得剪贴板文本（可能包含密码），不会逐次询问。仅对可信终端开启。图片/文件仍走附件流程。": "When enabled, the focused local, SSH or tmux program can read clipboard text, which may include passwords, without asking each time. Enable only for trusted terminals. Images and files still use the attachment workflow.",
-  "设置立即生效并保存；只允许前台有焦点的终端，后台请求不会读写剪贴板。多行粘贴确认不受此设置影响。": "Changes take effect immediately and are saved. Only the focused foreground terminal can access the clipboard; background requests cannot read or overwrite it. Multiline paste confirmation is unchanged."
+  "设置立即生效并保存；只允许前台有焦点的终端，后台请求不会读写剪贴板。": "Changes take effect immediately and are saved. Only the focused foreground terminal can access the clipboard; background requests cannot read or overwrite it.",
+  "粘贴多行文本前确认": "Confirm before pasting multiline text",
+  "此开关与终端读写剪贴板权限独立。关闭后，多行文本直接粘贴，可能立即执行其中的命令；图片和文件的附件确认不受影响。": "This setting is independent of terminal clipboard read/write permissions. When disabled, multiline text is pasted directly and may execute commands immediately. Image and file attachment confirmations are unchanged."
 }

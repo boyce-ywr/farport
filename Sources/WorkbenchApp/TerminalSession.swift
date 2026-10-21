@@ -36,6 +36,7 @@ final class SafeTerminalView: LocalProcessTerminalView {
     var prepareTmuxMenu: (() -> Void)?
     var semanticCommandCopyAllowed = true
     var remoteSelectionContext = false
+    var confirmsMultilinePaste: () -> Bool = { true }
     var commandCapture = SemanticCommandCapture()
     private var shellMarkers = ShellMarkerStream()
     private(set) var observedProcessExit = true
@@ -184,11 +185,15 @@ final class SafeTerminalView: LocalProcessTerminalView {
     override func paste(_ sender: Any) {
         clipboard.noteUserInteraction()
         if receiveAttachments(from: NSPasteboard.general) { return }
-        if let text = NSPasteboard.general.string(forType: .string), text.contains("\n") || text.contains("\r") {
+        guard process.running, let text = NSPasteboard.general.string(forType: .string), !text.isEmpty else { return }
+        let processID = process.shellPid
+        if confirmsMultilinePaste(), text.contains("\n") || text.contains("\r") {
             let alert = NSAlert(); alert.messageText = L10n.text("粘贴多行内容？"); alert.informativeText = L10n.text("内容可能包含会立即执行的命令。\n\n") + String(text.prefix(700)); alert.addButton(withTitle: L10n.text("粘贴")); alert.addButton(withTitle: L10n.text("取消"))
             guard alert.runModal() == .alertFirstButtonReturn else { return }
         }
-        super.paste(sender)
+        guard process.running, process.shellPid == processID else { return }
+        unmarkText()
+        send(txt: getTerminal().bracketedPasteMode ? "\u{1b}[200~" + text + "\u{1b}[201~" : text)
     }
     @discardableResult func receiveAttachments(from pasteboard: NSPasteboard) -> Bool {
         guard let root = attachmentStagingRoot, let onAttachments else { return false }
@@ -651,6 +656,7 @@ final class Workspace: ObservableObject {
         sessions.append(session)
         session.terminal.clipboard.writePolicy = { [weak store] in store?.terminalClipboardWritePolicy ?? .ask }
         session.terminal.clipboard.readAllowed = { [weak store] in store?.terminalClipboardReadAllowed == true }
+        session.terminal.confirmsMultilinePaste = { [weak store] in store?.confirmMultilinePaste ?? true }
         session.terminal.onContextFocus = { [weak self, weak session] in
             guard let self, let session, layout.selectedTab?.terminals.contains(session.id) == true else { return }
             if selectedTerminalID != session.id { selectTerminal(session) }

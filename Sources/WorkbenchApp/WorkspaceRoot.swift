@@ -277,6 +277,11 @@ struct WorkspaceRoot: View {
             catch { fputs("FAIL · \(error.localizedDescription)\n", stderr); exit(1) }
             return
         }
+        if screen == "terminal-paste" {
+            do { try await TerminalPasteChecks.run(store: store, output: URL(fileURLWithPath: output)); NSApp.terminate(nil) }
+            catch { fputs("FAIL · \(error.localizedDescription)\n", stderr); exit(1) }
+            return
+        }
         if screen == "terminal-clipboard" {
             do { try await TerminalClipboardChecks.run(workspace: workspace, output: URL(fileURLWithPath: output)); NSApp.terminate(nil) }
             catch { fputs("FAIL · \(error.localizedDescription)\n", stderr); workspace.sessions.forEach { $0.close() }; exit(1) }

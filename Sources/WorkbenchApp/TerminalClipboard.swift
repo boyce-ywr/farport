@@ -78,8 +78,9 @@ final class TerminalClipboardState: ObservableObject {
         remoteProof = nil
         let policy = synchronizePolicy()
         guard policy != .deny else { pendingRemoteText = nil; report(L10n.text("已按设置禁止终端写入剪贴板。"), informational: true); return }
-        guard data.count <= 1024 * 1024, let text = String(data: data, encoding: .utf8), !text.isEmpty else {
-            report(L10n.text("未复制：终端内容为空、编码无效或超过 1 MiB。"), failed: true); return
+        guard data.count <= 1024 * 1024, let text = String(data: data, encoding: .utf8), !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            pendingRemoteText = nil
+            report(L10n.text("未复制：终端内容为空、仅含空白、编码无效或超过 1 MiB。"), failed: true); return
         }
         guard interactive else {
             pendingRemoteText = text

@@ -43,6 +43,9 @@ final class AppStore: ObservableObject {
     @Published var terminalClipboardReadAllowed = UserDefaults.standard.bool(forKey: "terminalClipboardReadAllowed") {
         didSet { UserDefaults.standard.set(terminalClipboardReadAllowed, forKey: "terminalClipboardReadAllowed") }
     }
+    @Published var confirmMultilinePaste = UserDefaults.standard.object(forKey: "confirmMultilinePaste") as? Bool ?? true {
+        didSet { UserDefaults.standard.set(confirmMultilinePaste, forKey: "confirmMultilinePaste") }
+    }
     func automaticallyInsertAttachments(for host: HostProfile?) -> Bool {
         let current = host.flatMap { item in hosts.first(where: { $0.id == item.id }) ?? item }
         return (current?.attachmentInsertion ?? .inherit).automatic(defaultValue: automaticallyInsertAttachments)
