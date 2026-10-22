@@ -69,13 +69,13 @@ This README describes the main branch. Check each release's notes for the featur
 
 **Update from 0.1.8 build 9**: the current version includes the preview shutdown crash fix.
 
-Download the stable version from [GitHub Releases](https://github.com/boyce-ywr/farport/releases/latest). **The current stable version is 0.1.14 (build 20)**, adding terminal tab shortcuts, cross-project Agent session lists, split-pane directory inheritance, and clipboard permission settings. See the [release notes (Chinese)](docs/releases/0.1.14.md) for validation coverage and known limitations.
+Download the stable version from [GitHub Releases](https://github.com/boyce-ywr/farport/releases/latest). **The current stable version is 0.1.15 (build 21)**, fixing whitespace-only tmux clipboard overwrites and paste-content changes, with a separate multiline paste confirmation setting. See the [release notes (Chinese)](docs/releases/0.1.15.md) for validation coverage and installation limitations.
 
 | Mac | Download |
 | --- | --- |
-| Apple Silicon, including M-series chips | [Apple Silicon](https://github.com/boyce-ywr/farport/releases/download/v0.1.14/Farport-0.1.14-arm64.dmg) |
-| Intel | [Intel](https://github.com/boyce-ywr/farport/releases/download/v0.1.14/Farport-0.1.14-x86_64.dmg) |
-| Unsure, or need both architectures | [Universal](https://github.com/boyce-ywr/farport/releases/download/v0.1.14/Farport-0.1.14-universal.dmg) |
+| Apple Silicon, including M-series chips | [Apple Silicon](https://github.com/boyce-ywr/farport/releases/download/v0.1.15/Farport-0.1.15-arm64.dmg) |
+| Intel | [Intel](https://github.com/boyce-ywr/farport/releases/download/v0.1.15/Farport-0.1.15-x86_64.dmg) |
+| Unsure, or need both architectures | [Universal](https://github.com/boyce-ywr/farport/releases/download/v0.1.15/Farport-0.1.15-universal.dmg) |
 
 1. Open the DMG and drag **Farport.app** into **Applications**.
 2. Launch Farport from Applications. Save your work and quit the previous version before upgrading.
