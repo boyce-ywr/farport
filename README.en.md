@@ -104,8 +104,13 @@ Normal SSH use does not require Swift, Docker, or GitHub CLI. To manage tmux ses
 | Save in the editor (keep it open) | ⌘S |
 | Undo / redo in the editor | ⌘Z / ⌘⇧Z |
 | Cut / copy / paste / select all in the editor | ⌘X / ⌘C / ⌘V / ⌘A |
+| Cut (move) / copy / paste in the file list | ⌘X / ⌘C / ⌘V |
 
 ## FAQ
+
+**How do I move files?** Select one or more files, press ⌘X (or choose Cut), then press ⌘V in the destination pane. Cutting alone leaves sources untouched. Pasting queues the move and both panes refresh when it completes. Matching connection endpoints use native `cp` / `mv` on that machine, without routing file contents through the Mac. Moves between different endpoints transfer and verify file contents before removing the corresponding source entries. Existing destinations still require confirmation; folder merges preserve extra destination files. Endpoints without POSIX commands, including native Windows shells, continue to use SFTP.
+
+If a move stops or fails, keep the source, destination and `.swb-*.move` staging directories and resume the **original transfer task**. Do not cut again or delete staging files. Completed portions are not automatically undone; avoid editing either location while a move is in progress.
 
 **How do I copy reliably?** Select text and press ⌘C, or use the pane's copy button. In tmux or mouse-aware programs, **Shift-drag, then ⌘C** copies locally without relying on the remote program. Farport confirms “Copied to Mac clipboard”; copying without a local selection does not erase the existing clipboard.
 

@@ -13,8 +13,8 @@ extension AppStore {
               NSPasteboard.general.string(forType: Self.filePasteboardType) == copiedFiles.id.uuidString else { return [] }
         return copiedFiles.endpoints
     }
-    func copyFileReferences(_ endpoints: [FileEndpoint], sourceHost: HostProfile? = nil) throws {
-        let snapshot = try FileEndpointSnapshot(endpoints: endpoints, hosts: sourceHost.map { [$0] } ?? hosts)
+    func copyFileReferences(_ endpoints: [FileEndpoint], sourceHost: HostProfile? = nil, operation: FileTransferOperation = .copy) throws {
+        let snapshot = try FileEndpointSnapshot(endpoints: endpoints, hosts: sourceHost.map { [$0] } ?? hosts, operation: operation)
         try snapshot.validate(hosts: hosts)
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
@@ -63,7 +63,11 @@ extension AppStore {
         try source.validate(hosts: hosts); try destination.validate(hosts: hosts)
         guard destination.endpoints.count == 1 else { throw WorkbenchError.message(L10n.text("请选择一个目标目录。")) }
         let count = transfers.count
-        try queueFiles(source.endpoints, to: destination.endpoints[0])
+        try queueFiles(source.endpoints, to: destination.endpoints[0], operation: source.operation)
+        if source.operation == .move, copiedFiles?.id == source.id {
+            if NSPasteboard.general.changeCount == copiedFilesChangeCount { NSPasteboard.general.clearContents() }
+            copiedFiles = nil; copiedFilesChangeCount = -1
+        }
         return transfers.count - count
     }
 }

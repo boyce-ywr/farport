@@ -16,6 +16,8 @@ func rejects(_ message: String, _ operation: () throws -> Void) throws {
 }
 
 do {
+    if CommandLine.arguments.contains("--file-move-check") { try checkTransferMoves(); print("PASS · \(checks) 项文件移动断言"); exit(0) }
+    if let index = CommandLine.arguments.firstIndex(of: "--file-move-ssh"), CommandLine.arguments.indices.contains(index + 1) { try checkTransferMovesSSH(root: CommandLine.arguments[index + 1]); exit(0) }
     try checkAgentSessions()
     if CommandLine.arguments.contains("--agent-session-check") { print("PASS · \(checks) 项会话与导航断言"); exit(0) }
     if let index = CommandLine.arguments.firstIndex(of: "--agent-session-ssh"), CommandLine.arguments.indices.contains(index + 1) { try checkAgentRemote(root: CommandLine.arguments[index + 1]); exit(0) }
@@ -49,6 +51,7 @@ do {
     if let index = CommandLine.arguments.firstIndex(of: "--device-files-check") { try checkDeviceFiles(arguments: Array(CommandLine.arguments.dropFirst(index + 1))) }
     try checkFileSorting()
     try checkTransferConflicts()
+    try checkTransferMoves()
     try checkPreviewServer()
     try checkPreviewLifecycle()
     try checkReleaseUpdates()

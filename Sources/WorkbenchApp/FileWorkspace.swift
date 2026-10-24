@@ -28,6 +28,7 @@ struct FileWorkspace: View {
         self.focus = focus; self.canReceiveFiles = canReceiveFiles
     }
     var body: some View {
+        let cutPaths = Set(store.copiedFiles?.operation == .move ? store.fileClipboard.filter { $0.hostID == host?.id }.map(\.path) : [])
         VStack(spacing: 0) {
             toolbar
             if let notice = model.transferNotice {
@@ -61,6 +62,7 @@ struct FileWorkspace: View {
                                 Image(systemName: fileIcon(file)).foregroundStyle(file.attributes.isDirectory ? Color.teal : .secondary).font(.system(size: 15))
                                 Text(file.name)
                             }.font(.system(size: 12)).lineLimit(1)
+                                .opacity(cutPaths.contains(file.path) ? 0.45 : 1)
                                 .help(file.attributes.isDirectory ? L10n.text("单击选中，双击打开文件夹") : file.name)
                         }.width(min: 140, ideal: 210)
                         TableColumn(L10n.text("文件类型"), sortUsing: FileSortComparator(column: .type)) { file in Text(file.typeLabel).font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(1).help(file.typeLabel) }.width(min: 75, ideal: 100)
@@ -71,7 +73,7 @@ struct FileWorkspace: View {
                         ForEach(model.visibleFiles) { file in TableRow(file).itemProvider { dragProvider(for: file) } }
                     }.alternatingRowBackgrounds(.disabled)
                         .background(FileKeyboardCommands(model: model, focused: keyboardFocused, visible: visible,
-                                                         focus: focus, copy: { copyFiles(model.selectedFiles) }, paste: { pasteFiles() },
+                                                         focus: focus, copy: { copyFiles(model.selectedFiles) }, cut: { copyFiles(model.selectedFiles, operation: .move) }, paste: { pasteFiles() },
                                                          selectAll: { model.selection = Set(model.visibleFiles.map(\.path)) }).frame(width: 0, height: 0))
                         .background(TableHeaderSorting(titles: FileSortColumn.allCases.map(\.title), enabled: visible) { model.fileSort.cycle(FileSortColumn.allCases[$0]) }.frame(width: 0, height: 0))
                         .contextMenu(forSelectionType: String.self) { identifiers in
@@ -96,7 +98,7 @@ struct FileWorkspace: View {
                         if model.fileSort.column != nil { Button(L10n.text("恢复默认")) { model.fileSort = FileSort() }.buttonStyle(.borderless) }
                     }.font(.system(size: 10)).foregroundStyle(.secondary).padding(.horizontal, 12).padding(.top, 8)
                         .help(L10n.text("点击列标题依次切换升序、降序、默认；文件夹始终优先。类型依据名称后缀，不读取文件内容。"))
-                    HStack { Text(L10n.text("\(model.visibleFiles.count) 项 · 已选 \(model.selectedFiles.count) 项")); Spacer(); Text(L10n.text("⌘ / ⇧ 多选 · ⌘C 复制 · ⌘V 粘贴")) }.font(.system(size: 10)).foregroundStyle(.secondary).padding(12)
+                    HStack { Text(L10n.text("\(model.visibleFiles.count) 项 · 已选 \(model.selectedFiles.count) 项")); Spacer(); Text(L10n.text("⌘C 复制 · ⌘X 剪切 · ⌘V 粘贴")) }.font(.system(size: 10)).foregroundStyle(.secondary).padding(12)
                 }.frame(width: max(0, available - previewWidth))
                 if model.showPreview {
                 Rectangle().fill(Color.primary.opacity(0.08)).frame(width: 10)
@@ -139,7 +141,7 @@ struct FileWorkspace: View {
             }
         }
         .onDisappear { mounted = false; model.stop() }
-        .onChange(of: store.transfers.filter { $0.status == .completed }.map(\.id)) { _, _ in if !model.busy { model.load() } }
+        .onChange(of: store.transfers.filter { $0.status == .completed || ($0.isMove && [.failed, .paused].contains($0.status)) }.map { $0.id.uuidString + $0.status.rawValue }) { _, _ in model.refreshAfterTransfer() }
         .onChange(of: model.files) { _, files in
             if store.isTestWorkspace, ProcessInfo.processInfo.environment["SWB_QA_SCREEN"] == "files",
                ProcessInfo.processInfo.environment["SWB_QA_FILE_NAVIGATION"] != "1", model.selection.isEmpty,
@@ -173,7 +175,8 @@ struct FileWorkspace: View {
             } label: { Image(systemName: "folder.badge.plus") }.menuStyle(.borderlessButton).frame(width: 25)
             Menu {
                 Button(L10n.text("复制所选 \(model.selectedFiles.count) 项")) { copyFiles(model.selectedFiles) }.disabled(model.selectedFiles.isEmpty)
-                Button(L10n.text("粘贴 \(store.fileClipboard.count) 项到此目录")) { pasteFiles() }.disabled(store.fileClipboard.isEmpty || model.busy)
+                Button(L10n.text("剪切所选 \(model.selectedFiles.count) 项")) { copyFiles(model.selectedFiles, operation: .move) }.disabled(model.selectedFiles.isEmpty)
+                Button(store.copiedFiles?.operation == .move ? L10n.text("移动 \(store.fileClipboard.count) 项到此目录") : L10n.text("粘贴 \(store.fileClipboard.count) 项到此目录")) { pasteFiles() }.disabled(store.fileClipboard.isEmpty || model.busy)
                 Button(host == nil ? L10n.text("从本机选择文件…") : L10n.text("上传本地文件…")) { let panel = NSOpenPanel(); panel.allowsMultipleSelection = true; panel.canChooseDirectories = true; if panel.runModal() == .OK { queueSources(panel.urls.map { FileEndpoint(path: $0.path) }) } }
             } label: { Image(systemName: "doc.on.doc") }.menuStyle(.borderlessButton).frame(width: 26)
             Button { transferSelection = FileTransferSelection(sources: model.selectedEndpoints) } label: { Image(systemName: "arrow.left.arrow.right") }.help(L10n.text("传输到…")).buttonStyle(.borderedProminent).disabled(model.selectedFiles.isEmpty)
@@ -204,6 +207,7 @@ struct FileWorkspace: View {
     @ViewBuilder private func fileActions(_ file: RemoteFile) -> some View {
         if file.attributes.isDirectory || file.attributes.isSymbolicLink { Button(file.attributes.isSymbolicLink ? L10n.text("打开链接目标") : L10n.text("打开")) { model.activate(file) } }
         Button(L10n.text("复制")) { copyFiles([file]) }
+        Button(L10n.text("剪切（移动）")) { copyFiles([file], operation: .move) }
         Button(L10n.text("传输到…")) { transferSelection = FileTransferSelection(sources: [FileEndpoint(hostID: host?.id, path: file.path)]) }
         Button(L10n.text("下载…")) {
             let panel = NSOpenPanel(); panel.canChooseFiles = false; panel.canChooseDirectories = true; panel.prompt = L10n.text("选择保存目录")
@@ -217,6 +221,7 @@ struct FileWorkspace: View {
     }
     @ViewBuilder private func batchActions(_ files: [RemoteFile]) -> some View {
         Button(L10n.text("复制 \(files.count) 项")) { copyFiles(files) }
+        Button(L10n.text("剪切 \(files.count) 项")) { copyFiles(files, operation: .move) }
         Button(L10n.text("传输 \(files.count) 项到…")) { transferSelection = FileTransferSelection(sources: files.map { FileEndpoint(hostID: host?.id, path: $0.path) }) }
         Divider()
         Button(L10n.text("删除 \(files.count) 项…"), role: .destructive) { deleteFiles(files) }.disabled(model.busy)
@@ -227,10 +232,10 @@ struct FileWorkspace: View {
         let title = files.count == 1 ? L10n.text("永久删除“\(files[0].name)”？") : L10n.text("永久删除所选 \(files.count) 项？")
         if confirm(title, L10n.text("位置：\(host?.name ?? L10n.text("此 Mac")) · \(model.path)\n\n\(names)\n\n文件夹中的内容也会被删除，不经过废纸篓，无法撤销。")) { model.deleteFiles(files) }
     }
-    private func copyFiles(_ files: [RemoteFile]) {
+    private func copyFiles(_ files: [RemoteFile], operation: FileTransferOperation = .copy) {
         do {
-            try store.copyFileReferences(files.map { FileEndpoint(hostID: host?.id, path: $0.path) }, sourceHost: host)
-            model.transferNotice = L10n.text("已复制 \(files.count) 项，可在目标文件分栏按 ⌘V 粘贴。")
+            try store.copyFileReferences(files.map { FileEndpoint(hostID: host?.id, path: $0.path) }, sourceHost: host, operation: operation)
+            model.transferNotice = operation == .move ? L10n.text("已剪切 \(files.count) 项，在目标分栏按 ⌘V 移动；粘贴前不会删除源文件。") : L10n.text("已复制 \(files.count) 项，可在目标文件分栏按 ⌘V 粘贴。")
         } catch { model.errorMessage = error.localizedDescription }
     }
     private func pasteFiles() {

@@ -7,6 +7,7 @@ struct FileKeyboardCommands: NSViewRepresentable {
     let visible: Bool
     let focus: () -> Void
     let copy: () -> Void
+    let cut: () -> Void
     let paste: () -> Void
     let selectAll: () -> Void
     func makeCoordinator() -> Coordinator { Coordinator() }
@@ -24,7 +25,7 @@ struct FileKeyboardCommands: NSViewRepresentable {
     func updateNSView(_ view: NSView, context: Context) {
         let coordinator = context.coordinator
         coordinator.model = model; coordinator.focused = focused; coordinator.visible = visible; coordinator.focus = focus
-        coordinator.copy = copy; coordinator.paste = paste; coordinator.selectAll = selectAll
+        coordinator.copy = copy; coordinator.cut = cut; coordinator.paste = paste; coordinator.selectAll = selectAll
         DispatchQueue.main.async { [weak coordinator] in coordinator?.bindTable() }
     }
     static func dismantleNSView(_ view: NSView, coordinator: Coordinator) { if let monitor = coordinator.monitor { NSEvent.removeMonitor(monitor) }; coordinator.monitor = nil }
@@ -43,6 +44,7 @@ struct FileKeyboardCommands: NSViewRepresentable {
         var lastFocusRequest: UInt64 = 0
         var focus: (() -> Void)?
         var copy: (() -> Void)?
+        var cut: (() -> Void)?
         var paste: (() -> Void)?
         var selectAll: (() -> Void)?
         private func tables(in view: NSView) -> [NSTableView] {
@@ -78,6 +80,7 @@ struct FileKeyboardCommands: NSViewRepresentable {
                 return event
             }
             let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask).subtracting(.capsLock)
+            guard model?.spotlight == nil else { return event }
             guard modifiers == .command, !(window.firstResponder is NSTextView), !(window.firstResponder is NSTextField) else { return event }
             if let responder = window.firstResponder as? NSView {
                 var current: NSView? = responder
@@ -86,6 +89,7 @@ struct FileKeyboardCommands: NSViewRepresentable {
             } else if !focused || (window.firstResponder != nil && window.firstResponder !== window) { return event }
             switch event.charactersIgnoringModifiers?.lowercased() {
             case "c": focus?(); copy?()
+            case "x": focus?(); cut?()
             case "v": focus?(); paste?()
             case "a": focus?(); selectAll?()
             default: return event

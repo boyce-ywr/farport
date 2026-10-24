@@ -44,7 +44,10 @@ struct TransferRow: View {
                 Image(systemName: job.source.isLocal ? "arrow.up.doc" : (job.destination.isLocal ? "arrow.down.doc" : "arrow.left.arrow.right"))
                     .font(.system(size: 16)).foregroundStyle(.teal).frame(width: 30, height: 30).background(.teal.opacity(0.08), in: RoundedRectangle(cornerRadius: 6))
                 VStack(alignment: .leading, spacing: 3) {
-                    Text(job.name).font(.system(size: 13, weight: .semibold)).lineLimit(1)
+                    HStack(spacing: 6) {
+                        if job.isMove { Text(L10n.text("移动")).font(.system(size: 10, weight: .medium)).foregroundStyle(.teal) }
+                        Text(job.name).font(.system(size: 13, weight: .semibold)).lineLimit(1)
+                    }
                     HStack(spacing: 5) { Text(endpointName(job.source)); Image(systemName: "arrow.right"); Text(endpointName(job.destination)) }.font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
                 }.frame(maxWidth: .infinity, alignment: .leading)
                 Spacer()
@@ -60,7 +63,11 @@ struct TransferRow: View {
                 }
                 if job.status == .running || job.status == .queued { Button { store.pause(job) } label: { Image(systemName: "pause.fill") }.help(L10n.text("暂停并保留断点")) }
                 if job.status == .paused || job.status == .failed { Button { store.resume(job) } label: { Image(systemName: "play.fill") }.help(L10n.text("校验并继续")) }
-                if [.running, .queued, .paused, .awaitingConfirmation, .failed].contains(job.status) { Button { if confirm(L10n.text("取消此传输？"), L10n.text("已传输的 .part 文件会保留在目标目录，便于检查；原始文件不会被删除。")) { store.cancel(job) } } label: { Image(systemName: "xmark") }.help(L10n.text("取消")) }
+                if [.running, .queued, .paused, .awaitingConfirmation, .failed].contains(job.status) {
+                    Button {
+                        if confirm(job.isMove ? L10n.text("停止此移动？") : L10n.text("取消此传输？"), job.isMove ? L10n.text("已完成的移动不会撤销；保留源、目标和暂存文件，可从此任务继续。") : L10n.text(".swb-* 暂存条目会保留在目标目录，便于检查；原始文件不会被删除。")) { store.cancel(job) }
+                    } label: { Image(systemName: "xmark") }.help(job.isMove ? L10n.text("停止并保留进度") : L10n.text("取消"))
+                }
                 if job.status.canClearRecord { Button { store.clearTransferRecords(identifier: job.id) } label: { Image(systemName: "trash") }.help(L10n.text("仅清除此记录，不删除文件")) }
                 Button { expanded.toggle() } label: { Image(systemName: expanded ? "chevron.up" : "chevron.down") }.help(L10n.text("任务详情"))
             }.buttonStyle(.borderless)

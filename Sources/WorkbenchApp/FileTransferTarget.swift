@@ -21,7 +21,9 @@ struct FileTransferTarget {
             throw WorkbenchError.message(L10n.text("目标目录或分栏已变化，未开始复制，请重新操作。"))
         }
         let count = try store.queueFileReferences(source, to: target)
-        model.transferNotice = L10n.text("已加入 \(count) 个复制任务，可在传输队列查看进度。")
+        model.transferNotice = source.operation == .move
+            ? L10n.text("已加入 \(count) 个移动任务；失败或暂停可在传输队列继续。")
+            : L10n.text("已加入 \(count) 个复制任务，可在传输队列查看进度。")
     }
     func receiveDrop(_ providers: [NSItemProvider]) -> Bool {
         guard !providers.isEmpty else { return false }

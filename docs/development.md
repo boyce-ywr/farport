@@ -44,6 +44,8 @@ bash scripts/check-workbench-ux.sh    # 实际界面回归，需要先准备隔�
 bash scripts/check-attachments.sh    # 附件上传、回读和 tmux
 bash scripts/check-file-preview.sh   # 中英文、目录历史、源码高亮与媒体播放
 bash scripts/check-file-panes.sh --ssh # 中英文文件分栏、跨主机复制、拖拽数据链和焦点隔离
+bash scripts/check-file-moves.sh --ssh # 原生 cp/mv、剪切移动、断点恢复及跨机校验删源
+bash scripts/check-file-moves.sh --ui # 独立中英文剪切粘贴、双栏刷新及文本框焦点隔离
 bash scripts/check-local-tmux-directory.sh # 从根目录和测试目录启动，验证本机tmux目录与原窗格保持
 bash scripts/check-split-directory.sh --ssh # 本机/隔离SSH分屏继承原窗格cwd，不注入输入
 python3 Tests/WorkbenchCoreTests/agent_session_listing_checks.py # 全项目名称/活跃时间/大于200条/归档/失败提示

@@ -12,7 +12,15 @@ final class FileModel: ObservableObject {
     @Published var pathInput = "."
     @Published var files: [RemoteFile] = [] { didSet { visibleFilesCache = nil } }
     @Published var selection: Set<String> = []
-    @Published var busy = false
+    @Published var busy = false {
+        didSet {
+            if !busy && refreshRequested {
+                refreshRequested = false
+                let cancellation = navigation
+                Task { if !cancellation.isCancelled { refreshAfterTransfer() } }
+            }
+        }
+    }
     @Published private(set) var loadingPath: String?
     @Published private(set) var loadedEntryCount = 0
     @Published var previewBusy = false
@@ -62,6 +70,7 @@ final class FileModel: ObservableObject {
     private var generation = UUID()
     private var openingLink: String?
     private var hasLoaded = false
+    private var refreshRequested = false
     let previewLimit = 512 * 1024
     init(host: HostProfile?, store: AppStore) { self.host = host; transport = store.transport; self.store = store }
     var isHTML: Bool { ["html", "htm"].contains(((previewFile?.path ?? "") as NSString).pathExtension.lowercased()) }
@@ -111,6 +120,10 @@ final class FileModel: ObservableObject {
         if !hasLoaded && !busy { load(initialPath ?? path) }
     }
     func goBack() { if let destination = history.backDestination, !busy { load(destination, returning: true) } }
+    func refreshAfterTransfer() {
+        if busy { refreshRequested = true }
+        else { load() }
+    }
     func load(_ target: String? = nil, returning: Bool = false) {
         let target = target ?? path
         guard loadingPath != target || !busy else { return }
@@ -267,6 +280,7 @@ final class FileModel: ObservableObject {
         }
     }
     func stop() {
+        refreshRequested = false
         stopMediaPreview()
         if busy { hasLoaded = false }
         navigation.cancel(); previewCancellation.cancel(); generation = UUID()

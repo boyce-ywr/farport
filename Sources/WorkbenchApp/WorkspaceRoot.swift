@@ -244,9 +244,10 @@ struct WorkspaceRoot: View {
             catch { fputs("FAIL · \(error.localizedDescription)\n", stderr); exit(1) }
             return
         }
-        if screen == "file-pane-models" || screen == "file-panes" {
+        if screen == "file-pane-models" || screen == "file-panes" || screen == "file-moves" {
             do {
                 if screen == "file-pane-models" { try await FilePaneChecks.runModels(store: store) }
+                else if screen == "file-moves" { try await FilePaneChecks.runMoves(workspace: workspace, output: URL(fileURLWithPath: output)) }
                 else { try await FilePaneChecks.runUI(workspace: workspace, output: URL(fileURLWithPath: output)) }
                 NSApp.terminate(nil)
             } catch { fputs("FAIL · \(error.localizedDescription)\n", stderr); exit(1) }

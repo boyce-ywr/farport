@@ -1,7 +1,7 @@
 import Foundation
 
 public enum TransferBatch {
-    public static func jobs(sources: [FileEndpoint], destinationDirectory: FileEndpoint, overwrite: Bool = false) throws -> [TransferJob] {
+    public static func jobs(sources: [FileEndpoint], destinationDirectory: FileEndpoint, overwrite: Bool = false, operation: FileTransferOperation = .copy) throws -> [TransferJob] {
         guard !sources.isEmpty else { throw WorkbenchError.message(L10n.text("请先选择文件或文件夹。")) }
         guard destinationDirectory.path.hasPrefix("/"), !destinationDirectory.path.contains("\0") else { throw WorkbenchError.message(L10n.text("目标必须是有效的绝对目录路径。")) }
         var unique: [FileEndpoint] = []
@@ -21,7 +21,7 @@ public enum TransferBatch {
             guard source.hostID != destination.hostID || (destination.path != source.path && !destination.path.hasPrefix(source.path + "/")) else {
                 throw WorkbenchError.message(L10n.text("不能复制到原位置或自身子目录：\(name)"))
             }
-            return TransferJob(source: source, destination: destination, overwrite: overwrite)
+            return TransferJob(source: source, destination: destination, overwrite: overwrite, operation: operation)
         }
     }
 }

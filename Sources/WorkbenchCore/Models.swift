@@ -152,6 +152,7 @@ public struct TransferEntry: Codable, Sendable {
     public var attributes: FileAttributes
     public var finished: Bool = false
     public var createdDirectory: Bool? = nil
+    public var sourceRemoved: Bool? = nil
     public init(relativePath: String, attributes: FileAttributes) { self.relativePath = relativePath; self.attributes = attributes }
 }
 
@@ -168,8 +169,11 @@ public struct TransferJob: Identifiable, Codable, Sendable {
     public var overwrite: Bool = false
     public var conflicts: [TransferConflict]?
     public var approvedConflicts: [TransferConflict]?
-    public init(source: FileEndpoint, destination: FileEndpoint, overwrite: Bool = false) {
-        self.source = source; self.destination = destination; self.overwrite = overwrite
+    public var operation: FileTransferOperation? = nil
+    public var nativeMove: Bool? = nil
+    public var isMove: Bool { operation == .move }
+    public init(source: FileEndpoint, destination: FileEndpoint, overwrite: Bool = false, operation: FileTransferOperation = .copy) {
+        self.source = source; self.destination = destination; self.overwrite = overwrite; self.operation = operation
     }
     public var name: String { (source.path as NSString).lastPathComponent }
     public var fraction: Double { totalBytes == 0 ? (status == .completed ? 1 : 0) : min(1, Double(completedBytes) / Double(totalBytes)) }

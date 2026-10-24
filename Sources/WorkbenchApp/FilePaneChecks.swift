@@ -7,6 +7,39 @@ import OpenSSHBackend
 
 @MainActor
 enum FilePaneChecks {
+    static func runMoves(workspace: Workspace, output: URL) async throws {
+        let store = workspace.store
+        let first = store.paths.root.appendingPathComponent("file-moves/source")
+        let second = store.paths.root.appendingPathComponent("file-moves/destination")
+        for directory in [first, second] { try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true) }
+        let board = NSPasteboard.general
+        let previous = board.pasteboardItems?.map { item in item.types.compactMap { type in item.data(forType: type).map { (type, $0) } } }
+        defer {
+            workspace.filePanes.forEach { $0.stop() }
+            board.clearContents()
+            if let previous { board.writeObjects(previous.map { values in let item = NSPasteboardItem(); for (type, data) in values { item.setData(data, forType: type) }; return item }) }
+        }
+        workspace.browseFiles(.local)
+        guard let original = workspace.currentFileBrowser else { throw WorkbenchError.message("缺少移动源分栏") }
+        original.load(first.path)
+        try await wait { !original.busy && original.tableView?.window != nil }
+        guard let window = original.tableView?.window else { throw WorkbenchError.message("缺少移动测试窗口") }
+        window.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true)
+        try await wait { NSApp.isActive && window.isKeyWindow }
+        workspace.splitFilePane()
+        guard let destination = workspace.currentFileBrowser else { throw WorkbenchError.message("缺少移动目标分栏") }
+        destination.load(second.path)
+        try await wait { !destination.busy && destination.tableView?.window != nil && destination.tableView !== original.tableView }
+        try await checkCut(store: store, original: original, destination: destination, first: first, second: second, output: output)
+        let input = NSTextField(frame: NSRect(x: 0, y: 0, width: 240, height: 24))
+        window.contentView?.addSubview(input); input.stringValue = "text-field-cut"
+        window.makeFirstResponder(input); input.currentEditor()?.selectAll(nil)
+        let count = store.transfers.count
+        try await key("x", code: 7, window: window)
+        guard input.stringValue.isEmpty, board.string(forType: .string) == "text-field-cut", store.transfers.count == count else { throw WorkbenchError.message("文本框剪切被文件列表拦截") }
+        input.removeFromSuperview()
+        print("PASS · 独立剪切移动界面回归及文本框焦点隔离：\(L10n.language.rawValue)")
+    }
     static func runModels(store: AppStore) async throws {
         let workspace = Workspace(store: store)
         let root = store.paths.root.appendingPathComponent("file-pane-models")
@@ -57,6 +90,17 @@ enum FilePaneChecks {
         try await wait { store.activeCount == 0 }
         guard try Data(contentsOf: second.appendingPathComponent(source.lastPathComponent)) == Data("changed".utf8) else { throw WorkbenchError.message("确认覆盖后内容不正确") }
         try await checkDropGuards(store: store, model: destination, source: source)
+        let refreshFile = second.appendingPathComponent("pending-refresh.txt")
+        destination.busy = true
+        destination.refreshAfterTransfer(); destination.refreshAfterTransfer()
+        try bytes.write(to: refreshFile)
+        destination.busy = false
+        try await wait { !destination.busy && destination.files.contains { $0.name == refreshFile.lastPathComponent } }
+        destination.busy = true
+        destination.refreshAfterTransfer(); destination.stop()
+        try await Task.sleep(for: .milliseconds(100))
+        guard !destination.busy else { throw WorkbenchError.message("关闭分栏后待处理刷新仍启动了目录读取") }
+        print("PASS · 忙碌期间的连续刷新合并排队，停止分栏取消待刷新请求")
         print("PASS · 文件分栏独立模型/来源缓存/嵌套关闭、剪贴板令牌/身份保护、真实复制与覆盖确认")
         fflush(stdout)
     }
@@ -70,6 +114,10 @@ enum FilePaneChecks {
         let endpoints = [FileEndpoint(path: file.path)]
         try store.copyFileReferences(endpoints)
         guard store.fileClipboard == endpoints, board.string(forType: .string) == nil else { throw WorkbenchError.message("文件复制暴露了文本路径或没有写入引用") }
+        try store.copyFileReferences(endpoints, operation: .move)
+        guard try store.pastedFileReferences().operation == .move, FileManager.default.fileExists(atPath: file.path) else { throw WorkbenchError.message("剪切标记未保留或提前删除了源文件") }
+        try store.copyFileReferences(endpoints)
+        guard try store.pastedFileReferences().operation == .copy else { throw WorkbenchError.message("新复制没有取消旧剪切状态") }
         var rejected = false
         do { try store.copyFileReferences([]) } catch { rejected = true }
         guard rejected, !store.fileClipboard.isEmpty else { throw WorkbenchError.message("空选择复制未拒绝或改变了剪贴板") }
@@ -217,6 +265,7 @@ enum FilePaneChecks {
         try await wait { store.activeCount == 0 }
         guard try Data(contentsOf: second.appendingPathComponent(file.lastPathComponent)) == bytes,
               original.path == first.path else { throw WorkbenchError.message("⌘V没有复制到目标分栏，或改变了源目录") }
+        try await checkCut(store: store, original: original, destination: destination, first: first, second: second)
         let dragged = first.appendingPathComponent("dragged.txt")
         let secondDragged = first.appendingPathComponent("dragged-second.txt")
         try bytes.write(to: dragged)
@@ -236,6 +285,9 @@ enum FilePaneChecks {
         let count = store.transfers.count
         try await key("v", code: 9, window: window)
         guard input.stringValue == "input-only", store.transfers.count == count else { throw WorkbenchError.message("文本框粘贴被文件快捷键劫持") }
+        input.currentEditor()?.selectAll(nil)
+        try await key("x", code: 7, window: window)
+        guard input.stringValue.isEmpty, board.string(forType: .string) == "input-only", store.transfers.count == count else { throw WorkbenchError.message("文本框剪切被文件快捷键劫持") }
         input.removeFromSuperview()
         for _ in 0..<3 {
             workspace.focusFilePane(workspace.filePanes[0].id)
@@ -305,6 +357,49 @@ enum FilePaneChecks {
         print("PASS · 文件双栏真实⌘C/⌘V、拖拽provider接收链、目录独立、文本框粘贴不被劫持")
         print("NOTE · 鼠标拖拽手势尚需人工验收；provider接收链测试不代替系统拖拽验收")
         fflush(stdout)
+    }
+    private static func checkCut(store: AppStore, original: FileModel, destination: FileModel, first: URL, second: URL, output: URL? = nil) async throws {
+        let names = ["移动 文件.txt", "移动 second.txt"]
+        for name in names { try Data(name.utf8).write(to: first.appendingPathComponent(name)) }
+        original.refreshAfterTransfer()
+        try await wait { !original.busy && names.allSatisfy { name in original.files.contains { $0.name == name } } }
+        original.selection = Set(names.map { first.appendingPathComponent($0).path })
+        try await shortcut("x", code: 7, table: original.tableView!)
+        guard store.copiedFiles?.operation == .move, store.fileClipboard.count == names.count,
+              names.allSatisfy({ FileManager.default.fileExists(atPath: first.appendingPathComponent($0).path) }) else {
+            throw WorkbenchError.message("⌘X 未记录剪切状态或提前删除源文件")
+        }
+        if let output, let content = original.tableView?.window?.contentView, let bitmap = content.bitmapImageRepForCachingDisplay(in: content.bounds) {
+            content.cacheDisplay(in: content.bounds, to: bitmap)
+            try bitmap.representation(using: .png, properties: [:])?.write(to: output)
+        }
+        let count = store.transfers.count
+        try await shortcut("v", code: 9, table: original.tableView!)
+        guard store.transfers.count == count, original.errorMessage != nil, store.fileClipboard.count == names.count else {
+            throw WorkbenchError.message("原位置粘贴未拒绝或错误消费剪切引用")
+        }
+        original.errorMessage = nil
+        try await wait { !destination.busy }
+        try await shortcut("v", code: 9, table: destination.tableView!)
+        try await wait { store.activeCount == 0 && store.transfers.count == count + names.count }
+        guard store.fileClipboard.isEmpty, names.allSatisfy({ !FileManager.default.fileExists(atPath: first.appendingPathComponent($0).path) }) else {
+            throw WorkbenchError.message("移动未删源或剪切引用未消费")
+        }
+        for name in names {
+            guard try Data(contentsOf: second.appendingPathComponent(name)) == Data(name.utf8),
+                  store.transfers.contains(where: { $0.name == name && $0.isMove && $0.status == .completed }) else {
+                throw WorkbenchError.message("跨栏批量剪切粘贴没有完成：" + name)
+            }
+        }
+        try await wait {
+            !original.busy && !destination.busy
+                && !original.files.contains { names.contains($0.name) }
+                && names.allSatisfy { name in destination.files.contains { $0.name == name } }
+        }
+        try await shortcut("v", code: 9, table: destination.tableView!)
+        guard store.transfers.count == count + names.count else { throw WorkbenchError.message("剪切内容重复粘贴生成第二批移动") }
+        destination.errorMessage = nil
+        print("PASS · 原生⌘X多选剪切、原位置拒绝、⌘V跨栏移动、双侧刷新与重复粘贴保护")
     }
     private static func shortcut(_ character: String, code: UInt16, table: NSTableView) async throws {
         guard let window = table.window else { throw WorkbenchError.message("没有键盘目标窗口") }

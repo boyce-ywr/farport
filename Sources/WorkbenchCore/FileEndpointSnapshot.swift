@@ -3,9 +3,10 @@ import Foundation
 public struct FileEndpointSnapshot: Sendable {
     public let id = UUID()
     public let endpoints: [FileEndpoint]
+    public let operation: FileTransferOperation
     private let connections: [UUID: String]
 
-    public init(endpoints: [FileEndpoint], hosts: [HostProfile]) throws {
+    public init(endpoints: [FileEndpoint], hosts: [HostProfile], operation: FileTransferOperation = .copy) throws {
         guard !endpoints.isEmpty, endpoints.allSatisfy({ $0.path.hasPrefix("/") && !$0.path.contains("\0") }) else {
             throw WorkbenchError.message(L10n.text("请选择有效的文件或目录。"))
         }
@@ -16,7 +17,7 @@ public struct FileEndpointSnapshot: Sendable {
             }
             connections[identifier] = host.connectionKey
         }
-        self.endpoints = endpoints; self.connections = connections
+        self.endpoints = endpoints; self.connections = connections; self.operation = operation
     }
     public func validate(hosts: [HostProfile]) throws {
         for (identifier, connection) in connections {

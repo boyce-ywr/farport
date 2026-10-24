@@ -2,12 +2,12 @@ import Foundation
 import Darwin
 import WorkbenchCore
 
-private enum EndpointHandle {
+enum EndpointHandle {
     case local(FileHandle)
     case remote(Data)
 }
 
-private final class EndpointFileSystem {
+final class EndpointFileSystem {
     let remote: SFTPClient?
     init(endpoint: FileEndpoint, hosts: [HostProfile], transport: SSHTransport, cancellation: CancellationFlag) throws {
         if let identifier = endpoint.hostID {
@@ -28,6 +28,15 @@ private final class EndpointFileSystem {
             guard let attributes = try stat(child) else { throw WorkbenchError.message(L10n.text("扫描期间文件消失：\(name)")) }
             return RemoteFile(name: name, path: child, attributes: attributes)
         }
+    }
+    func realpath(_ path: String) throws -> String {
+        if let remote { return try remote.realpath(path) }
+        return URL(fileURLWithPath: path).standardizedFileURL.resolvingSymlinksInPath().path
+    }
+    func remove(_ path: String, directory: Bool) throws {
+        if let remote { try remote.remove(path, directory: directory); return }
+        let result = directory ? Darwin.rmdir(path) : Darwin.unlink(path)
+        guard result == 0 else { throw WorkbenchError.message(String(cString: strerror(errno))) }
     }
     func mkdir(_ path: String) throws -> Bool {
         if let existing = try stat(path) {
@@ -83,7 +92,7 @@ private final class EndpointFileSystem {
 }
 
 public final class TransferEngine: @unchecked Sendable {
-    private struct Conflicts: Error { let items: [TransferConflict] }
+    struct Conflicts: Error { let items: [TransferConflict] }
     public let transport: SSHTransport
     public init(transport: SSHTransport) { self.transport = transport }
 
@@ -91,13 +100,34 @@ public final class TransferEngine: @unchecked Sendable {
                         update: @escaping (TransferJob) -> Void) -> TransferJob {
         var job = initial; job.status = .running; job.message = L10n.text("正在连接并检查文件…"); update(job)
         do {
+            try cancellation.check()
+            guard job.source.path.hasPrefix("/"), job.destination.path.hasPrefix("/"), !job.source.path.contains("\0"), !job.destination.path.contains("\0") else {
+                throw WorkbenchError.message(L10n.text("源路径和目标路径必须是有效的绝对路径。"))
+            }
+            job.source.path = (job.source.path as NSString).standardizingPath
+            job.destination.path = (job.destination.path as NSString).standardizingPath
+            guard job.source.path != "/", job.destination.path != "/" else { throw WorkbenchError.message(L10n.text("不能复制根目录或无效文件名。")) }
             guard job.source != job.destination else { throw WorkbenchError.message(L10n.text("源路径和目标路径不能相同。")) }
             if job.source.hostID == job.destination.hostID,
                job.destination.path.hasPrefix(job.source.path.trimmingCharacters(in: CharacterSet(charactersIn: "/")) .withSlash + "/") {
                 throw WorkbenchError.message(L10n.text("不能把目录复制到它自身的子目录。"))
             }
             let source = try EndpointFileSystem(endpoint: job.source, hosts: hosts, transport: transport, cancellation: cancellation)
-            let destination = try EndpointFileSystem(endpoint: job.destination, hosts: hosts, transport: transport, cancellation: cancellation)
+            let sameMachine = job.source.isSameMachine(as: job.destination, hosts: hosts)
+            let destination = try sameMachine ? source : EndpointFileSystem(endpoint: job.destination, hosts: hosts, transport: transport, cancellation: cancellation)
+            let nativeHost = hosts.first(where: { $0.id == job.source.hostID })
+            let nativeAvailable = try sameMachine && (nativeHost.map { try transport.supportsPosixShell($0, cancellation: cancellation) } ?? true)
+            if sameMachine {
+                let sourcePath = RemotePath.join(try source.realpath(RemotePath.parent(job.source.path)), job.name)
+                let destinationPath = RemotePath.join(try destination.realpath(RemotePath.parent(job.destination.path)), (job.destination.path as NSString).lastPathComponent)
+                guard sourcePath != destinationPath, !destinationPath.hasPrefix(sourcePath + "/"), !sourcePath.hasPrefix(destinationPath + "/") else {
+                    throw WorkbenchError.message(L10n.text("不能复制或移动到原位置、自身子目录或父目录。"))
+                }
+            }
+            if job.nativeMove == true {
+                try finishNativeMove(&job, filesystem: source, hosts: hosts, cancellation: cancellation, update: update)
+                update(job); return job
+            }
             if job.entries.isEmpty {
                 var manifest: [TransferEntry] = []
                 try scan(source, root: job.source.path, relative: "", entries: &manifest, cancellation: cancellation)
@@ -119,13 +149,24 @@ public final class TransferEngine: @unchecked Sendable {
             }
             if !conflicts.isEmpty { throw Conflicts(items: conflicts) }
             job.conflicts = nil
-            job.message = L10n.text("\(job.entries.count) 个条目 · 流式中转"); update(job)
+            if nativeAvailable, job.isMove, job.entries.allSatisfy({ !$0.finished }), try destination.stat(job.destination.path)?.isDirectory != true {
+                job.nativeMove = true; update(job)
+                try finishNativeMove(&job, filesystem: source, hosts: hosts, cancellation: cancellation, update: update)
+                update(job); return job
+            }
+            job.message = nativeAvailable ? L10n.text("\(job.entries.count) 个条目 · 同机原生 cp") : L10n.text("\(job.entries.count) 个条目 · 流式中转"); update(job)
             var lastUpdate = Date.distantPast
             for index in job.entries.indices {
                 try cancellation.check()
                 let entry = job.entries[index]
                 let sourcePath = entry.relativePath.isEmpty ? job.source.path : RemotePath.join(job.source.path, entry.relativePath)
                 let targetPath = entry.relativePath.isEmpty ? job.destination.path : RemotePath.join(job.destination.path, entry.relativePath)
+                if entry.sourceRemoved == true {
+                    guard let current = try destination.stat(targetPath), matches(current, entry.attributes) else {
+                        throw WorkbenchError.message(L10n.text("已完成的目标文件被修改或删除，请重新创建任务。"))
+                    }
+                    continue
+                }
                 guard let current = try source.stat(sourcePath), current.isDirectory == entry.attributes.isDirectory,
                       current.isDirectory || (current.size == entry.attributes.size && current.modified == entry.attributes.modified),
                       !current.isSymbolicLink else { throw WorkbenchError.message(L10n.text("源文件已发生变化，不能沿用旧断点。请新建传输任务：\((sourcePath as NSString).lastPathComponent)")) }
@@ -149,6 +190,11 @@ public final class TransferEngine: @unchecked Sendable {
                 let temporary = targetPath + ".swb-" + job.id.uuidString + ".part"
                 let partial = try destination.stat(temporary)
                 guard partial == nil || (!partial!.isDirectory && !partial!.isSymbolicLink && partial!.size <= entry.attributes.size) else { throw WorkbenchError.message(L10n.text("断点文件无效，未继续写入。")) }
+                if nativeAvailable, partial == nil {
+                    try copyNativeFile(sourcePath, to: targetPath, attributes: entry.attributes, job: job, filesystem: source, hosts: hosts, cancellation: cancellation)
+                    job.entries[index].finished = true; job.completedBytes += entry.attributes.size; update(job)
+                    continue
+                }
                 var offset = partial?.size ?? 0
                 let reader = try source.open(sourcePath, writing: false)
                 defer { try? source.close(reader) }
@@ -201,19 +247,23 @@ public final class TransferEngine: @unchecked Sendable {
                 let targetPath = entry.relativePath.isEmpty ? job.destination.path : RemotePath.join(job.destination.path, entry.relativePath)
                 try destination.setAttributes(targetPath, attributes: entry.attributes)
             }
+            if job.isMove { try removeVerifiedSources(&job, source: source, destination: destination, cancellation: cancellation, update: update) }
             job.status = .completed; job.completedBytes = job.totalBytes
-            job.message = !job.source.isLocal && !job.destination.isLocal ? L10n.text("传输完成 · 未将远端文件缓存至 Mac 磁盘") : L10n.text("传输完成 · 已写入目标位置")
+            job.message = job.isMove ? L10n.text("移动完成 · 内容校验通过，已删除源条目") : (nativeAvailable ? L10n.text("复制完成 · 同机原生 cp，文件内容未经过 Mac 中转") : (!job.source.isLocal && !job.destination.isLocal ? L10n.text("传输完成 · 未将远端文件缓存至 Mac 磁盘") : L10n.text("传输完成 · 已写入目标位置")))
         } catch let conflict as Conflicts {
             job.status = cancellation.isCancelled ? .paused : .awaitingConfirmation
             job.conflicts = conflict.items
             job.message = L10n.text("目标已存在：\(conflict.items.count) 项等待确认，尚未覆盖。")
+            if job.nativeMove == true { job.message += "\n" + nativeMoveDirectory(job) }
         } catch {
             job.status = cancellation.isCancelled ? .paused : .failed
             job.message = cancellation.isCancelled ? L10n.text("已保留断点；恢复时校验已有内容后继续。") : error.localizedDescription
+            if job.isMove { job.message += "\n" + L10n.text("移动未完成：源、目标及暂存文件均需保留，请从此任务继续，不要重新剪切。") }
+            if job.nativeMove == true { job.message += "\n" + nativeMoveDirectory(job) }
         }
         update(job); return job
     }
-    private func scan(_ filesystem: EndpointFileSystem, root: String, relative: String,
+    func scan(_ filesystem: EndpointFileSystem, root: String, relative: String,
                       entries: inout [TransferEntry], cancellation: CancellationFlag, depth: Int = 0) throws {
         try cancellation.check()
         guard depth < 128, entries.count < 100_000 else { throw WorkbenchError.message(L10n.text("目录树过深或超过十万项，请分批传输。")) }

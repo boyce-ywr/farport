@@ -130,13 +130,21 @@ final class AppStore: ObservableObject {
     func queue(_ job: TransferJob) {
         transfers.insert(job, at: 0); persistTransfers(force: true); startNext()
     }
-    func queueFiles(_ sources: [FileEndpoint], to directory: FileEndpoint, overwrite: Bool = false) throws {
-        let batch = try TransferBatch.jobs(sources: sources, destinationDirectory: directory, overwrite: overwrite)
+    func queueFiles(_ sources: [FileEndpoint], to directory: FileEndpoint, overwrite: Bool = false, operation: FileTransferOperation = .copy) throws {
+        let batch = try TransferBatch.jobs(sources: sources, destinationDirectory: directory, overwrite: overwrite, operation: operation)
+        if operation == .move, batch.contains(where: { candidate in
+            transfers.contains { existing in
+                existing.isMove && [.running, .queued, .paused, .awaitingConfirmation, .failed].contains(existing.status)
+                    && existing.source.isSameMachine(as: candidate.source, hosts: hosts)
+                    && (existing.source.path == candidate.source.path || existing.source.path.hasPrefix(candidate.source.path + "/") || candidate.source.path.hasPrefix(existing.source.path + "/"))
+            }
+        }) { throw WorkbenchError.message(L10n.text("所选文件已有未结束的移动任务，请在传输队列中继续原任务。")) }
         transfers.insert(contentsOf: batch, at: 0); persistTransfers(force: true); startNext()
     }
     func pause(_ job: TransferJob) {
         active[job.id]?.cancel()
-        if let index = transfers.firstIndex(where: { $0.id == job.id }), transfers[index].status == .queued { transfers[index].status = .paused }
+        if let index = transfers.firstIndex(where: { $0.id == job.id }), active[job.id] == nil,
+           [.queued, .awaitingConfirmation, .failed].contains(transfers[index].status) { transfers[index].status = .paused }
         persistTransfers(force: true)
     }
     func resume(_ job: TransferJob) {
@@ -159,9 +167,10 @@ final class AppStore: ObservableObject {
         persistTransfers(force: true)
     }
     func cancel(_ job: TransferJob) {
+        if job.isMove { pause(job); return }
         active[job.id]?.cancel()
         if let index = transfers.firstIndex(where: { $0.id == job.id }) {
-            transfers[index].status = .cancelled; transfers[index].message = L10n.text("已取消。目标目录的 .swb-*.part 断点文件保留，确认不需要后可删除。")
+            transfers[index].status = .cancelled; transfers[index].message = L10n.text("已取消。目标目录的 .swb-* 暂存条目保留，确认不需要后可删除。")
         }
         persistTransfers(force: true)
     }
@@ -187,7 +196,7 @@ final class AppStore: ObservableObject {
         if previous != .cancelled, previous != job.status, [.completed, .failed, .paused, .cancelled, .awaitingConfirmation].contains(job.status), let started = transferStarted.removeValue(forKey: job.id) {
             if [.completed, .failed].contains(job.status) { notifyTaskCompletion(title: L10n.text("传输任务"), detail: job.status.title, elapsed: Date().timeIntervalSince(started), background: true) }
         }
-        persistTransfers(force: job.status != .running)
+        persistTransfers(force: job.status != .running || job.isMove)
     }
     func notifyTaskCompletion(title: String, detail: String, elapsed: TimeInterval, background: Bool) {
         guard notifyLongTasks, background, elapsed.isFinite, elapsed >= 30 else { return }
