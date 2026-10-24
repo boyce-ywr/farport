@@ -87,7 +87,7 @@ enum AttachmentAutoInsertChecks {
                 if kind == "switch-back" { workspace.page = .transfers; workspace.page = .terminal }
                 if kind == "switch" { workspace.connectLocal(split: true) }
                 try await wait { draft.result != nil || draft.failure != nil }
-                if ["typing", "manual", "switch", "switch-back"].contains(kind) {
+                if ["typing", "manual", "switch"].contains(kind) {
                     try await Task.sleep(for: .milliseconds(200))
                     guard !draft.inserted, draft.result != nil else { throw WorkbenchError.message("手动策略或继续输入保护失效") }
                 } else {
@@ -117,7 +117,7 @@ enum AttachmentAutoInsertChecks {
                 if kind == "switch", let other = workspace.selectedTerminal, other !== session { workspace.close(other); workspace.selectTerminal(session) }
             }
             workspace.close(session)
-            print("PASS · \(host == nil ? "本机" : "隔离 SSH") Cmd+V 图片/文件实际送达一次且不回车、同标签/短暂失焦恢复、手动策略/输入/目标切换保护")
+            print("PASS · \(host == nil ? "本机" : "隔离 SSH") Cmd+V 图片/文件实际送达一次且不回车、同标签/短暂失焦/页面往返恢复、手动策略/输入/停留他处保护")
         }
         for host in targets {
             let service = TmuxService(transport: store.transport, host: host)

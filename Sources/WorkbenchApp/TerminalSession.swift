@@ -197,10 +197,25 @@ final class SafeTerminalView: LocalProcessTerminalView {
     }
     @discardableResult func receiveAttachments(from pasteboard: NSPasteboard) -> Bool {
         guard let root = attachmentStagingRoot, let onAttachments else { return false }
-        do {
-            if let payload = try TerminalAttachmentPayload.read(pasteboard, stagingRoot: root) { onAttachments(payload); return true }
-        } catch { onAttachmentFailure?(error.localizedDescription); return true }
-        return false
+        let source: TerminalAttachmentIntake.Source?
+        do { source = try TerminalAttachmentIntake.capture(pasteboard) }
+        catch { onAttachmentFailure?(error.localizedDescription); return true }
+        guard let source else { return false }
+        if case .raster = source {
+            Task.detached(priority: .userInitiated) { [weak self] in
+                let outcome = Result { try TerminalAttachmentIntake.materialize(source, stagingRoot: root) }
+                let owner = self
+                await MainActor.run {
+                    switch outcome {
+                    case .success(let payload): owner?.onAttachments?(payload)
+                    case .failure(let error): owner?.onAttachmentFailure?(error.localizedDescription)
+                    }
+                }
+            }
+            return true
+        }
+        do { onAttachments(try TerminalAttachmentIntake.materialize(source, stagingRoot: root)); return true }
+        catch { onAttachmentFailure?(error.localizedDescription); return true }
     }
     override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
         guard onAttachments != nil, sender.draggingPasteboard.availableType(from: [.fileURL, .png, .tiff]) != nil else { return [] }
@@ -765,8 +780,6 @@ final class Workspace: ObservableObject {
         if !draft.session.connectionConfigurationValid() { return L10n.text("主机配置已变化，请重新确认附件目标。") }
         if !draft.session.connected || current.connectionID != draft.identity.connectionID { return L10n.text("连接已变化，请确认原终端后手动插入。") }
         if current.inputGeneration != draft.identity.inputGeneration { return L10n.text("上传期间有新的终端输入，请确认输入位置后手动插入。") }
-        if current.focusGeneration != draft.identity.focusGeneration || selectedTerminalID != draft.session.id || page != .terminal { return L10n.text("上传期间切换了目标，请回原终端确认后手动插入。") }
-        if !current.preservesAutomaticTarget(from: draft.identity) { return L10n.text("原窗口已变化，请手动确认插入目标。") }
         return nil
     }
     func restoreTransientAttachmentFocus(_ draft: TerminalAttachmentDraft) {

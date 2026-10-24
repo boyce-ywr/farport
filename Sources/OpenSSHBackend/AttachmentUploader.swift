@@ -11,14 +11,25 @@ public struct UploadedAttachments: Sendable {
 public final class AttachmentUploader: @unchecked Sendable {
     public let transport: SSHTransport
     public init(transport: SSHTransport) { self.transport = transport }
+    private static let cacheLock = NSLock()
+    private static var temporaryRoots: [String: String] = [:]
+    private static func cacheKey(_ host: HostProfile?) -> String { host?.id.uuidString ?? "local" }
+    public static func forgetTemporaryDirectory(for host: HostProfile?) {
+        let key = cacheKey(host)
+        cacheLock.withLock { _ = temporaryRoots.removeValue(forKey: key) }
+    }
     public func temporaryDirectory(host: HostProfile?, cancellation: CancellationFlag = CancellationFlag()) throws -> String {
+        let key = Self.cacheKey(host)
+        if let cached = Self.cacheLock.withLock({ Self.temporaryRoots[key] }) { return cached }
         let location: String
         if let host {
             location = try transport.run(host, command: "printf '%s' \"${TMPDIR:-/tmp}\"", cancellation: cancellation).checked().text
         } else { location = FileManager.default.temporaryDirectory.path }
         guard location.hasPrefix("/"), location.rangeOfCharacter(from: .controlCharacters) == nil else { throw WorkbenchError.message(L10n.text("无法确定目标机器的临时目录，未上传附件。")) }
         let client = try transport.files(host, cancellation: cancellation); defer { client.close() }
-        return try client.realpath(location)
+        let resolved = try client.realpath(location)
+        Self.cacheLock.withLock { Self.temporaryRoots[key] = resolved }
+        return resolved
     }
     public func upload(_ files: [URL], host: HostProfile?, directory: String, cancellation: CancellationFlag,
                        progress: @escaping (String, Double) -> Void) throws -> UploadedAttachments {
@@ -28,9 +39,12 @@ public final class AttachmentUploader: @unchecked Sendable {
         }
         let local = LocalFileClient(cancellation: cancellation)
         let target = try transport.files(host, cancellation: cancellation); defer { target.close() }
-        let canonical = try target.realpath(directory)
+        let canonical: String
+        do { canonical = try target.realpath(directory) }
+        catch { Self.forgetTemporaryDirectory(for: host); throw error }
         let batchDirectory = RemotePath.join(canonical, ".farport-attachments-" + UUID().uuidString.lowercased())
-        try target.mkdir(batchDirectory, permissions: 0o700)
+        do { try target.mkdir(batchDirectory, permissions: 0o700) }
+        catch { Self.forgetTemporaryDirectory(for: host); throw error }
         let sources = files.map { FileEndpoint(path: $0.standardizedFileURL.path) }
         let jobs = try TransferBatch.jobs(sources: sources, destinationDirectory: FileEndpoint(hostID: host?.id, path: batchDirectory))
         let profiles = host.map { [$0] } ?? []

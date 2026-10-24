@@ -24,6 +24,7 @@ final class FileModel: ObservableObject {
     @Published var previewImage: NSImage?
     @Published var previewPDF: PDFDocument?
     @Published var previewTargetIsDirectory = false
+    @Published var spotlight: RemoteFile?
     @Published var webURL: URL?
     @Published var webScripts = false
     @Published var previewRatio = 0.38
@@ -140,6 +141,7 @@ final class FileModel: ObservableObject {
                 path = result.0; pathInput = result.0; files = result.1; skippedFileNames = result.2; busy = false; loadingPath = nil; hasLoaded = true
                 selection.formIntersection(Set(files.map(\.path)))
                 if selection.count != 1 { previewFile = nil; previewData = Data(); followLog = false }
+                if let spotlight, !files.contains(where: { $0.path == spotlight.path }) { self.spotlight = nil }
             } catch { if !cancellation.isCancelled { errorMessage = error.localizedDescription; busy = false; loadingPath = nil } }
         }
     }
@@ -147,8 +149,27 @@ final class FileModel: ObservableObject {
         followLog = false
         openingLink = file.attributes.isSymbolicLink ? file.path : nil
         if file.attributes.isDirectory { load(file.path) }
-        else { showPreview = true; selection = [file.path]; preview(file, openLinkedDirectory: file.attributes.isSymbolicLink) }
+        else {
+            showPreview = true; spotlight = file
+            if selection == [file.path] { preview(file, openLinkedDirectory: file.attributes.isSymbolicLink) }
+            else { selection = [file.path] }
+        }
     }
+    func spotlightSiblings(for file: RemoteFile) -> [RemoteFile] {
+        let family = PreviewFamily.of(file)
+        return visibleFiles.filter { !$0.attributes.isDirectory && PreviewFamily.of($0) == family }
+    }
+    func stepSpotlight(_ offset: Int) {
+        guard let spotlight else { return }
+        let siblings = spotlightSiblings(for: spotlight)
+        guard let current = siblings.firstIndex(where: { $0.path == spotlight.path }) else { return }
+        let next = current + offset
+        guard siblings.indices.contains(next) else { return }
+        let file = siblings[next]
+        self.spotlight = file
+        if selection == [file.path] { preview(file) } else { selection = [file.path] }
+    }
+    func closeSpotlight() { spotlight = nil }
     func preview(_ file: RemoteFile, offset: UInt64 = 0, tail: Bool = false, openLinkedDirectory: Bool = false) {
         if let previousFailure = previewFailure, errorMessage == previousFailure { errorMessage = nil }
         previewFailure = nil; stopMediaPreview()
@@ -232,6 +253,7 @@ final class FileModel: ObservableObject {
                 guard !cancellation.isCancelled else { return }
                 files.removeAll { result.0.contains($0.path) }; selection.subtract(result.0)
                 if let previewFile, result.0.contains(previewFile.path) { self.previewFile = nil; previewData = Data(); previewImage = nil }
+                if let spotlight, !files.contains(where: { $0.path == spotlight.path }) { self.spotlight = nil }
                 busy = false
                 if !result.1.isEmpty { errorMessage = L10n.text("已删除 \(result.0.count) 项，\(result.1.count) 项未能完成（目录可能已部分删除）：\n") + result.1.prefix(5).joined(separator: "\n") }
             } catch { if !cancellation.isCancelled { busy = false; errorMessage = error.localizedDescription } }

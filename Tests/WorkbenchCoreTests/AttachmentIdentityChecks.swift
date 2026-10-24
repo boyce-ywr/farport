@@ -10,7 +10,7 @@ func checkAttachmentIdentity() throws {
     try expect(identity().allowsAutomaticInsertion(from: initial), "同一附件目标允许自动插入")
     try expect(identity().allowsAutomaticInsertion(from: identity(active: false)), "Finder 拖入后应用激活允许自动插入")
     try expect(!identity(active: false).allowsAutomaticInsertion(from: initial), "后台应用不自动插入")
-    try expect(!identity(focus: 2).allowsAutomaticInsertion(from: initial), "切换标签不自动插入")
+    try expect(identity(focus: 2).allowsAutomaticInsertion(from: initial), "回到原终端后，历史焦点变化不阻止自动插入")
     try expect(!identity(input: 2).allowsAutomaticInsertion(from: initial), "继续输入不自动插入")
     try expect(!identity(window: 43).allowsAutomaticInsertion(from: initial), "切换窗口不自动插入")
     try expect(!identity(window: nil).allowsAutomaticInsertion(from: identity(window: nil)), "未挂载窗口不自动插入")
@@ -18,7 +18,7 @@ func checkAttachmentIdentity() throws {
     try expect(identity(active: false).preservesAutomaticTarget(from: initial), "短暂失活不等于目标改变，可等待原焦点恢复")
     try expect(identity(window: nil).preservesAutomaticTarget(from: initial), "视图短暂脱离窗口可等待，不能立即插入")
     try expect(!identity(window: nil).allowsAutomaticInsertion(from: initial), "等待阶段仍禁止发送")
-    try expect(!identity(focus: 2).preservesAutomaticTarget(from: initial), "真实切换目标不能通过等待绕过")
+    try expect(identity(focus: 2).preservesAutomaticTarget(from: initial), "短暂切换标签后可等待回到原目标")
     try expect(!identity(input: 2).preservesAutomaticTarget(from: initial), "新输入不能通过等待绕过")
     try expect(!identity().preservesAutomaticTarget(from: identity(window: nil)), "未知原始窗口不能自动绑定新窗口")
 }

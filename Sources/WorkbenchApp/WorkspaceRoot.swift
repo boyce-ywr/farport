@@ -469,7 +469,7 @@ struct WorkspaceRoot: View {
            let window = NSApp.windows.first(where: { $0.isVisible && $0.contentView != nil }) {
             window.setContentSize(NSSize(width: max(980, width), height: max(640, height)))
         }
-        try? await Task.sleep(for: .seconds(ProcessInfo.processInfo.environment["SWB_QA_BATCH_COPY"] == "1" ? 35 : (ProcessInfo.processInfo.environment["SWB_QA_FILE_NAVIGATION"] == "1" ? 15 : 5)))
+        try? await Task.sleep(for: .seconds(ProcessInfo.processInfo.environment["SWB_QA_BATCH_COPY"] == "1" ? 35 : (ProcessInfo.processInfo.environment["SWB_QA_FILE_NAVIGATION"] == "1" ? 15 : (ProcessInfo.processInfo.environment["SWB_QA_SPOTLIGHT"] == "1" ? 25 : 5))))
         let expected: WorkspacePage = ["host-monitor", "local-monitor"].contains(screen) ? .monitor : (["files", "local-files", "file-switching", "file-deletion", "html-preview", "pdf-preview", "file-sorting", "device-files", "file-browsing", "markdown-editor", "navigation-preview", "xml-preview", "media-preview", "java-preview", "python-preview"].contains(screen) ? .files : (screen == "tmux" ? .tmux : (["transfers", "transfer-workflow"].contains(screen) ? .transfers : .terminal)))
         guard workspace.page == expected else {
             fputs("截图验收失败：请求页面与实际工作区不一致。\n", stderr)

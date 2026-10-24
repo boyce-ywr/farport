@@ -8,26 +8,54 @@ import OpenSSHBackend
 struct TerminalAttachmentPayload {
     let files: [URL]
     let temporaryDirectory: URL?
-    static func read(_ pasteboard: NSPasteboard, stagingRoot: URL) throws -> TerminalAttachmentPayload? {
+}
+
+enum TerminalAttachmentIntake {
+    enum Source: Sendable { case files([URL]); case png(Data); case raster(Data) }
+    @MainActor static func capture(_ pasteboard: NSPasteboard) throws -> Source? {
         if let files = pasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL], !files.isEmpty {
-            return TerminalAttachmentPayload(files: files, temporaryDirectory: nil)
+            return .files(files)
         }
-        guard let data = pasteboard.data(forType: .png) ?? pasteboard.data(forType: .tiff) else { return nil }
+        if let data = pasteboard.data(forType: .png) { try validate(data); return .png(data) }
+        if let data = pasteboard.data(forType: .tiff) { try validate(data); return .raster(data) }
+        return nil
+    }
+    private static func validate(_ data: Data) throws {
         guard data.count <= 128 * 1024 * 1024, let source = CGImageSourceCreateWithData(data as CFData, nil),
               let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
               let width = properties[kCGImagePropertyPixelWidth] as? Int, let height = properties[kCGImagePropertyPixelHeight] as? Int,
-              width > 0, height > 0, width <= 16384, height <= 16384, Int64(width) * Int64(height) <= 64_000_000,
-              let image = CGImageSourceCreateImageAtIndex(source, 0, nil) else { throw WorkbenchError.message(L10n.text("剪贴板图像无效或过大，请通过文件上传。")) }
-        let directory = stagingRoot.appendingPathComponent(UUID().uuidString)
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
-        let file = directory.appendingPathComponent("clipboard-" + UUID().uuidString.lowercased() + ".png")
-        guard let output = CGImageDestinationCreateWithURL(file as CFURL, UTType.png.identifier as CFString, 1, nil) else {
-            try? FileManager.default.removeItem(at: directory); throw WorkbenchError.message(L10n.text("无法保存剪贴板图片。"))
+              width > 0, height > 0, width <= 16384, height <= 16384, Int64(width) * Int64(height) <= 64_000_000 else {
+            throw WorkbenchError.message(L10n.text("剪贴板图像无效或过大，请通过文件上传。"))
         }
-        CGImageDestinationAddImage(output, image, nil)
-        guard CGImageDestinationFinalize(output) else { try? FileManager.default.removeItem(at: directory); throw WorkbenchError.message(L10n.text("剪贴板图片编码失败。")) }
-        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: file.path)
-        return TerminalAttachmentPayload(files: [file], temporaryDirectory: directory)
+    }
+    static func materialize(_ source: Source, stagingRoot: URL) throws -> TerminalAttachmentPayload {
+        switch source {
+        case .files(let files): return TerminalAttachmentPayload(files: files, temporaryDirectory: nil)
+        case .png(let data):
+            let directory = stagingRoot.appendingPathComponent(UUID().uuidString)
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+            let file = directory.appendingPathComponent("clipboard-" + UUID().uuidString.lowercased() + ".png")
+            do {
+                try data.write(to: file, options: .atomic)
+                try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: file.path)
+            } catch { try? FileManager.default.removeItem(at: directory); throw error }
+            return TerminalAttachmentPayload(files: [file], temporaryDirectory: directory)
+        case .raster(let data):
+            guard let imageSource = CGImageSourceCreateWithData(data as CFData, nil),
+                  let image = CGImageSourceCreateImageAtIndex(imageSource, 0, nil) else {
+                throw WorkbenchError.message(L10n.text("剪贴板图像无效或过大，请通过文件上传。"))
+            }
+            let directory = stagingRoot.appendingPathComponent(UUID().uuidString)
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+            let file = directory.appendingPathComponent("clipboard-" + UUID().uuidString.lowercased() + ".png")
+            guard let output = CGImageDestinationCreateWithURL(file as CFURL, UTType.png.identifier as CFString, 1, nil) else {
+                try? FileManager.default.removeItem(at: directory); throw WorkbenchError.message(L10n.text("无法保存剪贴板图片。"))
+            }
+            CGImageDestinationAddImage(output, image, nil)
+            guard CGImageDestinationFinalize(output) else { try? FileManager.default.removeItem(at: directory); throw WorkbenchError.message(L10n.text("剪贴板图片编码失败。")) }
+            try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: file.path)
+            return TerminalAttachmentPayload(files: [file], temporaryDirectory: directory)
+        }
     }
 }
 
@@ -159,7 +187,7 @@ final class TerminalAttachmentDraft: ObservableObject, Identifiable {
         guard let workspace else { return false }
         settlingFocus = true; defer { settlingFocus = false }
         var stable = 0
-        for _ in 0..<40 {
+        for _ in 0..<120 {
             guard !disposed, !cancellation.isCancelled, !inserted else { return false }
             if let reason = workspace.automaticInsertionBlocker(self) { status = L10n.text("附件已上传：") + reason; return false }
             workspace.restoreTransientAttachmentFocus(self)

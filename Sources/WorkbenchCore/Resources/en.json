@@ -873,8 +873,6 @@
   "主机配置已变化，请重新确认附件目标。": "The host configuration changed. Confirm the attachment destination again.",
   "连接已变化，请确认原终端后手动插入。": "The connection changed. Check the original terminal before inserting manually.",
   "上传期间有新的终端输入，请确认输入位置后手动插入。": "New terminal input was detected during upload. Check the input position and insert manually.",
-  "上传期间切换了目标，请回原终端确认后手动插入。": "The target changed during upload. Return to the original terminal and confirm before inserting.",
-  "原窗口已变化，请手动确认插入目标。": "The original window changed. Confirm the destination manually.",
   "复制连接诊断": "Copy Connection Diagnostics",
   "暂停自动重连": "Pause Automatic Reconnect",
   "重连倒计时": "Reconnect in",
@@ -1022,5 +1020,16 @@
   "开启读取后，当前有焦点的本机、SSH 或 tmux 程序可取得剪贴板文本（可能包含密码），不会逐次询问。仅对可信终端开启。图片/文件仍走附件流程。": "When enabled, the focused local, SSH or tmux program can read clipboard text, which may include passwords, without asking each time. Enable only for trusted terminals. Images and files still use the attachment workflow.",
   "设置立即生效并保存；只允许前台有焦点的终端，后台请求不会读写剪贴板。": "Changes take effect immediately and are saved. Only the focused foreground terminal can access the clipboard; background requests cannot read or overwrite it.",
   "粘贴多行文本前确认": "Confirm before pasting multiline text",
-  "此开关与终端读写剪贴板权限独立。关闭后，多行文本直接粘贴，可能立即执行其中的命令；图片和文件的附件确认不受影响。": "This setting is independent of terminal clipboard read/write permissions. When disabled, multiline text is pasted directly and may execute commands immediately. Image and file attachment confirmations are unchanged."
+  "此开关与终端读写剪贴板权限独立。关闭后，多行文本直接粘贴，可能立即执行其中的命令；图片和文件的附件确认不受影响。": "This setting is independent of terminal clipboard read/write permissions. When disabled, multiline text is pasted directly and may execute commands immediately. Image and file attachment confirmations are unchanged.",
+  "上一个同类型文件（←）": "Previous file of the same type (←)",
+  "下一个同类型文件（→）": "Next file of the same type (→)",
+  "← → 切换同类型文件": "← → switch within the same type",
+  "放大预览窗口": "Enlarge preview window",
+  "还原预览窗口": "Restore preview window",
+  "关闭预览（Esc）": "Close preview (Esc)",
+  "{0}/{1}": "{0} of {1}",
+  "图片": "Image",
+  "音视频": "Media",
+  "文本": "Text",
+  "其他": "Other"
 }

@@ -81,7 +81,13 @@ struct FileWorkspace: View {
                         } primaryAction: { identifiers in
                             if let file = model.files.first(where: { identifiers.contains($0.path) }) { model.activate(file) }
                         }
-                        .onChange(of: model.selection) { _, _ in model.followLog = false; if model.showPreview, let file = model.selectedFile { model.preview(file) } else { model.stopMediaPreview(); model.previewFile = nil } }
+                        .onChange(of: model.selection) { _, _ in
+                            model.followLog = false
+                            if let file = model.selectedFile, model.showPreview || model.spotlight != nil {
+                                if model.spotlight != nil { model.spotlight = file }
+                                model.preview(file)
+                            } else if model.spotlight == nil { model.stopMediaPreview(); model.previewFile = nil }
+                        }
                         .onChange(of: model.filter) { _, _ in model.selection.formIntersection(Set(model.visibleFiles.map(\.path))) }
                     Divider()
                     HStack {
@@ -124,6 +130,9 @@ struct FileWorkspace: View {
             if store.isTestWorkspace && ProcessInfo.processInfo.environment["SWB_QA_FILE_NAVIGATION"] == "1" {
                 await verifyDirectoryActivation()
             }
+            if store.isTestWorkspace && ProcessInfo.processInfo.environment["SWB_QA_SPOTLIGHT"] == "1" {
+                await verifySpotlight()
+            }
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(2))
                 if !Task.isCancelled && model.followLog, let file = model.previewFile { model.preview(file, tail: true) }
@@ -138,6 +147,8 @@ struct FileWorkspace: View {
                 model.selection = [path]
             }
         }
+        .overlay { if model.spotlight != nil { FileSpotlightOverlay(model: model, file: model.spotlight!) } }
+        .animation(.easeOut(duration: 0.18), value: model.spotlight?.path)
     }
     private var toolbar: some View {
         HStack(spacing: 7) {
@@ -179,59 +190,7 @@ struct FileWorkspace: View {
                     HStack { Text(bytes(file.attributes.size)); Text(L10n.text("权限 \(file.attributes.permissionText)")) }.font(.system(size: 10)).foregroundStyle(.tertiary)
                 }.padding(16)
                 Divider()
-                if file.attributes.isDirectory || model.previewTargetIsDirectory {
-                    VStack(spacing: 15) {
-                        Image(systemName: file.attributes.isSymbolicLink ? "folder.badge.questionmark" : "folder.fill").font(.system(size: 58)).foregroundStyle(.teal.opacity(0.7))
-                        if file.attributes.isSymbolicLink { Text(L10n.text("符号链接指向文件夹")).font(.caption).foregroundStyle(.secondary) }
-                        Button(file.attributes.isSymbolicLink ? L10n.text("打开链接目标文件夹") : L10n.text("打开文件夹")) { model.activate(file) }
-                    }.frame(maxWidth: .infinity, maxHeight: .infinity)
-                } else if model.isMedia {
-                    if let url = model.mediaURL { MediaPreview(url: url).id(url) }
-                    else { VStack { Text(model.previewBusy ? L10n.text("正在准备音视频…") : L10n.text("音视频预览已停止")); Button(L10n.text("重新预览")) { model.startMediaPreview() } }.font(.caption).frame(maxWidth: .infinity, maxHeight: .infinity) }
-                } else if model.isMarkdown && !showMarkdownSource && !model.binaryPreview {
-                    HStack {
-                        Text(L10n.text("Markdown 预览")).foregroundStyle(.secondary)
-                        Spacer(); Button(L10n.text("查看源码")) { showMarkdownSource = true }
-                    }.font(.caption).padding(10)
-                    MarkdownPreview(source: model.previewText)
-                    if file.attributes.size > UInt64(model.previewData.count) { Text(L10n.text("当前仅预览前 512 KiB；查看源码可翻页。")).font(.caption).foregroundStyle(.secondary).padding(10) }
-                } else if let document = model.previewPDF {
-                    PDFDocumentPreview(document: document)
-                } else if model.isHTML && !showHTMLSource {
-                    HStack {
-                        Button(L10n.text("源码")) { showHTMLSource = true }
-                        if let url = model.webURL { Button(L10n.text("在浏览器打开")) { NSWorkspace.shared.open(url) } }
-                        Spacer()
-                        Button(model.webScripts ? L10n.text("禁用脚本") : L10n.text("允许脚本…")) {
-                            if model.webScripts { model.startWebPreview() }
-                            else if confirm(L10n.text("信任此 HTML 报告的脚本？"), L10n.text("脚本将能读取报告所在目录及子目录中的文件。外部网络请求仍被阻止。仅对你信任的报告启用。")) { model.startWebPreview(allowScripts: true) }
-                        }
-                    }.font(.caption).buttonStyle(.borderless).padding(10)
-                    if let url = model.webURL { HTMLPreview(url: url, allowsScripts: model.webScripts).id(url) }
-                    else { VStack { Text(model.previewBusy ? L10n.text("正在启动安全预览…") : L10n.text("网页预览已停止")); Button(L10n.text("重新预览")) { model.startWebPreview() } }.font(.caption).frame(maxWidth: .infinity, maxHeight: .infinity) }
-                    HStack {
-                        Text(L10n.text("仅本机可访问 · 范围：当前 HTML 所在目录")).lineLimit(1).help(L10n.text("相对资源按需通过 SFTP 读取；路径不能越出目录，符号链接和外部网络被阻止。关闭应用后链接失效。"))
-                        Spacer(); Button(L10n.text("停止服务")) { model.stopWebPreview() }
-                    }.font(.system(size: 10)).foregroundStyle(.secondary).padding(10)
-                } else if let image = model.previewImage {
-                    ScrollView { Image(nsImage: image).resizable().scaledToFit().padding(16) }
-                } else if model.binaryPreview {
-                    VStack(alignment: .leading, spacing: 12) { Label(L10n.text("二进制文件"), systemImage: "doc.zipper"); Text(L10n.text("可下载或传输到另一台主机。不会把二进制内容作为文本写回。")).font(.caption).foregroundStyle(.secondary); Text(model.previewData.prefix(64).map { String(format: "%02x", $0) }.joined(separator: " ")).font(.system(size: 10, design: .monospaced)).textSelection(.enabled) }.padding(18)
-                    Spacer()
-                } else {
-                    if model.isHTML { Button(L10n.text("网页预览")) { showHTMLSource = false }.font(.caption).padding(10) }
-                    if model.isMarkdown { Button(L10n.text("Markdown 预览")) { showMarkdownSource = false }.font(.caption).padding(10) }
-                    if let syntax = SyntaxHighlighting.language(for: file.path) { SourcePreview(source: model.previewText, language: syntax) }
-                    else { ScrollView([.horizontal, .vertical]) { Text(model.previewText).font(.system(size: 11, design: .monospaced)).textSelection(.enabled).lineSpacing(5).frame(maxWidth: .infinity, alignment: .topLeading).padding(16) } }
-                    Divider()
-                    HStack {
-                        Button { model.followLog = false; model.preview(file, offset: model.previewOffset > UInt64(model.previewLimit) ? model.previewOffset - UInt64(model.previewLimit) : 0) } label: { Image(systemName: "chevron.left") }.disabled(model.previewOffset == 0)
-                        Text("\(bytes(model.previewOffset)) / \(bytes(file.attributes.size))").font(.system(size: 9, design: .monospaced)).foregroundStyle(.secondary)
-                        Button { model.followLog = false; model.preview(file, offset: model.previewOffset + UInt64(model.previewData.count)) } label: { Image(systemName: "chevron.right") }.disabled(model.previewOffset + UInt64(model.previewData.count) >= file.attributes.size)
-                        Spacer()
-                        Toggle(L10n.text("跟随"), isOn: $model.followLog).toggleStyle(.checkbox).font(.system(size: 10)).help(L10n.text("每两秒读取文件末尾，适用于日志"))
-                    }.buttonStyle(.borderless).padding(12)
-                }
+                FilePreviewContentView(model: model, showHTMLSource: $showHTMLSource, showMarkdownSource: $showMarkdownSource)
             } else {
                 VStack(spacing: 13) {
                     Image(systemName: model.selectedFiles.count > 1 ? "doc.on.doc" : "doc.text.magnifyingglass").font(.system(size: 33, weight: .light)).foregroundStyle(.tertiary)
@@ -343,6 +302,103 @@ struct FileWorkspace: View {
         }
         fputs("FAIL · 真实表格目录双击未导航，当前路径：\(model.path)，选中行：\(table.selectedRow)，激活回调：\(String(describing: table.doubleAction))\n", stderr)
         exit(1)
+    }
+    @MainActor private func verifySpotlight() async {
+        func fail(_ message: String) -> Never { fputs("FAIL · \(message)\n", stderr); exit(1) }
+        let directory = "/home/tester/spotlight-" + UUID().uuidString
+        let transport = store.transport; let host = host
+        let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 96, pixelsHigh: 64, bitsPerSample: 8, samplesPerPixel: 4,
+                                   hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0)
+        guard let rep else { fail("无法生成测试图片") }
+        for y in 0..<64 {
+            for x in 0..<96 {
+                rep.setColor(NSColor(calibratedRed: CGFloat(x) / 96, green: 0.62, blue: CGFloat(y) / 64, alpha: 1), atX: x, y: y)
+            }
+        }
+        guard let png = rep.representation(using: .png, properties: [:]) else { fail("无法生成测试图片") }
+        do {
+            try await Task.detached {
+                let client = try transport.files(host); defer { client.close() }
+                try client.mkdir(directory)
+                for name in ["a.png", "b.png", "c.png"] {
+                    let target = directory + "/" + name
+                    try client.createFile(target); try client.saveText(target, data: png, expected: client.stat(target), original: Data())
+                }
+                let notes = directory + "/notes.txt"
+                try client.createFile(notes); try client.saveText(notes, data: Data("spotlight notes".utf8), expected: client.stat(notes), original: Data())
+            }.value
+        } catch { fail("创建弹窗预览测试目录失败：\(error.localizedDescription)") }
+        model.load(directory)
+        for _ in 0..<100 { if !model.busy && model.path == directory { break }; try? await Task.sleep(for: .milliseconds(100)) }
+        guard model.path == directory, !model.busy else { fail("弹窗预览测试目录加载失败：\(model.path)") }
+        func findTable(_ view: NSView) -> NSTableView? {
+            if let table = view as? NSTableView { return table }
+            for child in view.subviews { if let table = findTable(child) { return table } }
+            return nil
+        }
+        guard let content = NSApp.windows.first(where: { $0.isVisible && $0.contentView != nil })?.contentView,
+              let table = findTable(content), let window = table.window else { fail("找不到文件表格") }
+        for _ in 0..<50 { if table.numberOfRows == model.visibleFiles.count { break }; try? await Task.sleep(for: .milliseconds(50)) }
+        content.layoutSubtreeIfNeeded()
+        try? await Task.sleep(for: .milliseconds(200))
+        func doubleClick(_ name: String) async {
+            try? await Task.sleep(for: .milliseconds(400))
+            guard let row = model.visibleFiles.firstIndex(where: { $0.name == name }) else { fail("缺少测试文件 \(name)") }
+            table.scrollRowToVisible(row)
+            let rectangle = table.rect(ofRow: row)
+            let position = table.convert(NSPoint(x: rectangle.minX + 60, y: rectangle.midY), to: nil)
+            for click in 1...2 {
+                for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
+                    guard let event = NSEvent.mouseEvent(with: type, location: position, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                                                         windowNumber: window.windowNumber, context: nil, eventNumber: click, clickCount: click, pressure: type == .leftMouseDown ? 1 : 0) else { exit(1) }
+                    NSApp.postEvent(event, atStart: false)
+                    try? await Task.sleep(for: .milliseconds(50))
+                }
+            }
+        }
+        func sendKey(_ characters: String, code: UInt16) async {
+            for type in [NSEvent.EventType.keyDown, .keyUp] {
+                if let event = NSEvent.keyEvent(with: type, location: .zero, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                                                windowNumber: window.windowNumber, context: nil, characters: characters, charactersIgnoringModifiers: characters,
+                                                isARepeat: false, keyCode: code) { NSApp.postEvent(event, atStart: false) }
+                try? await Task.sleep(for: .milliseconds(80))
+            }
+        }
+        func waitSpotlight(_ name: String?) async {
+            for _ in 0..<60 {
+                if model.spotlight?.name == name, name == nil || model.previewFile?.name == name { return }
+                try? await Task.sleep(for: .milliseconds(50))
+            }
+            fail("弹窗预览未到达 \(name ?? "关闭状态")：当前 \(String(describing: model.spotlight?.name)) selection=\(model.selection) previewFile=\(String(describing: model.previewFile?.name)) showPreview=\(model.showPreview) key=\(NSApp.keyWindow == window) responder=\(String(describing: window.firstResponder))")
+        }
+        await doubleClick("a.png")
+        await waitSpotlight("a.png")
+        guard model.spotlightSiblings(for: model.spotlight!).map(\.name) == ["a.png", "b.png", "c.png"] else { fail("同类型文件列表不正确：\(model.spotlightSiblings(for: model.spotlight!).map(\.name))") }
+        print("PASS · 双击图片打开弹窗预览且同类型列表正确")
+        await sendKey("\u{F703}", code: 124)
+        await waitSpotlight("b.png")
+        await sendKey("\u{F703}", code: 124)
+        await waitSpotlight("c.png")
+        await sendKey("\u{F703}", code: 124)
+        try? await Task.sleep(for: .milliseconds(250))
+        guard model.spotlight?.name == "c.png" else { fail("最后一个同类型文件继续向右不应越界") }
+        await sendKey("\u{F702}", code: 123)
+        await waitSpotlight("b.png")
+        print("PASS · 弹窗内左右键切换同类型图片且边界停住")
+        await sendKey("\u{1b}", code: 53)
+        await waitSpotlight(nil)
+        print("PASS · Esc 关闭弹窗预览")
+        await doubleClick("notes.txt")
+        await waitSpotlight("notes.txt")
+        await sendKey("\u{F703}", code: 124)
+        try? await Task.sleep(for: .milliseconds(250))
+        guard model.spotlight?.name == "notes.txt" else { fail("唯一同类型文件不应被切换") }
+        await sendKey("\u{1b}", code: 53)
+        await waitSpotlight(nil)
+        print("PASS · 文本弹窗无同类型 sibling 时不切换并可关闭")
+        await doubleClick("b.png")
+        await waitSpotlight("b.png")
+        print("PASS · 弹窗预览保持打开供截图验收")
     }
     @MainActor private func verifyBatchCopy(table: NSTableView, window: NSWindow) async {
         func sendShortcut(_ character: String, code: UInt16) async {
