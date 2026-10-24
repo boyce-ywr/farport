@@ -244,6 +244,11 @@ struct WorkspaceRoot: View {
             catch { fputs("FAIL · \(error.localizedDescription)\n", stderr); exit(1) }
             return
         }
+        if screen == "html-resources" {
+            do { try await HTMLResourceChecks.run(workspace: workspace, output: URL(fileURLWithPath: output)); NSApp.terminate(nil) }
+            catch { fputs("FAIL · \(error.localizedDescription)\n", stderr); exit(1) }
+            return
+        }
         if screen == "file-pane-models" || screen == "file-panes" || screen == "file-moves" {
             do {
                 if screen == "file-pane-models" { try await FilePaneChecks.runModels(store: store) }

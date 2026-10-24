@@ -63,7 +63,7 @@ struct FilePreviewContentView: View {
                     if let url = model.webURL { HTMLPreview(url: url, allowsScripts: model.webScripts).id(url) }
                     else { VStack { Text(model.previewBusy ? L10n.text("正在启动安全预览…") : L10n.text("网页预览已停止")); Button(L10n.text("重新预览")) { model.startWebPreview() } }.font(.caption).frame(maxWidth: .infinity, maxHeight: .infinity) }
                     HStack {
-                        Text(L10n.text("仅本机可访问 · 范围：当前 HTML 所在目录")).lineLimit(1).help(L10n.text("相对资源按需通过 SFTP 读取；路径不能越出目录，符号链接和外部网络被阻止。关闭应用后链接失效。"))
+                        Text(L10n.text("仅本机可访问 · 范围：当前 HTML 所在目录")).lineLimit(1).help(L10n.text("支持同级目录与子目录的图片、CSS、字体和媒体引用，按需读取；脚本需先允许。目录外路径、符号链接和外部网络被阻止。关闭应用后链接失效。"))
                         Spacer(); Button(L10n.text("停止服务")) { model.stopWebPreview() }
                     }.font(.system(size: 10)).foregroundStyle(.secondary).padding(10)
                 } else if let image = model.previewImage {

@@ -126,7 +126,7 @@
   "正在启动安全预览…": "Starting secure preview…",
   "网页预览已停止": "Web preview stopped",
   "仅本机可访问 · 范围：当前 HTML 所在目录": "Local access only · Scope: this HTML file's folder",
-  "相对资源按需通过 SFTP 读取；路径不能越出目录，符号链接和外部网络被阻止。关闭应用后链接失效。": "Relative resources are read over SFTP. Access outside the folder, symbolic links, and external requests are blocked. Links expire when the app closes.",
+  "支持同级目录与子目录的图片、CSS、字体和媒体引用，按需读取；脚本需先允许。目录外路径、符号链接和外部网络被阻止。关闭应用后链接失效。": "Images, CSS, fonts and media in the same folder and subfolders load on demand. Scripts require permission. Paths outside the folder, symlinks and external network requests are blocked. The link expires when the app closes.",
   "停止服务": "Stop server",
   "二进制文件": "Binary file",
   "可下载或传输到另一台主机。不会把二进制内容作为文本写回。": "Download or transfer this file. Binary content will not be written back as text.",

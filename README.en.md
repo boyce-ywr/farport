@@ -59,6 +59,8 @@ The editor toolbar has Save, Undo, Redo, Cut, Copy, Paste, and Select All. **⌘
 
 Open HTML reports in your browser, too. A temporary localhost address reads the report and relative assets over SFTP—no web server needs to be installed on the remote host. Scripts are disabled by default and can be enabled for a trusted report.
 
+HTML can reference images, CSS, SVG, fonts and media in the same folder or subfolders, such as `src="./cover.png"`, `src="images/photo.png"` and `href="styles/report.css"`. CSS `@import` and `url(...)` resolve relative to the stylesheet. Concurrent resource requests queue instead of being dropped when more than four arrive. This works in both the sidebar and double-click preview. Local JavaScript, modules and JSON data can be used after allowing scripts for a trusted page; files outside the report folder, absolute `file://` URLs and external CDN requests remain blocked.
+
 ![A remote HTML report displayed inside Farport](docs/images/html.png)
 
 <sub>Real application screenshots using isolated demo hosts and files, shown in Simplified Chinese. An English interface is also available.</sub>

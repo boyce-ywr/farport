@@ -59,6 +59,8 @@ macOS 14+ · Apple Silicon / Intel · [MIT 开源](LICENSE)
 
 HTML 报告也能在浏览器打开。Farport 在 Mac 本机提供临时访问地址，通过 SFTP 读取报告和相对资源，不需要在远端部署 Web 服务。默认不执行脚本，可信报告可手动允许。
 
+HTML 可引用同级目录或子目录中的图片、CSS、SVG、字体和媒体，例如 `src="./cover.png"`、`src="images/图 片.png"`、`href="styles/report.css"`。CSS 的 `@import` 和 `url(...)` 按样式文件所在目录解析；多张图片同时加载会排队读取，不会因瞬时超过四个请求而断开。侧栏和双击预览共用此能力。本地 JavaScript、模块及 JSON 数据需点击“允许脚本…”后由可信页面使用；目录外文件、`file://` 绝对路径及外部 CDN 请求仍不开放。
+
 ![远端 HTML 报告在文件预览区打开](docs/images/html.png)
 
 <sub>以上为真实应用截图，使用隔离主机和演示文件。</sub>

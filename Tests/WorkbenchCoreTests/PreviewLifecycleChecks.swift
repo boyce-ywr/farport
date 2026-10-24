@@ -48,6 +48,26 @@ private final class WeakPreviewServer {
     init(_ server: FilePreviewServer) { value = server }
 }
 
+func checkPreviewResourceConnections() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("farport-html-connections-" + UUID().uuidString)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    try Data("<html>relative resources</html>".utf8).write(to: root.appendingPathComponent("index.html"))
+    let server = try FilePreviewServer(transport: SSHTransport(paths: try ApplicationPaths(root: root.appendingPathComponent("config"))), host: nil, directory: root.path)
+    defer { server.stop() }
+    var sockets: [PreviewSocket] = []
+    for _ in 0..<6 { sockets.append(try PreviewSocket(port: server.port)) }
+    Thread.sleep(forTimeInterval: 0.1)
+    let path = try server.url(for: "index.html").path
+    for socket in sockets {
+        try socket.send("GET \(path) HTTP/1.1\r\nHost: 127.0.0.1:\(server.port)\r\n\r\n")
+    }
+    for (index, socket) in sockets.enumerated() {
+        try expect(try String(decoding: socket.read(timeout: 5000), as: UTF8.self).hasPrefix("HTTP/1.1 200"), "HTML 同时请求六个关联资源时不应丢弃请求：\(index + 1)")
+    }
+    print("PASS · HTML 六路同时连接的资源请求全部完成")
+}
+
 func checkPreviewLifecycle() throws {
     let folder = FileManager.default.temporaryDirectory.appendingPathComponent("farport-preview-lifecycle-" + UUID().uuidString)
     try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
@@ -73,9 +93,13 @@ func checkPreviewLifecycle() throws {
         }
         let overflow = try PreviewSocket(port: port)
         try overflow.send("HEAD \(path) HTTP/1.1\r\nHost: 127.0.0.1:\(port)\r\n\r\n")
-        try expect(try overflow.read().isEmpty, "四个读取槽位占用时拒绝额外连接")
+        if iteration.isMultiple(of: 2) {
+            sockets.removeFirst()
+            try expect(try String(decoding: overflow.read(timeout: 5000), as: UTF8.self).hasPrefix("HTTP/1.1 200"), "读取槽位释放后队列中的关联资源继续读取")
+        }
         if iteration.isMultiple(of: 10) { print("预览生命周期回归：第 \(iteration + 1) 轮，4 个媒体请求已开始"); fflush(stdout) }
         server!.stop(); server!.stop(); server = nil
+        if !iteration.isMultiple(of: 2) { try expect(try overflow.read().isEmpty, "停止预览同时关闭排队请求") }
         let deadline = Date().addingTimeInterval(4)
         while released.value != nil && Date() < deadline { Thread.sleep(forTimeInterval: 0.01) }
         try expect(released.value == nil, "停止后服务及时释放，不等待120秒超时")

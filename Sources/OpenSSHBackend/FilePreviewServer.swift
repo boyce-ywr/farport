@@ -26,6 +26,7 @@ public final class FilePreviewServer: @unchecked Sendable {
     private let cancellation = CancellationFlag()
     private let lock = NSLock()
     private var connections: [UUID: Request] = [:]
+    private var pending: [(Request, String)] = []
 
     public init(transport: SSHTransport, host: HostProfile?, directory: String, allowsScripts: Bool = false, fileName: String? = nil) throws {
         guard fileName == nil || RemotePath.validName(fileName!) else { throw WorkbenchError.message(L10n.text("预览文件名无效。")) }
@@ -64,6 +65,7 @@ public final class FilePreviewServer: @unchecked Sendable {
         lock.lock()
         cancellation.cancel()
         let current = Array(connections.values); connections.removeAll()
+        pending.removeAll()
         lock.unlock()
         listener.cancel()
         current.forEach { $0.cancel() }
@@ -71,7 +73,7 @@ public final class FilePreviewServer: @unchecked Sendable {
     private func accept(_ connection: NWConnection) {
         let request = Request(connection)
         lock.lock()
-        guard !cancellation.isCancelled, connections.count < 4 else { lock.unlock(); connection.cancel(); return }
+        guard !cancellation.isCancelled, connections.count < 32 else { lock.unlock(); connection.cancel(); return }
         connections[request.id] = request
         connection.stateUpdateHandler = { [weak self, weak request] state in
             guard let request else { return }
@@ -91,8 +93,30 @@ public final class FilePreviewServer: @unchecked Sendable {
         receive(request, data: Data())
     }
     private func release(_ request: Request, finished: Bool) {
-        lock.lock(); defer { lock.unlock() }
-        if finished || !request.serving { connections.removeValue(forKey: request.id) }
+        lock.lock()
+        if finished || !request.serving {
+            connections.removeValue(forKey: request.id)
+            pending.removeAll { $0.0.id == request.id }
+        }
+        lock.unlock()
+        servePending()
+    }
+    private func servePending() {
+        lock.lock()
+        var ready: [(Request, String)] = []
+        var active = connections.values.filter(\.serving).count
+        while !cancellation.isCancelled, active < 4, !pending.isEmpty {
+            let next = pending.removeFirst()
+            guard !next.0.cancellation.isCancelled, connections[next.0.id] != nil else { continue }
+            next.0.serving = true; active += 1; ready.append(next)
+        }
+        lock.unlock()
+        for (request, header) in ready {
+            DispatchQueue.global(qos: .utility).async {
+                defer { request.cancel(); self.release(request, finished: true) }
+                self.serve(header, request: request)
+            }
+        }
     }
     private func receive(_ request: Request, data: Data) {
         request.connection.receive(minimumIncompleteLength: 1, maximumLength: 8192) { [weak self] bytes, _, complete, error in
@@ -100,16 +124,13 @@ public final class FilePreviewServer: @unchecked Sendable {
             var header = data; if let bytes { header.append(bytes) }
             guard header.count <= 16384, error == nil else { request.cancel(); return }
             if let end = header.range(of: Data("\r\n\r\n".utf8)) {
+                let header = String(decoding: header[..<end.lowerBound], as: UTF8.self)
                 self.lock.lock()
                 let allowed = !self.cancellation.isCancelled && !request.cancellation.isCancelled && self.connections[request.id] != nil
-                if allowed { request.serving = true }
+                if allowed { self.pending.append((request, header)) }
                 self.lock.unlock()
                 guard allowed else { request.cancel(); return }
-                let header = String(decoding: header[..<end.lowerBound], as: UTF8.self)
-                DispatchQueue.global(qos: .utility).async {
-                    defer { request.cancel(); self.release(request, finished: true) }
-                    self.serve(header, request: request)
-                }
+                self.servePending()
             } else if complete { request.cancel() }
             else { self.receive(request, data: header) }
         }

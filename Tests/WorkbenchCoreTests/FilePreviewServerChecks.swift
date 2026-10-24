@@ -10,8 +10,14 @@ func checkPreviewServer() throws {
     let html = Data("<html><link rel='stylesheet' href='style.css'><h1 id='c322'>报告</h1></html>".utf8)
     try html.write(to: folder.appendingPathComponent("index.html"))
     try Data("h1 { color: teal }".utf8).write(to: folder.appendingPathComponent("style.css"))
+    let assets = folder.appendingPathComponent("assets")
+    try FileManager.default.createDirectory(at: assets, withIntermediateDirectories: true)
+    let image = Data(base64Encoded: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aRZkAAAAASUVORK5CYII=")!
+    try image.write(to: assets.appendingPathComponent("图 片.png"))
+    try Data("export const ready=true;".utf8).write(to: assets.appendingPathComponent("report.mjs"))
     try Data("not exposed".utf8).write(to: root.appendingPathComponent("private.txt"))
     try FileManager.default.createSymbolicLink(at: folder.appendingPathComponent("linked.txt"), withDestinationURL: root.appendingPathComponent("private.txt"))
+    try FileManager.default.createSymbolicLink(at: assets.appendingPathComponent("outside"), withDestinationURL: root)
     let transport = SSHTransport(paths: try ApplicationPaths(root: root.appendingPathComponent("config")))
     let server = try FilePreviewServer(transport: transport, host: nil, directory: folder.path)
     defer { server.stop() }
@@ -29,6 +35,10 @@ func checkPreviewServer() throws {
     let base = url.deletingLastPathComponent().absoluteString
     let css = try request(base + "style.css")
     try expect(css.0 == "200" && css.2.contains("text/css"), "相对 CSS 按需读取")
+    let nested = try request(url.deletingLastPathComponent().appendingPathComponent("assets/图 片.png").absoluteString + "?version=2")
+    try expect(nested.0 == "200" && nested.1 == image && nested.2.contains("image/png"), "子目录图片支持中文、空格和查询参数，返回真实图片字节")
+    let module = try request(base + "assets/report.mjs")
+    try expect(module.0 == "200" && module.2.contains("javascript"), "目录内模块脚本具有浏览器可执行的 MIME 类型")
     let range = try request(url.absoluteString, extra: ["-H", "Range: bytes=1-4"])
     try expect(range.0 == "206" && range.1 == html.subdata(in: 1..<5), "字节范围读取正确")
     let suffix = try request(url.absoluteString, extra: ["-H", "Range: bytes=-3"])
@@ -41,6 +51,9 @@ func checkPreviewServer() throws {
     try expect(try request(base + "../private.txt").0 == "403", "拒绝目录穿越")
     try expect(try request(base + "%2e%2e/private.txt").0 == "403", "拒绝编码目录穿越")
     try expect(try request(base + "linked.txt").0 == "403", "拒绝符号链接越界")
+    try expect(try request(base + "assets/outside/private.txt").0 == "403", "嵌套资源不能通过目录符号链接越界")
+    try expect(try request(base + "assets/%2e%2e/%2e%2e/private.txt").0 == "403", "嵌套资源不能通过编码路径逃离报告目录")
+    try expect(try request(base + "missing.png").0 == "404", "缺失图片返回404而非伪造成功")
     try expect(try request("http://127.0.0.1:\(server.port)/wrong/index.html").0 == "404", "错误令牌不可读取")
     let trusted = try FilePreviewServer(transport: transport, host: nil, directory: folder.path, allowsScripts: true)
     defer { trusted.stop() }
