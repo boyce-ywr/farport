@@ -30,7 +30,7 @@ enum FilePaneChecks {
         guard let destination = workspace.currentFileBrowser else { throw WorkbenchError.message("缺少移动目标分栏") }
         destination.load(second.path)
         try await wait { !destination.busy && destination.tableView?.window != nil && destination.tableView !== original.tableView }
-        try await checkCut(store: store, original: original, destination: destination, first: first, second: second, output: output)
+        try await checkCut(workspace: workspace, store: store, original: original, destination: destination, first: first, second: second, output: output)
         let input = NSTextField(frame: NSRect(x: 0, y: 0, width: 240, height: 24))
         window.contentView?.addSubview(input); input.stringValue = "text-field-cut"
         window.makeFirstResponder(input); input.currentEditor()?.selectAll(nil)
@@ -265,7 +265,7 @@ enum FilePaneChecks {
         try await wait { store.activeCount == 0 }
         guard try Data(contentsOf: second.appendingPathComponent(file.lastPathComponent)) == bytes,
               original.path == first.path else { throw WorkbenchError.message("⌘V没有复制到目标分栏，或改变了源目录") }
-        try await checkCut(store: store, original: original, destination: destination, first: first, second: second)
+        try await checkCut(workspace: workspace, store: store, original: original, destination: destination, first: first, second: second)
         let dragged = first.appendingPathComponent("dragged.txt")
         let secondDragged = first.appendingPathComponent("dragged-second.txt")
         try bytes.write(to: dragged)
@@ -358,16 +358,19 @@ enum FilePaneChecks {
         print("NOTE · 鼠标拖拽手势尚需人工验收；provider接收链测试不代替系统拖拽验收")
         fflush(stdout)
     }
-    private static func checkCut(store: AppStore, original: FileModel, destination: FileModel, first: URL, second: URL, output: URL? = nil) async throws {
+    private static func checkCut(workspace: Workspace, store: AppStore, original: FileModel, destination: FileModel, first: URL, second: URL, output: URL? = nil) async throws {
         let names = ["移动 文件.txt", "移动 second.txt"]
         for name in names { try Data(name.utf8).write(to: first.appendingPathComponent(name)) }
         original.refreshAfterTransfer()
         try await wait { !original.busy && names.allSatisfy { name in original.files.contains { $0.name == name } } }
         original.selection = Set(names.map { first.appendingPathComponent($0).path })
+        guard let pane = workspace.filePanes.first(where: { workspace.fileBrowser(in: $0) === original }) else { throw WorkbenchError.message("剪切源分栏已关闭") }
+        workspace.focusFilePane(pane.id)
+        try await wait { workspace.fileLayout.focused == pane.id && original.tableView?.window?.firstResponder === original.tableView && original.tableView?.selectedRowIndexes.count == names.count }
         try await shortcut("x", code: 7, table: original.tableView!)
         guard store.copiedFiles?.operation == .move, store.fileClipboard.count == names.count,
               names.allSatisfy({ FileManager.default.fileExists(atPath: first.appendingPathComponent($0).path) }) else {
-            throw WorkbenchError.message("⌘X 未记录剪切状态或提前删除源文件")
+            throw WorkbenchError.message("⌘X 未记录剪切状态或提前删除源文件：selection=\(original.selection.count), rows=\(original.tableView?.selectedRowIndexes.count ?? -1), focus=\(original.tableView?.window?.firstResponder === original.tableView), clipboard=\(store.fileClipboard.count), operation=\(String(describing: store.copiedFiles?.operation)), error=\(original.errorMessage ?? "none")")
         }
         if let output, let content = original.tableView?.window?.contentView, let bitmap = content.bitmapImageRepForCachingDisplay(in: content.bounds) {
             content.cacheDisplay(in: content.bounds, to: bitmap)
