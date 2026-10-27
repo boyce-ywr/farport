@@ -19,11 +19,13 @@ final class TerminalClipboardState: ObservableObject {
     private var notice: Task<Void, Never>?
     private var copyWait: Task<Void, Never>?
     private var copyRequest = UUID()
+    private var selectionCancellation: CancellationFlag?
     private var interaction: UInt64 = 0
     private var remoteProof: (changeCount: Int, digest: SHA256.Digest, date: Date, interaction: UInt64)?
     private var reportedCopy = false
-    deinit { notice?.cancel(); copyWait?.cancel() }
+    deinit { notice?.cancel(); copyWait?.cancel(); selectionCancellation?.cancel() }
     func report(_ message: String, failed: Bool = false, informational: Bool = false) {
+        selectionCancellation?.cancel(); selectionCancellation = nil
         copyWait?.cancel(); copyWait = nil; copyRequest = UUID()
         notice?.cancel(); self.message = message; self.failed = failed; self.informational = informational; reportedCopy = false
         notice = Task { [weak self] in
@@ -41,8 +43,53 @@ final class TerminalClipboardState: ObservableObject {
         report(L10n.text("已复制到 Mac 剪贴板")); reportedCopy = true; return true
     }
     func noteUserInteraction() {
+        if selectionCancellation != nil { message = ""; selectionCancellation?.cancel(); selectionCancellation = nil }
         interaction &+= 1; remoteProof = nil; copyWait?.cancel(); copyWait = nil; copyRequest = UUID()
         if reportedCopy { notice?.cancel(); message = ""; reportedCopy = false }
+    }
+    func copyTmuxSelection(read: @escaping (CancellationFlag) async throws -> Data?, isStillInteractive: @escaping () -> Bool) {
+        guard isStillInteractive() else { return }
+        if confirmedRecentRemoteCopy() { report(L10n.text("已复制到 Mac 剪贴板")); reportedCopy = true; return }
+        report(L10n.text("正在复制 tmux 选区…"), informational: true)
+        let request = copyRequest
+        let flag = CancellationFlag(); selectionCancellation = flag
+        let changeCount = NSPasteboard.general.changeCount
+        notice?.cancel()
+        notice = Task { [weak self] in
+            do { try await Task.sleep(for: .seconds(6)) } catch { return }
+            guard let self, copyRequest == request else { return }
+            report(L10n.text("读取 tmux 选区超时；可用 Shift 拖选后 ⌘C 直接复制。"), failed: true)
+        }
+        copyWait = Task { [weak self] in
+            let focusObserver = NotificationCenter.default.addObserver(forName: NSWindow.didResignKeyNotification, object: NSApp.keyWindow, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.noteUserInteraction() }
+            }
+            let applicationObserver = NotificationCenter.default.addObserver(forName: NSApplication.didResignActiveNotification, object: NSApp, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.noteUserInteraction() }
+            }
+            defer { NotificationCenter.default.removeObserver(focusObserver); NotificationCenter.default.removeObserver(applicationObserver) }
+            do {
+                let data = try await read(flag)
+                guard let self, copyRequest == request, !flag.isCancelled else { return }
+                guard isStillInteractive() else { noteUserInteraction(); return }
+                guard NSPasteboard.general.changeCount == changeCount else {
+                    report(L10n.text("剪贴板已被其他操作更新，未覆盖；请重新复制。"), informational: true); return
+                }
+                guard let data else {
+                    if confirmedRecentRemoteCopy() { report(L10n.text("已复制到 Mac 剪贴板")); reportedCopy = true }
+                    else { report(L10n.text("tmux 当前没有可读取的选区；请保持选区后按 ⌘C，或用 Shift 拖选直接复制。"), informational: true) }
+                    return
+                }
+                guard data.count <= 1024 * 1024, let text = String(data: data, encoding: .utf8), !text.isEmpty else {
+                    report(L10n.text("tmux 选区为空、编码无效或超过 1 MiB，未写入剪贴板。"), failed: true); return
+                }
+                write(text)
+            } catch {
+                guard let self, copyRequest == request, !flag.isCancelled else { return }
+                guard isStillInteractive() else { noteUserInteraction(); return }
+                report(L10n.text("无法读取当前 tmux 选区；请重试或用 Shift 拖选后 ⌘C 复制。"), failed: true)
+            }
+        }
     }
     func noLocalSelection(remoteContext: Bool) {
         if confirmedRecentRemoteCopy() { report(L10n.text("已复制到 Mac 剪贴板")); reportedCopy = true; return }
@@ -109,7 +156,7 @@ final class TerminalClipboardState: ObservableObject {
         remoteAllowed = false; pendingRemoteText = nil
         report(L10n.text("已禁止此终端写入剪贴板；本地选中复制不受影响。"))
     }
-    func resetPermission() { remoteAllowed = nil; pendingRemoteText = nil; remoteProof = nil; lastRead = -.infinity; copyWait?.cancel(); copyWait = nil; copyRequest = UUID(); notice?.cancel(); message = ""; failed = false; informational = false; reportedCopy = false }
+    func resetPermission() { selectionCancellation?.cancel(); selectionCancellation = nil; remoteAllowed = nil; pendingRemoteText = nil; remoteProof = nil; lastRead = -.infinity; copyWait?.cancel(); copyWait = nil; copyRequest = UUID(); notice?.cancel(); message = ""; failed = false; informational = false; reportedCopy = false }
 }
 
 struct TerminalClipboardControls: View {
@@ -117,13 +164,13 @@ struct TerminalClipboardControls: View {
     @ObservedObject var state: TerminalClipboardState
     var body: some View {
         HStack(spacing: 4) {
-            Button { terminal.onContextFocus?(); terminal.copy(terminal) } label: { Image(systemName: "doc.on.doc").frame(width: 24, height: 30) }
+            Button { terminal.onContextFocus?(); terminal.window?.makeFirstResponder(terminal); terminal.copy(terminal) } label: { Image(systemName: "doc.on.doc").frame(width: 24, height: 30) }
                 .help(L10n.text("复制选中文本 · ⌘C；按住 Shift 拖选可绕过 tmux/终端程序。"))
                 .accessibilityLabel(L10n.text("复制"))
             Button { terminal.onContextFocus?(); terminal.window?.makeFirstResponder(terminal); terminal.paste(terminal) } label: { Image(systemName: "doc.on.clipboard").frame(width: 24, height: 30) }
                 .help(L10n.text("粘贴 · ⌘V")).accessibilityLabel(L10n.text("粘贴"))
             Menu {
-                Button(L10n.text("复制")) { terminal.copy(terminal) }.disabled(!state.hasSelection)
+                Button(L10n.text("复制")) { terminal.window?.makeFirstResponder(terminal); terminal.copy(terminal) }.disabled(!state.hasSelection && terminal.copyRemoteSelection == nil)
                 Button(L10n.text("复制所选命令全文")) { terminal.copySemanticCommand(output: false) }.disabled(!state.hasSelection || !terminal.semanticCommandCopyAllowed)
                 Button(L10n.text("复制所选命令的输出")) { terminal.copySemanticCommand(output: true) }.disabled(!state.hasSelection || !terminal.semanticCommandCopyAllowed)
                 Divider()

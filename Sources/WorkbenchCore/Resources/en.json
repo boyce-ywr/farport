@@ -1058,5 +1058,14 @@
   "已完成的移动不会撤销；保留源、目标和暂存文件，可从此任务继续。": "Completed moves will not be undone. Source, destination and staging files are retained; you can resume this task.",
   "停止并保留进度": "Stop and keep progress",
   "已取消。目标目录的 .swb-* 暂存条目保留，确认不需要后可删除。": "Cancelled. Staging entries named .swb-* remain at the destination. Remove them only when no longer needed.",
-  ".swb-* 暂存条目会保留在目标目录，便于检查；原始文件不会被删除。": "Staging entries named .swb-* remain at the destination for inspection. Original files will not be deleted."
+  ".swb-* 暂存条目会保留在目标目录，便于检查；原始文件不会被删除。": "Staging entries named .swb-* remain at the destination for inspection. Original files will not be deleted.",
+  "tmux 选区超过 1 MiB，未写入 Mac 剪贴板。": "The tmux selection exceeds 1 MiB. The Mac clipboard was not changed.",
+  "tmux 窗格或选区已变化，请重新选择后复制。": "The tmux pane or selection changed. Select the text again before copying.",
+  "正在复制 tmux 选区…": "Copying the tmux selection…",
+  "读取 tmux 选区超时；可用 Shift 拖选后 ⌘C 直接复制。": "Reading the tmux selection timed out. Shift-drag, then press ⌘C to copy locally.",
+  "剪贴板已被其他操作更新，未覆盖；请重新复制。": "Another operation updated the clipboard. It was not overwritten; please copy again.",
+  "tmux 当前没有可读取的选区；请保持选区后按 ⌘C，或用 Shift 拖选直接复制。": "There is no readable tmux selection. Keep the selection active and press ⌘C, or Shift-drag to select locally.",
+  "tmux 选区为空、编码无效或超过 1 MiB，未写入剪贴板。": "The tmux selection is empty, invalid UTF-8 or larger than 1 MiB. The clipboard was not changed.",
+  "无法读取当前 tmux 选区；请重试或用 Shift 拖选后 ⌘C 复制。": "Could not read the current tmux selection. Retry, or Shift-drag and press ⌘C to copy locally.",
+  "当前 tmux 无法独立读取选区；请用 Shift 拖选后 ⌘C 复制。": "This tmux cannot read the selection independently. Shift-drag, then press ⌘C to copy locally."
 }

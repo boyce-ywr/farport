@@ -36,6 +36,7 @@ final class SafeTerminalView: LocalProcessTerminalView {
     var prepareTmuxMenu: (() -> Void)?
     var semanticCommandCopyAllowed = true
     var remoteSelectionContext = false
+    var copyRemoteSelection: ((CancellationFlag) async throws -> Data?)?
     var confirmsMultilinePaste: () -> Bool = { true }
     var commandCapture = SemanticCommandCapture()
     private var shellMarkers = ShellMarkerStream()
@@ -126,6 +127,9 @@ final class SafeTerminalView: LocalProcessTerminalView {
     }
     override func copy(_ sender: Any) {
         guard let text = getSelection(), !text.isEmpty else {
+            if let copyRemoteSelection {
+                clipboard.copyTmuxSelection(read: copyRemoteSelection, isStillInteractive: { [weak self] in self?.allowsClipboardInteraction == true }); return
+            }
             clipboard.noLocalSelection(remoteContext: remoteSelectionContext || (allowMouseReporting && getTerminal().mouseMode != .off)); return
         }
         clipboard.write(text)
@@ -149,7 +153,7 @@ final class SafeTerminalView: LocalProcessTerminalView {
         func item(_ title: String, _ action: Selector, enabled: Bool = true) {
             let entry = NSMenuItem(title: title, action: action, keyEquivalent: ""); entry.target = self; entry.isEnabled = enabled; menu.addItem(entry)
         }
-        item(L10n.text("复制"), #selector(contextCopy), enabled: selectionActive)
+        item(L10n.text("复制"), #selector(contextCopy), enabled: selectionActive || copyRemoteSelection != nil)
         item(L10n.text("复制所选命令全文"), #selector(contextCommandCopy), enabled: selectionActive && semanticCommandCopyAllowed)
         item(L10n.text("复制所选命令的输出"), #selector(contextOutputCopy), enabled: selectionActive && semanticCommandCopyAllowed)
         item(L10n.text("粘贴"), #selector(contextPaste), enabled: process.running && NSPasteboard.general.availableType(from: [.string, .fileURL, .png, .tiff]) != nil)
@@ -332,6 +336,16 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable, LocalProc
         terminal.processDelegate = self; terminal.optionAsMetaKey = true
         terminal.semanticCommandCopyAllowed = tmuxID == nil
         terminal.remoteSelectionContext = tmuxID != nil
+        if let tmuxID {
+            terminal.copyRemoteSelection = { [weak self] cancellation in
+                guard let self, connected, connectionConfigurationValid() else { throw WorkbenchError.cancelled }
+                let connection = connectionID
+                let service = TmuxService(transport: transport, host: host)
+                let result = try await Task.detached { try service.copySelection(session: tmuxID, cancellation: cancellation) }.value
+                guard connected, connectionID == connection, connectionConfigurationValid() else { throw WorkbenchError.cancelled }
+                return result
+            }
+        }
         terminal.font = NSFont.monospacedSystemFont(ofSize: 13, weight: .regular)
         terminal.getTerminal().changeScrollback(10000)
         terminal.onInputActivity = { [weak self] in self?.inputGeneration &+= 1 }
@@ -502,6 +516,7 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable, LocalProc
     }
     func close() {
         guard !disposed else { return }; disposed = true; pendingReconnect = false; recoveryNeeded = false
+        terminal.clipboard.noteUserInteraction()
         probe.cancel(); retryTask?.cancel(); retryTask = nil; retryDeadline = nil; recoverySubscription?.cancel()
         connected = false; connecting = false; stateKey = isLocal ? "已结束" : "已断开"; record("closed_by_user")
         if childActive { stopOwnedProcess() }; releaseNetworkActivity()
