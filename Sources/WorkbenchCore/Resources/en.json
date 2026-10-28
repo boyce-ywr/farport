@@ -1067,5 +1067,13 @@
   "tmux 当前没有可读取的选区；请保持选区后按 ⌘C，或用 Shift 拖选直接复制。": "There is no readable tmux selection. Keep the selection active and press ⌘C, or Shift-drag to select locally.",
   "tmux 选区为空、编码无效或超过 1 MiB，未写入剪贴板。": "The tmux selection is empty, invalid UTF-8 or larger than 1 MiB. The clipboard was not changed.",
   "无法读取当前 tmux 选区；请重试或用 Shift 拖选后 ⌘C 复制。": "Could not read the current tmux selection. Retry, or Shift-drag and press ⌘C to copy locally.",
-  "当前 tmux 无法独立读取选区；请用 Shift 拖选后 ⌘C 复制。": "This tmux cannot read the selection independently. Shift-drag, then press ⌘C to copy locally."
+  "当前 tmux 无法独立读取选区；请用 Shift 拖选后 ⌘C 复制。": "This tmux cannot read the selection independently. Shift-drag, then press ⌘C to copy locally.",
+  "打开 tmux 工作区": "Open tmux workspace",
+  "正在检测目标主机的 tmux 会话…": "Checking tmux sessions on the target host…",
+  "目标主机没有正在运行的 tmux 会话。是否新建并进入？": "No tmux sessions are running on this host. Create and open one?",
+  "请选择要进入的 tmux 会话。": "Choose a tmux session to open.",
+  "新建并进入": "Create and open",
+  "新建的 tmux 会话已不可用，请刷新后重试。": "The newly created tmux session is unavailable. Refresh and try again.",
+  "所选 tmux 会话已结束或变化，请重新选择。": "The selected tmux session ended or changed. Choose again.",
+  "目标主机已有新的 tmux 会话，请选择要进入的会话。": "New tmux sessions have appeared on this host. Choose a session to open."
 }

@@ -612,10 +612,10 @@ struct TerminalSurface: NSViewRepresentable {
 
 @MainActor
 final class Workspace: ObservableObject {
-    @Published var selectedHostID: UUID? { didSet { alignTerminalWithHost() } }
+    @Published var selectedHostID: UUID? { didSet { if selectedHostID != oldValue { cancelPreferredTmuxConnection() }; alignTerminalWithHost() } }
     @Published var page: WorkspacePage = .terminal {
         didSet {
-            if page != oldValue { focusGeneration &+= 1 }
+            if page != oldValue { focusGeneration &+= 1; cancelPreferredTmuxConnection() }
             if page == .files, oldValue != .files, fileSource == nil { followCurrentTerminalFiles() }
             if page == .terminal { alignTerminalWithHost() }
         }
@@ -648,6 +648,7 @@ final class Workspace: ObservableObject {
     @Published var showTerminalSearch = false
     @Published var showCommandSnippets = false
     @Published var showAgentSessions = false
+    @Published var preferredTmuxConnection: PreferredTmuxConnection?
     @Published var screenSharingHost: HostProfile?
     @Published var webServiceHost: HostProfile?
     @Published var followTerminalDirectory = false
@@ -873,6 +874,7 @@ final class Workspace: ObservableObject {
         }
     }
     func connect(_ host: HostProfile, tmux: String? = nil, split: Bool = false, sessionName: String? = nil, axis: TerminalSplitAxis = .leftRight, directoryResolver: (() async -> String?)? = nil) {
+        cancelPreferredTmuxConnection()
         let preserveSplit = split && layout.primary != nil
         let session = TerminalSession(host: host, tmuxID: tmux, transport: store.transport, directoryResolver: directoryResolver)
         register(session)
@@ -884,6 +886,7 @@ final class Workspace: ObservableObject {
         if let tmux { store.rememberSession(host, session: sessionName ?? tmux) }
     }
     func connectLocal(split: Bool = false, tmux: String? = nil, axis: TerminalSplitAxis = .leftRight, directoryResolver: (() async -> String?)? = nil) {
+        cancelPreferredTmuxConnection()
         let session = TerminalSession(tmuxID: tmux, transport: store.transport, directoryResolver: directoryResolver)
         register(session)
         if split && layout.primary != nil { layout.split(with: session.id, axis: axis) } else { layout.select(session.id) }
@@ -929,6 +932,7 @@ final class Workspace: ObservableObject {
         if let host { connect(host, split: split, axis: axis) } else { connectLocal(split: split, axis: axis) }
     }
     func selectTerminal(_ session: TerminalSession) {
+        cancelPreferredTmuxConnection()
         layout.select(session.id); browsingLocalFiles = session.isLocal; selectedHostID = session.host?.id
         fileSource = .terminal(session.id)
         session.terminal.window?.makeFirstResponder(session.terminal)
@@ -970,17 +974,28 @@ final class Workspace: ObservableObject {
         closing.forEach { close($0) }
     }
     func connectPreferred(_ host: HostProfile) {
+        cancelPreferredTmuxConnection()
         selectedHostID = host.id
         guard host.prefersTmux else { connect(host); return }
-        page = .tmux
-        guard !host.lastSession.isEmpty else { return }
-        let service = TmuxService(transport: store.transport, host: host)
-        Task {
-            if let sessions = try? await Task.detached(operation: { try service.sessions() }).value,
-               let session = sessions.first(where: { $0.name == host.lastSession || $0.id == host.lastSession }), selectedHostID == host.id {
-                connect(host, tmux: session.id, sessionName: session.name)
-            }
+        page = .terminal
+        let request = PreferredTmuxConnection(host: host, service: TmuxService(transport: store.transport, host: host))
+        request.isCurrent = { [weak self, weak request] in
+            guard let self, let request else { return false }
+            return preferredTmuxConnection === request && selectedHostID == host.id && page == .terminal
+                && store.hosts.contains { $0.id == host.id && $0.connectionKey == host.connectionKey && $0.prefersTmux }
         }
+        request.onConnect = { [weak self, weak request] session in
+            guard let self, request?.isCurrent() == true else { return }
+            cancelPreferredTmuxConnection()
+            connect(host, tmux: session.id, sessionName: session.name)
+        }
+        preferredTmuxConnection = request
+    }
+    func cancelPreferredTmuxConnection() {
+        preferredTmuxConnection?.cancel(); preferredTmuxConnection = nil
+    }
+    func validatePreferredTmuxConnection() {
+        if let request = preferredTmuxConnection, !request.isCurrent() { cancelPreferredTmuxConnection() }
     }
     func close(_ session: TerminalSession) {
         if attachmentDraft?.session.id == session.id { attachmentDraft?.dispose(); attachmentDraft = nil }

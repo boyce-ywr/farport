@@ -55,7 +55,9 @@ struct TerminalWorkspace: View {
                             }
                         }
                 } else {
-                    EmptyWorkspace(symbol: "terminal", title: L10n.text("此主机尚未打开终端"), detail: L10n.text("选择终端标签，或打开一个新的终端。"), action: workspace.host == nil ? L10n.text("打开本机终端") : L10n.text("打开 SSH 终端")) { workspace.newTerminal() }
+                    EmptyWorkspace(symbol: "terminal", title: L10n.text("此主机尚未打开终端"), detail: L10n.text("选择终端标签，或打开一个新的终端。"), action: workspace.host == nil ? L10n.text("打开本机终端") : L10n.text("打开 SSH 终端")) {
+                        if let host = workspace.host { workspace.connectPreferred(host) } else { workspace.newTerminal() }
+                    }
                 }
             }
         }

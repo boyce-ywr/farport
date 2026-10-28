@@ -74,8 +74,8 @@ public struct TmuxService: Sendable {
         guard content.count >= size, content.dropFirst(size) == Data((initial + "\n").utf8) else { throw WorkbenchError.message(L10n.text("tmux 窗格或选区已变化，请重新选择后复制。")) }
         return Data(content.prefix(size))
     }
-    public func sessions() throws -> [TmuxSession] {
-        let result = try execute("list-sessions -F '#{session_id}\t#{session_name}\t#{session_windows}\t#{session_attached}\t#{session_created}'")
+    public func sessions(cancellation: CancellationFlag = CancellationFlag()) throws -> [TmuxSession] {
+        let result = try execute("list-sessions -F '#{session_id}\t#{session_name}\t#{session_windows}\t#{session_attached}\t#{session_created}'", cancellation: cancellation)
         if result.status != 0, result.error.contains("no server running") || result.error.contains("no sessions") || (result.error.contains("error connecting to") && result.error.contains("No such file")) { return [] }
         _ = try result.checked()
         return result.text.split(separator: "\n").compactMap { line in
@@ -95,6 +95,14 @@ public struct TmuxService: Sendable {
     public func create(name: String) throws {
         try validateName(name)
         _ = try execute("new-session -d -s \(RemotePath.quote(name))").checked()
+    }
+    public func createSession(name: String, cancellation: CancellationFlag = CancellationFlag()) throws -> TmuxSession {
+        try validateName(name)
+        let identifier = try execute("new-session -d -P -F '#{session_id}' -s \(RemotePath.quote(name))", cancellation: cancellation).checked().text.trimmingCharacters(in: .newlines)
+        guard let session = try sessions(cancellation: cancellation).first(where: { $0.id == identifier && $0.name == name }) else {
+            throw WorkbenchError.message(L10n.text("新建的 tmux 会话已不可用，请刷新后重试。"))
+        }
+        return session
     }
     public func rename(session: String, name: String) throws {
         try validateName(name)
