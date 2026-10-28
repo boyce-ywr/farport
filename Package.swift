@@ -13,12 +13,12 @@ let package = Package(
         .library(name: "WorkbenchCore", targets: ["WorkbenchCore"])
     ],
     dependencies: [
-        .package(url: "https://github.com/migueldeicaza/SwiftTerm.git", exact: "1.20.0")
+        .package(path: ".build/swiftterm")
     ],
     targets: [
         .target(name: "WorkbenchCore", resources: [.copy("Resources/en.json")]),
         .target(name: "OpenSSHBackend", dependencies: ["WorkbenchCore"], resources: [.copy("Resources")]),
-        .executableTarget(name: "WorkbenchApp", dependencies: ["WorkbenchCore", "OpenSSHBackend", "SwiftTerm"]),
+        .executableTarget(name: "WorkbenchApp", dependencies: ["WorkbenchCore", "OpenSSHBackend", .product(name: "SwiftTerm", package: "swiftterm")]),
         .executableTarget(name: "WorkbenchAskpass", dependencies: ["WorkbenchCore"]),
         .executableTarget(name: "WorkbenchCheck", dependencies: ["WorkbenchCore", "OpenSSHBackend"]),
         .executableTarget(name: "WorkbenchAttachmentCheck", dependencies: ["WorkbenchCore", "OpenSSHBackend"]),

@@ -1,6 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 cd "$(dirname "$0")/.."
+bash scripts/prepare-swiftterm.sh
 swift build --build-system native
 .build/debug/workbench-tests
 if [ "${1:-}" = "--integration" ] || [ "${1:-}" = "--stress" ]; then

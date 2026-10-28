@@ -12,12 +12,14 @@ import zipfile
 repository = Path(__file__).resolve().parent.parent
 with tempfile.TemporaryDirectory(prefix="farport-package-check-") as temporary:
     root = Path(temporary)
-    for directory in ("scripts", "Resources", "bin", ".build/checkouts/SwiftTerm"):
+    for directory in ("scripts", "Resources", "bin", ".build/swiftterm"):
         (root / directory).mkdir(parents=True)
     shutil.copy2(repository / "scripts/package.sh", root / "scripts/package.sh")
+    (root / "scripts/prepare-swiftterm.sh").write_text("#!/bin/bash\nexit 0\n")
+    (root / "scripts/check-swiftterm-source.py").write_text("print('fixture')\n")
     shutil.copy2(repository / "Resources/Info.plist", root / "Resources/Info.plist")
     (root / "LICENSE").write_text("fixture")
-    (root / ".build/checkouts/SwiftTerm/LICENSE").write_text("fixture")
+    (root / ".build/swiftterm/LICENSE").write_text("fixture")
     (root / ".build/AppIcon.icns").write_bytes(b"fixture")
     for architecture in ("arm64", "x86_64"):
         product = root / f".build/{architecture}-apple-macosx/release"

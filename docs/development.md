@@ -4,7 +4,7 @@
 
 ## 本地构建
 
-需要 macOS、Swift 6 工具链及 Xcode Command Line Tools。项目使用 Swift Package Manager，部署目标为 macOS 14。
+需要 macOS、Swift 6 工具链及 Xcode Command Line Tools。项目使用 Swift Package Manager，部署目标为 macOS 14。打包入口会先准备固定版本的 SwiftTerm 原始源码和构建信息，再使用仓库根目录的 `Package.swift` 正常构建。
 
 ```bash
 git clone https://github.com/boyce-ywr/farport.git
@@ -32,6 +32,10 @@ open "dist/preview/Farport Preview.app"
 预览包与正式包共用 `Resources/Info.plist` 的版本号，仅在输出副本中设置预览身份。应用名称为 `Farport Preview.app`，Bundle ID 为 `local.sshworkbench.preview`，文件输出在 `dist/preview/`，不会覆盖 `dist/Farport.app` 或正式版打包目录。ZIP/DMG 使用 `Farport-<版本>-preview-<架构>` 文件名，预发布不得设为 GitHub Latest。布局检查使用构建工具夹具，只验证打包规则，不替代真实构建、签名和安装启动验收。
 
 当前 CLT 环境使用 `--build-system native`。Intel 构建还需要脚本中的运行时兼容参数，不建议手动删掉；原因见 [构建兼容记录](issues/2026-10-13-命令行工具链构建兼容.md) 和 [Intel 链接记录](issues/2026-10-13-Intel兼容库链接.md)。
+
+SwiftTerm 固定在 1.20.0、提交 `5d14406844143538cd8f8851d2d8a67c1fe443e5`。`scripts/prepare-swiftterm.sh` 从该提交导出未修改的库源码，使用上游原生成器通过 Swift 解释执行生成版本信息；`BuildSupport/SwiftTerm/Package.swift` 保留库目标、Metal 资源、部署目标和 Swift 5 语言模式，不依赖当前系统无法启动的 SwiftPM 插件宿主。`scripts/package.sh` 会核对全部原始文件的 Git blob 和生成结果，失败即停止。旧 `Package.resolved` 的远程库锁改由该精确提交及源码核对承担；SwiftTerm 示例 CLI 的 ArgumentParser 不属于本应用运行时依赖。
+
+直接运行 `swift build` 或专项脚本前，先执行 `bash scripts/prepare-swiftterm.sh`；`scripts/package.sh` 和 `scripts/check.sh` 已包含此步骤。准备过程只写入 `.build/`，首次联网通过本机代理获取固定提交，不修改系统 CLT、安全设置或第三方源码。详情见 [插件构建问题及修复](issues/2026-10-28-CLT构建插件阻塞正式发布.md)。
 
 脚本在检测到本机 `127.0.0.1:7897` 代理时，仅为本次 Git 网络请求启用它，不修改全局配置。生产分发目前使用 ad-hoc 签名；Developer ID 签名和 Apple 公证尚未完成。
 

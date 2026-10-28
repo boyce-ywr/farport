@@ -1,6 +1,8 @@
 #!/bin/bash
 set -euo pipefail
 cd "$(dirname "$0")/.."
+bash scripts/prepare-swiftterm.sh
+python3 scripts/check-swiftterm-source.py
 configuration=release
 architectures=(arm64 x86_64)
 preview=false
@@ -63,7 +65,7 @@ resource=".build/$resourceArchitecture-apple-macosx/$configuration/SwiftTerm_Swi
 cp -R "$resource" "$app/Contents/Resources/SwiftTerm_SwiftTerm.bundle"
 cp -R ".build/$resourceArchitecture-apple-macosx/$configuration/SSHWorkbench_WorkbenchCore.bundle" "$app/Contents/Resources/SSHWorkbench_WorkbenchCore.bundle"
 cp -R ".build/$resourceArchitecture-apple-macosx/$configuration/SSHWorkbench_OpenSSHBackend.bundle" "$app/Contents/Resources/SSHWorkbench_OpenSSHBackend.bundle"
-install -m 644 .build/checkouts/SwiftTerm/LICENSE "$app/Contents/Resources/ThirdParty/SwiftTerm-LICENSE.txt"
+install -m 644 .build/swiftterm/LICENSE "$app/Contents/Resources/ThirdParty/SwiftTerm-LICENSE.txt"
 codesign --force --sign - --timestamp=none "$app"
 codesign --verify --deep --strict "$app"
 plutil -lint "$app/Contents/Info.plist"
