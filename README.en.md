@@ -71,13 +71,13 @@ This README describes the main branch. Check each release's notes for the featur
 
 **Update from 0.1.8 build 9**: the current version includes the preview shutdown crash fix.
 
-Download the stable version from [GitHub Releases](https://github.com/boyce-ywr/farport/releases/latest). **The current stable version is 0.1.17 (build 23)**, fixing current-selection copying in Farport-managed tmux sessions while preserving copy mode and protecting asynchronous clipboard writes. See the [release notes (Chinese)](docs/releases/0.1.17.md) for validation coverage, signing and installation limitations.
+Download the stable version from [GitHub Releases](https://github.com/boyce-ywr/farport/releases/latest). **The current stable version is 0.1.18 (build 24)**, choosing or creating a tmux workspace based on live sessions, fixing copying after mouse release and accelerating Docker image attachment insertion. See the [release notes (Chinese)](docs/releases/0.1.18.md) for validation coverage, signing and installation limitations.
 
 | Mac | Download |
 | --- | --- |
-| Apple Silicon, including M-series chips | [Apple Silicon](https://github.com/boyce-ywr/farport/releases/download/v0.1.17/Farport-0.1.17-arm64.dmg) |
-| Intel | [Intel](https://github.com/boyce-ywr/farport/releases/download/v0.1.17/Farport-0.1.17-x86_64.dmg) |
-| Unsure, or need both architectures | [Universal](https://github.com/boyce-ywr/farport/releases/download/v0.1.17/Farport-0.1.17-universal.dmg) |
+| Apple Silicon, including M-series chips | [Apple Silicon](https://github.com/boyce-ywr/farport/releases/download/v0.1.18/Farport-0.1.18-arm64.dmg) |
+| Intel | [Intel](https://github.com/boyce-ywr/farport/releases/download/v0.1.18/Farport-0.1.18-x86_64.dmg) |
+| Unsure, or need both architectures | [Universal](https://github.com/boyce-ywr/farport/releases/download/v0.1.18/Farport-0.1.18-universal.dmg) |
 
 1. Open the DMG and drag **Farport.app** into **Applications**.
 2. Launch Farport from Applications. Save your work and quit the previous version before upgrading.
@@ -118,7 +118,7 @@ If a move stops or fails, keep the source, destination and `.swb-*.move` staging
 
 Since 0.1.17, Farport supports **explicit copying of the current selection in Farport-managed tmux sessions**. With no local selection, ⌘C, the copy button and the context menu try to read the current tmux selection instead of only waiting for clipboard synchronization. Copy mode and the selection remain intact; old buffers are never used as a substitute. Late results are discarded after input, window, connection or clipboard changes. Use Shift-drag for manually nested tmux, selections already cleared, or older tmux configurations that cannot safely read a selection independently.
 
-The development branch also fixes **copying after releasing a normal mouse selection** and reduces duplicate staging and per-item Docker attachment commands while retaining content checks and target revalidation before insertion. These improvements are **not included in the 0.1.17 installers**; see the [issue record (Chinese)](docs/issues/2026-10-28-tmux鼠标松开复制与Docker附件延迟.md) for reproduction, timings and boundaries.
+Version 0.1.18 also supports **copying after releasing a normal mouse selection**, using only that selection's snapshot rather than guessing from old buffers. It reduces duplicate staging and Docker attachment command overhead while retaining content checks and target revalidation before insertion. See the [issue record (Chinese)](docs/issues/2026-10-28-tmux鼠标松开复制与Docker附件延迟.md) for reproduction, timings and boundaries.
 
 **Why does a program say Copied but Paste is wrong?** The program's message does not confirm a Mac clipboard write. Remote writes require permission; blocked or background requests show feedback. Use the pane's clipboard menu to allow and copy pending content. Permission applies only to the current connection and resets on reconnect. Remote clipboard reads remain blocked.
 
