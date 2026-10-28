@@ -71,13 +71,13 @@ HTML 可引用同级目录或子目录中的图片、CSS、SVG、字体和媒体
 
 **旧版 0.1.8 构建 9 用户请更新**：当前版本包含预览服务闪退修复。
 
-从 [GitHub Releases](https://github.com/boyce-ywr/farport/releases/latest) 下载稳定版。**当前正式版为 0.1.16（22）**，新增文件双击预览、剪切移动和同机原生命令加速，优化附件插入并修复 HTML 关联资源并发加载；验证范围及签名、安装限制见 [版本说明](docs/releases/0.1.16.md)。
+从 [GitHub Releases](https://github.com/boyce-ywr/farport/releases/latest) 下载稳定版。**当前正式版为 0.1.17（23）**，修复 Farport 管理的 tmux 当前选区复制，保留复制模式并保护异步剪贴板写入；验证范围及签名、安装限制见 [版本说明](docs/releases/0.1.17.md)。
 
 | 你的 Mac | 下载 |
 | --- | --- |
-| Apple Silicon（M 系列） | [Apple Silicon 版](https://github.com/boyce-ywr/farport/releases/download/v0.1.16/Farport-0.1.16-arm64.dmg) |
-| Intel 芯片 | [Intel 版](https://github.com/boyce-ywr/farport/releases/download/v0.1.16/Farport-0.1.16-x86_64.dmg) |
-| 不确定芯片，或需要两种架构 | [Universal 通用版](https://github.com/boyce-ywr/farport/releases/download/v0.1.16/Farport-0.1.16-universal.dmg) |
+| Apple Silicon（M 系列） | [Apple Silicon 版](https://github.com/boyce-ywr/farport/releases/download/v0.1.17/Farport-0.1.17-arm64.dmg) |
+| Intel 芯片 | [Intel 版](https://github.com/boyce-ywr/farport/releases/download/v0.1.17/Farport-0.1.17-x86_64.dmg) |
+| 不确定芯片，或需要两种架构 | [Universal 通用版](https://github.com/boyce-ywr/farport/releases/download/v0.1.17/Farport-0.1.17-universal.dmg) |
 
 1. 打开 DMG，将 **Farport.app** 拖入 **Applications（应用程序）**。
 2. 从“应用程序”打开 Farport。升级前请先保存工作并退出旧版。
@@ -116,7 +116,7 @@ HTML 可引用同级目录或子目录中的图片、CSS、SVG、字体和媒体
 
 **终端里怎么可靠地复制？** 选中文本后按 ⌘C，或点分栏顶部的复制按钮。在 tmux 或会捕获鼠标的程序中，按住 **Shift 拖选，再按 ⌘C**，由 Farport 直接写入 Mac 剪贴板。成功后显示“已复制到 Mac 剪贴板”；没有本地选区时不会清空原剪贴板。
 
-开发分支已补充 **Farport 管理的 tmux 当前选区主动复制**（尚未包含在 0.1.16）：无本地选区时，⌘C、复制按钮或右键复制会尝试读取当前 tmux 选区，不再只等待远端同步。不会退出复制模式，不会拿历史缓冲区冒充当前选择；输入、窗口、连接或剪贴板变化时放弃迟到结果。普通终端内手动进入的 tmux、已经取消的远端选区，以及无法安全独立读取的旧 tmux，仍请使用 Shift 拖选。
+从 0.1.17 起支持 **Farport 管理的 tmux 当前选区主动复制**：无本地选区时，⌘C、复制按钮或右键复制会尝试读取当前 tmux 选区，不再只等待远端同步。不会退出复制模式，不会拿历史缓冲区冒充当前选择；输入、窗口、连接或剪贴板变化时放弃迟到结果。普通终端内手动进入的 tmux、已经取消的远端选区，以及无法安全独立读取的旧 tmux，仍请使用 Shift 拖选。
 
 **为什么程序显示 Copied，粘贴却不对？** 程序自己的提示不代表 Mac 已接收内容。远端写入剪贴板需授权；拒绝或后台请求会显示原因，可在分栏剪贴板菜单中选择“允许并复制刚才的内容”。授权仅针对当前连接，重连后重新确认；Mac 剪贴板读取仍禁止。
 
