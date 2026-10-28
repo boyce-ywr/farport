@@ -38,6 +38,7 @@ public struct DockerAttachmentDaemon: Equatable, Sendable {
     private let executable: String
     private let environment: [String: String]
     private let usesHost: Bool
+    private let apiVersion: String
     public var connectionDescription: String { usesHost ? "Unix socket · " + endpoint : context }
     private static let containerFormat = "{\"id\":{{json .Id}},\"name\":{{json .Name}},\"user\":{{json .Config.User}},\"running\":{{json .State.Running}},\"paused\":{{json .State.Paused}},\"restarting\":{{json .State.Restarting}},\"started\":{{json .State.StartedAt}},\"restarts\":{{json .RestartCount}},\"terminal\":{{json .Config.Tty}},\"openInput\":{{json .Config.OpenStdin}}}"
 
@@ -68,10 +69,8 @@ public struct DockerAttachmentDaemon: Equatable, Sendable {
         try DockerUnixEndpoint.validate(endpoint)
         let usesHost = terminal.invocation.host != nil || (context == "default" && environment["DOCKER_HOST"]?.isEmpty == false)
         environment.removeValue(forKey: "DOCKER_CONTEXT"); environment.removeValue(forKey: "DOCKER_HOST")
-        let identifier = try ProcessRunner.run(executable: terminal.executable, arguments: ["--host", endpoint, "info", "--format", "{{.ID}}"],
-                                               environment: environment, cancellation: cancellation, timeout: 10).checked().text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !identifier.isEmpty else { throw WorkbenchError.message(L10n.text("无法确认 Docker 服务身份。")) }
-        let daemon = DockerAttachmentDaemon(context: context, endpoint: endpoint, identifier: identifier, executable: terminal.executable, environment: environment, usesHost: usesHost)
+        let identity = try DockerEngineIdentity.read(endpoint: endpoint, cancellation: cancellation)
+        let daemon = DockerAttachmentDaemon(context: context, endpoint: endpoint, identifier: identity.identifier, executable: terminal.executable, environment: environment, usesHost: usesHost, apiVersion: identity.apiVersion)
         let detected = try daemon.inspect(terminal.invocation.container, cancellation: cancellation)
         let identifiers = try daemon.run(["ps", "--no-trunc", "--format", "{{.ID}}"], cancellation: cancellation).text.split(separator: "\n").map(String.init)
         guard !identifiers.isEmpty, identifiers.count <= 100 else { throw WorkbenchError.message(L10n.text("没有可用容器或容器数量超过本次选择范围。")) }
@@ -112,7 +111,7 @@ public struct DockerAttachmentDaemon: Equatable, Sendable {
             let result = try ProcessRunner.run(executable: executable, arguments: ["--context", context, "context", "inspect", context, "--format", "{{.Endpoints.docker.Host}}"], environment: environment, cancellation: cancellation, timeout: 10).checked()
             guard result.text.trimmingCharacters(in: .whitespacesAndNewlines) == endpoint else { throw WorkbenchError.message(L10n.text("Docker 服务、容器身份或启动状态已变化，请重新确认附件目标。")) }
         }
-        let current = try run(["info", "--format", "{{.ID}}"], cancellation: cancellation).text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let current = try DockerEngineIdentity.read(endpoint: endpoint, apiVersion: apiVersion, cancellation: cancellation).identifier
         guard current == identifier else { throw WorkbenchError.message(L10n.text("Docker 服务、容器身份或启动状态已变化，请重新确认附件目标。")) }
     }
     private func inspect(_ reference: String, cancellation: CancellationFlag) throws -> DockerContainer {

@@ -97,6 +97,8 @@ func checkDockerAttachments(arguments: [String]) throws {
     try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
     try data.write(to: folder.appendingPathComponent("文件.txt"))
     let uploader = DockerAttachmentUploader(binding: binding)
+    let expectedDaemon = try ProcessRunner.run(executable: executable, arguments: ["--host", binding.daemon.endpoint, "info", "--format", "{{.ID}}"]).checked().text.trimmingCharacters(in: .whitespacesAndNewlines)
+    try expect(binding.daemon.identifier == expectedDaemon, "快速身份读取与原Docker CLI结果一致")
     let symlink = root.appendingPathComponent("attachment-link")
     try FileManager.default.createSymbolicLink(at: symlink, withDestinationURL: file)
     try rejects("不复制本机符号链接") { _ = try uploader.upload([symlink], transport: transport, cancellation: CancellationFlag()) { _, _ in } }

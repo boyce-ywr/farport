@@ -43,6 +43,7 @@ bash scripts/check.sh --integration   # Docker 隔离 SSH 环境与集成检查
 bash scripts/check-workbench-ux.sh    # 实际界面回归，需要先准备隔离主机
 bash scripts/check-attachments.sh    # 附件上传、回读和 tmux
 bash scripts/check-tmux-copy.sh --ssh # tmux 当前选区主动复制、无OSC52路径及异步覆盖保护
+.build/debug/workbench-tests --docker-engine-identity-check # Unix socket 身份读取、版本、HTTP错误和取消保护
 bash scripts/check-file-preview.sh   # 中英文、目录历史、源码高亮与媒体播放
 bash scripts/check-html-resources.sh --ssh # 本机/SSH 的 HTML 同级及子目录图片、CSS、SVG、脚本与并发资源加载
 bash scripts/check-file-panes.sh --ssh # 中英文文件分栏、跨主机复制、拖拽数据链和焦点隔离
