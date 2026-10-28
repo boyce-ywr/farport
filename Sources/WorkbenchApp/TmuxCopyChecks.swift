@@ -100,8 +100,86 @@ enum TmuxCopyChecks {
         let cancelled = CancellationFlag(); cancelled.cancel()
         do { _ = try service.copySelection(session: sessionID, cancellation: cancelled); throw WorkbenchError.message("已取消的复制仍然读取 tmux") }
         catch WorkbenchError.cancelled {}
+        let cell = terminal.cellSizeInPixels(source: terminal.getTerminal())!
+        let scale = window.backingScaleFactor
+        let selected = "COPY_TMUX"
+        for delay in [100, 0] {
+            if host == nil, delay == 0 {
+                _ = try tmux(["set-option", "-s", "set-clipboard", "on"])
+                terminal.clipboard.writePolicy = { .allow }
+            }
+            board.clearContents(); board.setString("KEEP_BEFORE_MOUSE", forType: .string)
+            var releasedAt: TimeInterval = 0
+            for (type, column) in [(NSEvent.EventType.leftMouseDown, 0), (.leftMouseDragged, 0), (.leftMouseDragged, selected.count), (.leftMouseUp, selected.count)] {
+                let point = terminal.convert(NSPoint(x: CGFloat(column * cell.width) / scale + 1, y: terminal.bounds.height - CGFloat(cell.height) / scale / 2), to: nil)
+                let event = NSEvent.mouseEvent(with: type, location: point, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                                              windowNumber: window.windowNumber, context: nil, eventNumber: 1, clickCount: 1, pressure: type == .leftMouseUp ? 0 : 1)!
+                if type == .leftMouseDown { terminal.mouseDown(with: event) }
+                else if type == .leftMouseUp { releasedAt = ProcessInfo.processInfo.systemUptime; terminal.mouseUp(with: event) }
+                else { terminal.mouseDragged(with: event) }
+                if delay > 0 { try await Task.sleep(for: .milliseconds(delay)) }
+            }
+            try await wait { (try? tmux(["display-message", "-p", "-t", "copy-check", "#{pane_in_mode}"])) == "0" }
+            print(String(format: "PERF · %@ 拖选间隔%dms，鼠标释放完成 %.3fs", host == nil ? "本机" : "SSH", delay, ProcessInfo.processInfo.systemUptime - releasedAt))
+            if host == nil, delay == 0 {
+                try await wait { board.string(forType: .string) == selected }
+                try await Task.sleep(for: .milliseconds(2200))
+            }
+            try copy(terminal)
+            try await wait { terminal.clipboard.message != L10n.text("正在复制 tmux 选区…") }
+            guard board.string(forType: .string) == selected else { throw WorkbenchError.message("鼠标松开后⌘C没有复制本次拖选：\(terminal.clipboard.message)，夹具结果=\(board.string(forType: .string) ?? "nil")") }
+            let changeCount = board.changeCount
+            let currentMenu = terminal.ordinaryContextMenu()
+            guard let copyIndex = currentMenu.items.firstIndex(where: { $0.title == L10n.text("复制") }) else { throw WorkbenchError.message("拖选后缺少复制菜单") }
+            currentMenu.performActionForItem(at: copyIndex)
+            try await wait { board.changeCount != changeCount }
+            guard board.string(forType: .string) == selected else { throw WorkbenchError.message("菜单复制丢失了松开后的拖选快照") }
+        }
+        if host == nil { print("PASS · 鼠标松开触发OSC52后，超过近期同步提示期限仍能显式复制同一快照") }
         try await checkLateResults()
+        try await checkDragSnapshots()
         print("PASS · \(host == nil ? "本机" : "隔离 SSH") 真实 tmux 选区关闭 OSC52 后 ⌘C 仍复制，保留选区、不取旧缓冲区、无内部缓冲残留")
+    }
+    private static func checkDragSnapshots() async throws {
+        let board = NSPasteboard.general
+        for scenario in ["copy", "input", "pending-input", "reset", "clipboard", "focus", "empty", "timeout"] {
+            let state = TerminalClipboardState()
+            board.clearContents(); board.setString("KEEP_DRAG", forType: .string)
+            var releases = 0
+            state.captureDragSelection(read: { _ in
+                try? await Task.sleep(for: .milliseconds(scenario == "timeout" ? 2300 : 80))
+                if scenario == "empty" { return nil }
+                return Data("DRAG_SNAPSHOT".utf8)
+            }, isStillInteractive: { true }, release: { releases += 1 })
+            if scenario == "copy" {
+                state.copyTmuxSelection(read: { _ in throw WorkbenchError.message("拖选快照不应回退到历史缓冲区") }, isStillInteractive: { true })
+                try await wait { board.string(forType: .string) == "DRAG_SNAPSHOT" }
+                guard releases == 1 else { throw WorkbenchError.message("读取快照后没有释放鼠标") }
+                let changeCount = board.changeCount
+                state.copyTmuxSelection(read: { _ in throw WorkbenchError.message("连续复制不应丢弃本次拖选快照") }, isStillInteractive: { true })
+                try await wait { board.changeCount != changeCount }
+                guard board.string(forType: .string) == "DRAG_SNAPSHOT", releases == 1 else { throw WorkbenchError.message("连续复制快照失败或重复释放鼠标") }
+            } else {
+                try await Task.sleep(for: .milliseconds(scenario == "pending-input" ? 20 : 120))
+                guard board.string(forType: .string) == "KEEP_DRAG" else { throw WorkbenchError.message("未显式复制时拖选改写了剪贴板") }
+                switch scenario {
+                case "input", "pending-input": state.noteUserInteraction()
+                case "reset": state.resetPermission()
+                case "clipboard": board.clearContents(); board.setString("OTHER_COPY", forType: .string)
+                case "focus": NotificationCenter.default.post(name: NSApplication.didResignActiveNotification, object: NSApp)
+                case "timeout": try await Task.sleep(for: .milliseconds(2300))
+                default: break
+                }
+                state.copyTmuxSelection(read: { _ in nil }, isStillInteractive: { true })
+                try await wait { state.message != L10n.text("正在复制 tmux 选区…") }
+                try await Task.sleep(for: .milliseconds(100))
+                guard board.string(forType: .string) == (scenario == "clipboard" ? "OTHER_COPY" : "KEEP_DRAG"), releases == 1 else {
+                    throw WorkbenchError.message("拖选快照失效或鼠标释放保护失败：\(scenario)")
+                }
+            }
+            state.resetPermission()
+        }
+        print("PASS · 松开鼠标前快照、等待中的⌘C、失焦/输入/连接/剪贴板失效及2秒释放上限")
     }
     private static func checkLateResults() async throws {
         let board = NSPasteboard.general

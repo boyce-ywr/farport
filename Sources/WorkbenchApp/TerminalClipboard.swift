@@ -20,10 +20,15 @@ final class TerminalClipboardState: ObservableObject {
     private var copyWait: Task<Void, Never>?
     private var copyRequest = UUID()
     private var selectionCancellation: CancellationFlag?
+    private var dragSelection: (id: UUID, changeCount: Int, task: Task<Data?, Error>, cancellation: CancellationFlag)?
+    private var dragRelease: (() -> Void)?
+    private var dragTimeout: Task<Void, Never>?
+    private var dragObservers: [NSObjectProtocol] = []
+    private var dragData: Data?
     private var interaction: UInt64 = 0
     private var remoteProof: (changeCount: Int, digest: SHA256.Digest, date: Date, interaction: UInt64)?
     private var reportedCopy = false
-    deinit { notice?.cancel(); copyWait?.cancel(); selectionCancellation?.cancel() }
+    deinit { notice?.cancel(); copyWait?.cancel(); selectionCancellation?.cancel(); dragSelection?.cancellation.cancel(); dragTimeout?.cancel(); dragObservers.forEach(NotificationCenter.default.removeObserver) }
     func report(_ message: String, failed: Bool = false, informational: Bool = false) {
         selectionCancellation?.cancel(); selectionCancellation = nil
         copyWait?.cancel(); copyWait = nil; copyRequest = UUID()
@@ -35,17 +40,61 @@ final class TerminalClipboardState: ObservableObject {
     }
     @discardableResult func write(_ text: String, remote: Bool = false) -> Bool {
         let pasteboard = NSPasteboard.general
+        let preservesDrag = remote && hasDragSelection && dragSelection?.changeCount == pasteboard.changeCount && dragData == Data(text.utf8)
         pasteboard.clearContents()
         guard pasteboard.setString(text, forType: .string), pasteboard.string(forType: .string) == text else {
             report(L10n.text("写入 Mac 剪贴板失败，请重试。"), failed: true); return false
         }
         remoteProof = remote ? (pasteboard.changeCount, SHA256.hash(data: Data(text.utf8)), Date(), interaction) : nil
+        if preservesDrag, let snapshot = dragSelection {
+            dragSelection = (snapshot.id, pasteboard.changeCount, snapshot.task, snapshot.cancellation)
+        }
         report(L10n.text("已复制到 Mac 剪贴板")); reportedCopy = true; return true
     }
     func noteUserInteraction() {
+        discardDragSelection()
         if selectionCancellation != nil { message = ""; selectionCancellation?.cancel(); selectionCancellation = nil }
         interaction &+= 1; remoteProof = nil; copyWait?.cancel(); copyWait = nil; copyRequest = UUID()
         if reportedCopy { notice?.cancel(); message = ""; reportedCopy = false }
+    }
+    var hasDragSelection: Bool { dragSelection?.cancellation.isCancelled == false }
+    private func releaseDrag() {
+        dragTimeout?.cancel(); dragTimeout = nil
+        let release = dragRelease; dragRelease = nil; release?()
+    }
+    private func discardDragSelection() {
+        dragSelection?.cancellation.cancel(); dragSelection?.task.cancel(); dragSelection = nil; dragData = nil
+        dragObservers.forEach(NotificationCenter.default.removeObserver); dragObservers = []
+        releaseDrag()
+    }
+    func captureDragSelection(read: @escaping (CancellationFlag) async throws -> Data?, isStillInteractive: @escaping () -> Bool, release: @escaping () -> Void) {
+        discardDragSelection()
+        let identifier = UUID(); let flag = CancellationFlag()
+        let changeCount = NSPasteboard.general.changeCount
+        dragRelease = release
+        for (name, object) in [(NSWindow.didResignKeyNotification, NSApp.keyWindow as AnyObject?), (NSApplication.didResignActiveNotification, NSApp as AnyObject?)] {
+            dragObservers.append(NotificationCenter.default.addObserver(forName: name, object: object, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.noteUserInteraction() }
+            })
+        }
+        let task = Task<Data?, Error> { [weak self] in
+            defer {
+                if self?.dragSelection?.id == identifier { self?.releaseDrag() }
+            }
+            do {
+                let data = try await read(flag)
+                guard !flag.isCancelled, isStillInteractive(), NSPasteboard.general.changeCount == changeCount,
+                      let data, !data.isEmpty, data.count <= 1024 * 1024, String(data: data, encoding: .utf8) != nil else { flag.cancel(); return nil }
+                if self?.dragSelection?.id == identifier { self?.dragData = data }
+                return data
+            } catch { flag.cancel(); throw error }
+        }
+        dragSelection = (identifier, changeCount, task, flag)
+        dragTimeout = Task { [weak self] in
+            do { try await Task.sleep(for: .seconds(2)) } catch { return }
+            guard self?.dragSelection?.id == identifier else { return }
+            self?.discardDragSelection()
+        }
     }
     func copyTmuxSelection(read: @escaping (CancellationFlag) async throws -> Data?, isStillInteractive: @escaping () -> Bool) {
         guard isStillInteractive() else { return }
@@ -54,6 +103,7 @@ final class TerminalClipboardState: ObservableObject {
         let request = copyRequest
         let flag = CancellationFlag(); selectionCancellation = flag
         let changeCount = NSPasteboard.general.changeCount
+        let captured = dragSelection.flatMap { $0.changeCount == changeCount && !$0.cancellation.isCancelled ? $0.task : nil }
         notice?.cancel()
         notice = Task { [weak self] in
             do { try await Task.sleep(for: .seconds(6)) } catch { return }
@@ -69,7 +119,9 @@ final class TerminalClipboardState: ObservableObject {
             }
             defer { NotificationCenter.default.removeObserver(focusObserver); NotificationCenter.default.removeObserver(applicationObserver) }
             do {
-                let data = try await read(flag)
+                let data: Data?
+                if let captured { data = try await captured.value }
+                else { data = try await read(flag) }
                 guard let self, copyRequest == request, !flag.isCancelled else { return }
                 guard isStillInteractive() else { noteUserInteraction(); return }
                 guard NSPasteboard.general.changeCount == changeCount else {
@@ -83,7 +135,9 @@ final class TerminalClipboardState: ObservableObject {
                 guard data.count <= 1024 * 1024, let text = String(data: data, encoding: .utf8), !text.isEmpty else {
                     report(L10n.text("tmux 选区为空、编码无效或超过 1 MiB，未写入剪贴板。"), failed: true); return
                 }
-                write(text)
+                if write(text), captured != nil, let snapshot = dragSelection, snapshot.changeCount == changeCount {
+                    dragSelection = (snapshot.id, NSPasteboard.general.changeCount, snapshot.task, snapshot.cancellation)
+                }
             } catch {
                 guard let self, copyRequest == request, !flag.isCancelled else { return }
                 guard isStillInteractive() else { noteUserInteraction(); return }
@@ -156,7 +210,7 @@ final class TerminalClipboardState: ObservableObject {
         remoteAllowed = false; pendingRemoteText = nil
         report(L10n.text("已禁止此终端写入剪贴板；本地选中复制不受影响。"))
     }
-    func resetPermission() { selectionCancellation?.cancel(); selectionCancellation = nil; remoteAllowed = nil; pendingRemoteText = nil; remoteProof = nil; lastRead = -.infinity; copyWait?.cancel(); copyWait = nil; copyRequest = UUID(); notice?.cancel(); message = ""; failed = false; informational = false; reportedCopy = false }
+    func resetPermission() { discardDragSelection(); selectionCancellation?.cancel(); selectionCancellation = nil; remoteAllowed = nil; pendingRemoteText = nil; remoteProof = nil; lastRead = -.infinity; copyWait?.cancel(); copyWait = nil; copyRequest = UUID(); notice?.cancel(); message = ""; failed = false; informational = false; reportedCopy = false }
 }
 
 struct TerminalClipboardControls: View {

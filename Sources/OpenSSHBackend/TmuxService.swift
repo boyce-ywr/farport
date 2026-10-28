@@ -52,8 +52,9 @@ public struct TmuxService: Sendable {
         let noClipboard = major > 3 || (major == 3 && minor >= 6) ? " -C" : ""
         guard !noClipboard.isEmpty || fields[14] == "off" else { throw WorkbenchError.message(L10n.text("当前 tmux 无法独立读取选区；请用 Shift 拖选后 ⌘C 复制。")) }
         let list = "list-buffers -F '#{buffer_name}\t#{buffer_size}'"
+        var cleanupNeeded = true
         defer {
-            if let output = try? execute(list, timeout: 3).checked().text {
+            if cleanupNeeded, let output = try? execute(list, timeout: 3).checked().text {
                 for line in output.split(separator: "\n") {
                     let name = String(line.split(separator: "\t", maxSplits: 1)[0])
                     if name.hasPrefix(bufferPrefix), !name.dropFirst(bufferPrefix.count).isEmpty, name.dropFirst(bufferPrefix.count).allSatisfy(\.isNumber) {
@@ -68,9 +69,10 @@ public struct TmuxService: Sendable {
         guard let buffer = buffers.first(where: { $0.count == 2 && $0[0].hasPrefix(bufferPrefix) && !$0[0].dropFirst(bufferPrefix.count).isEmpty && $0[0].dropFirst(bufferPrefix.count).allSatisfy(\.isNumber) }),
               let size = Int(buffer[1]), size > 0 else { return nil }
         guard size <= 1024 * 1024 else { throw WorkbenchError.message(L10n.text("tmux 选区超过 1 MiB，未写入 Mac 剪贴板。")) }
-        let content = try execute("save-buffer -b \(RemotePath.quote(buffer[0])) -", cancellation: cancellation, timeout: 5).checked().output
-        guard content.count == size, try snapshot() == initial else { throw WorkbenchError.message(L10n.text("tmux 窗格或选区已变化，请重新选择后复制。")) }
-        return content
+        let content = try execute("save-buffer -b \(RemotePath.quote(buffer[0])) - && \(try prefix) display-message -p -t \(RemotePath.quote(session)) \(RemotePath.quote(format)) && \(try prefix) delete-buffer -b \(RemotePath.quote(buffer[0]))", cancellation: cancellation, timeout: 5).checked().output
+        cleanupNeeded = false
+        guard content.count >= size, content.dropFirst(size) == Data((initial + "\n").utf8) else { throw WorkbenchError.message(L10n.text("tmux 窗格或选区已变化，请重新选择后复制。")) }
+        return Data(content.prefix(size))
     }
     public func sessions() throws -> [TmuxSession] {
         let result = try execute("list-sessions -F '#{session_id}\t#{session_name}\t#{session_windows}\t#{session_attached}\t#{session_created}'")

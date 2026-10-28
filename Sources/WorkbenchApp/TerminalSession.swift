@@ -43,6 +43,8 @@ final class SafeTerminalView: LocalProcessTerminalView {
     private(set) var observedProcessExit = true
     private var forwardedRightClick = false
     private var localSelectionDrag = false
+    private var remoteSelectionDrag = false
+    private var forwardingSelectionRelease = false
     private var magnificationBase: Double?
     private var accumulatedMagnification: Double = 0
     private var scrollMonitor: Any?
@@ -80,7 +82,9 @@ final class SafeTerminalView: LocalProcessTerminalView {
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
     override func mouseDown(with event: NSEvent) {
+        if event.modifierFlags.contains(.control), clipboard.hasDragSelection { rightMouseDown(with: event); return }
         clipboard.noteUserInteraction()
+        remoteSelectionDrag = false
         if event.modifierFlags.contains(.control) { rightMouseDown(with: event); return }
         localSelectionDrag = event.modifierFlags.contains(.shift)
         if localSelectionDrag { withLocalSelection { super.mouseDown(with: event) } }
@@ -88,6 +92,10 @@ final class SafeTerminalView: LocalProcessTerminalView {
         onFocus?()
     }
     override func rightMouseDown(with event: NSEvent) {
+        if clipboard.hasDragSelection {
+            window?.makeFirstResponder(self); onContextFocus?(); forwardedRightClick = false
+            NSMenu.popUpContextMenu(ordinaryContextMenu(), with: event, for: self); return
+        }
         noteMouseInput(event)
         window?.makeFirstResponder(self); onContextFocus?()
         forwardedRightClick = false
@@ -105,7 +113,21 @@ final class SafeTerminalView: LocalProcessTerminalView {
     }
     override func mouseUp(with event: NSEvent) {
         if localSelectionDrag { withLocalSelection { super.mouseUp(with: event) }; localSelectionDrag = false; return }
+        if remoteSelectionDrag, !event.modifierFlags.contains(.control), let copyRemoteSelection {
+            remoteSelectionDrag = false
+            let processID = process.shellPid
+            clipboard.captureDragSelection(read: copyRemoteSelection, isStillInteractive: { [weak self] in self?.allowsClipboardInteraction == true }, release: { [weak self] in
+                guard let self, process.running, process.shellPid == processID else { return }
+                releaseSelectionMouse(event)
+            })
+            return
+        }
         if !event.modifierFlags.contains(.control) { super.mouseUp(with: event) }
+    }
+    private func releaseSelectionMouse(_ event: NSEvent) {
+        forwardingSelectionRelease = true
+        defer { forwardingSelectionRelease = false }
+        super.mouseUp(with: event)
     }
     override func rightMouseDragged(with event: NSEvent) {
         noteMouseInput(event)
@@ -113,7 +135,10 @@ final class SafeTerminalView: LocalProcessTerminalView {
     }
     override func mouseDragged(with event: NSEvent) {
         if localSelectionDrag { withLocalSelection { super.mouseDragged(with: event) } }
-        else { noteMouseInput(event); super.mouseDragged(with: event) }
+        else {
+            remoteSelectionDrag = allowMouseReporting && getTerminal().mouseMode != .off && copyRemoteSelection != nil
+            noteMouseInput(event); super.mouseDragged(with: event)
+        }
     }
     private func withLocalSelection(_ action: () -> Void) {
         let original = allowMouseReporting
@@ -231,7 +256,10 @@ final class SafeTerminalView: LocalProcessTerminalView {
         layer?.borderWidth = 0
         return receiveAttachments(from: sender.draggingPasteboard)
     }
-    override func send(source: SwiftTerm.TerminalView, data: ArraySlice<UInt8>) { clipboard.noteUserInteraction(); onInputActivity?(); super.send(source: source, data: data) }
+    override func send(source: SwiftTerm.TerminalView, data: ArraySlice<UInt8>) {
+        if !forwardingSelectionRelease { clipboard.noteUserInteraction() }
+        onInputActivity?(); super.send(source: source, data: data)
+    }
     override func send(source: SwiftTerm.Terminal, data: ArraySlice<UInt8>) { super.send(source: self, data: data) }
     func sendAttachmentReference(_ text: String) {
         let bracketed = getTerminal().bracketedPasteMode

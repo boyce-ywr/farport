@@ -100,9 +100,10 @@ public struct DockerAttachmentDaemon: Equatable, Sendable {
     }
     public func validate(_ binding: DockerAttachmentBinding, cancellation: CancellationFlag) throws {
         try validate(cancellation: cancellation)
-        let current = try inspect(binding.container.id, cancellation: cancellation)
-        guard binding.daemon == self, current == binding.container, current.running, !current.paused, !current.restarting,
-              current.id == (try inspect(binding.terminal.invocation.container, cancellation: cancellation)).id else {
+        let output = try run(["inspect", "--type", "container", "--format", Self.containerFormat, binding.container.id, binding.terminal.invocation.container], cancellation: cancellation).output
+        let containers = try output.split(separator: 10).map { try JSONDecoder().decode(DockerContainer.self, from: Data($0)) }
+        guard containers.count == 2, let current = containers.first, binding.daemon == self, current == binding.container,
+              current.running, !current.paused, !current.restarting, current.id == containers[1].id else {
             throw WorkbenchError.message(L10n.text("Docker 服务、容器身份或启动状态已变化，请重新确认附件目标。"))
         }
     }
@@ -147,7 +148,7 @@ public struct DockerAttachmentUploader: Sendable {
 
     public func upload(_ files: [URL], transport: SSHTransport, cancellation: CancellationFlag,
                        progress: @escaping (String, Double) -> Void) throws -> DockerUploadedAttachments {
-        try binding.daemon.validate(binding, cancellation: cancellation)
+        try cancellation.check()
         guard !files.isEmpty, files.count <= 100 else { throw WorkbenchError.message(L10n.text("容器附件包含不支持的类型或超过数量、层级限制。")) }
         let local = LocalFileClient(cancellation: cancellation)
         var entries: [(source: String, relative: String, directory: Bool, size: UInt64)] = []
@@ -163,6 +164,10 @@ public struct DockerAttachmentUploader: Sendable {
             if attributes.isDirectory { for child in try local.list(source) { try walk(child.path, relative: RemotePath.join(relative, child.name), depth: depth + 1) } }
         }
         for file in files { try walk(file.path, relative: file.lastPathComponent, depth: 0) }
+        if entries.count == 1, let entry = entries.first, !entry.directory {
+            return try uploadFile(URL(fileURLWithPath: entry.source), size: entry.size, cancellation: cancellation, progress: progress)
+        }
+        try binding.daemon.validate(binding, cancellation: cancellation)
         let localUploader = AttachmentUploader(transport: transport)
         let stagingRoot = FileManager.default.temporaryDirectory.appendingPathComponent("farport-container-stage-" + UUID().uuidString)
         try FileManager.default.createDirectory(at: stagingRoot, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
@@ -170,7 +175,6 @@ public struct DockerAttachmentUploader: Sendable {
         let staging = try localUploader.upload(files, host: nil, directory: stagingRoot.path, cancellation: cancellation) { message, value in progress(message, value * 0.3) }
         entries = []; total = 0
         for source in staging.paths { try walk(source, relative: (source as NSString).lastPathComponent, depth: 0) }
-        try binding.daemon.validate(binding, cancellation: cancellation)
         let directory = try binding.daemon.execute(binding, script: "umask 077; mktemp -d /tmp/.farport-attachments-XXXXXXXXXXXX", cancellation: cancellation).text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard Self.validDirectory(directory) else { throw WorkbenchError.message(L10n.text("容器未返回安全的附件暂存目录。")) }
         var finished = false
@@ -199,21 +203,83 @@ public struct DockerAttachmentUploader: Sendable {
         finished = true; progress(L10n.text("容器内文件内容与读取权限校验通过"), 1)
         return result
     }
-    public func verify(_ result: DockerUploadedAttachments, cancellation: CancellationFlag) throws {
+    private func uploadFile(_ file: URL, size: UInt64, cancellation: CancellationFlag, progress: (String, Double) -> Void) throws -> DockerUploadedAttachments {
+        let local = LocalFileClient(cancellation: cancellation)
+        let before = try local.stat(file.path)
+        let handle = try FileHandle(forReadingFrom: file)
+        defer { try? handle.close() }
+        let data = try handle.read(upToCount: Int(size) + 1) ?? Data()
+        let after = try local.stat(file.path)
+        guard before.isRegularFile, after.isRegularFile, !before.isSymbolicLink, !after.isSymbolicLink,
+              data.count == size, before.size == after.size, before.modified == after.modified else {
+            throw WorkbenchError.message(L10n.text("附件目录在上传期间发生变化"))
+        }
+        let digest = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+        progress(L10n.text("正在复制到容器并校验读取权限…"), 0.2)
+        let script = """
+        set -eu; umask 077
+        directory=$(mktemp -d /tmp/.farport-attachments-XXXXXXXXXXXX)
+        trap 'rm -rf -- "$directory"' EXIT
+        set -C; cat > "$directory/$1"; chmod 600 -- "$directory/$1"
+        test ! -L "$directory/$1"; test -r "$directory/$1"
+        digest=$(sha256sum < "$directory/$1")
+        printf '%s\\n%s\\n' "$directory" "$digest"
+        trap - EXIT
+        """
+        let output = try binding.daemon.execute(binding, script: script, arguments: [file.lastPathComponent], input: data, cancellation: cancellation).text.split(separator: "\n").map(String.init)
+        guard output.count == 2, Self.validDirectory(output[0]) else { throw WorkbenchError.message(L10n.text("容器未返回安全的附件暂存目录。")) }
+        let directory = output[0]
+        var finished = false
+        defer { if !finished { try? cleanup(directory, cancellation: CancellationFlag()) } }
+        guard output[1].split(whereSeparator: \.isWhitespace).first.map(String.init) == digest else {
+            throw WorkbenchError.message(L10n.text("容器附件内容已变化，未插入路径。"))
+        }
         try binding.daemon.validate(binding, cancellation: cancellation)
+        let path = RemotePath.join(directory, file.lastPathComponent)
+        let result = DockerUploadedAttachments(uploaded: UploadedAttachments(directory: directory, paths: [path], fileCount: 1),
+                                              hashes: [path: digest], directories: [directory: [file.lastPathComponent]])
+        finished = true; progress(L10n.text("容器内文件内容与读取权限校验通过"), 1)
+        return result
+    }
+    public func verify(_ result: DockerUploadedAttachments, cancellation: CancellationFlag) throws {
         guard Self.validDirectory(result.uploaded.directory) else { throw WorkbenchError.message(L10n.text("容器未返回安全的附件暂存目录。")) }
-        for path in result.uploaded.paths {
-            _ = try binding.daemon.execute(binding, script: "test ! -L \"$1\" && test -r \"$1\"", arguments: [path], cancellation: cancellation)
+        let paths = result.uploaded.paths
+        let directories = result.directories.sorted { $0.key < $1.key }
+        let hashes = result.hashes.sorted { $0.key < $1.key }
+        for offset in stride(from: 0, to: max(paths.count, directories.count, hashes.count), by: 8) {
+            try verifyBatch(paths: Array(paths.dropFirst(offset).prefix(8)), directories: Array(directories.dropFirst(offset).prefix(8)),
+                            hashes: Array(hashes.dropFirst(offset).prefix(8)), cancellation: cancellation)
         }
-        for (directory, names) in result.directories {
-            let data = try binding.daemon.execute(binding, script: "set -eu; test ! -L \"$1\"; test -d \"$1\"; test -r \"$1\"; test -x \"$1\"; for child in \"$1\"/* \"$1\"/.[!.]* \"$1\"/..?*; do if [ -e \"$child\" ] || [ -L \"$child\" ]; then printf '%s\\0' \"${child##*/}\"; fi; done", arguments: [directory], cancellation: cancellation).output
-            let children = data.split(separator: 0).compactMap { String(data: Data($0), encoding: .utf8) }
-            guard Set(children) == names else { throw WorkbenchError.message(L10n.text("容器附件内容已变化，未插入路径。")) }
+        try binding.daemon.validate(binding, cancellation: cancellation)
+    }
+    private func verifyBatch(paths: [String], directories: [(key: String, value: Set<String>)], hashes: [(key: String, value: String)], cancellation: CancellationFlag) throws {
+        var script = "set -eu\n"
+        var arguments: [String] = []
+        for path in paths {
+            script += "test ! -L \"$1\"; test -r \"$1\"; shift\n"
+            arguments.append(path)
         }
-        for (path, digest) in result.hashes {
-            let output = try binding.daemon.execute(binding, script: "test ! -L \"$1\" && sha256sum < \"$1\"", arguments: [path], cancellation: cancellation).text
-            guard output.split(whereSeparator: \.isWhitespace).first.map(String.init) == digest else { throw WorkbenchError.message(L10n.text("容器附件内容已变化，未插入路径。")) }
+        for (directory, _) in directories {
+            script += "test ! -L \"$1\"; test -d \"$1\"; test -r \"$1\"; test -x \"$1\"; for child in \"$1\"/* \"$1\"/.[!.]* \"$1\"/..?*; do if [ -e \"$child\" ] || [ -L \"$child\" ]; then printf '%s\\0' \"${child##*/}\"; fi; done; printf '\\0'; shift\n"
+            arguments.append(directory)
         }
+        for (path, _) in hashes {
+            script += "test ! -L \"$1\"; sha256sum < \"$1\"; shift\n"
+            arguments.append(path)
+        }
+        let data = try binding.daemon.execute(binding, script: script, arguments: arguments, cancellation: cancellation).output
+        guard let text = String(data: data, encoding: .utf8) else { throw WorkbenchError.message(L10n.text("容器附件内容已变化，未插入路径。")) }
+        var parts = text.components(separatedBy: "\0")[...]
+        for (_, names) in directories {
+            let children = parts.prefix(while: { !$0.isEmpty })
+            guard Set(children) == names, children.count == names.count, parts.dropFirst(children.count).first == "" else {
+                throw WorkbenchError.message(L10n.text("容器附件内容已变化，未插入路径。"))
+            }
+            parts = parts.dropFirst(children.count + 1)
+        }
+        guard parts.count == 1 else { throw WorkbenchError.message(L10n.text("容器附件内容已变化，未插入路径。")) }
+        let actual = parts.first!.split(separator: "\n").map { $0.split(whereSeparator: \.isWhitespace).first.map(String.init) ?? "" }
+        guard actual == hashes.map(\.value) else { throw WorkbenchError.message(L10n.text("容器附件内容已变化，未插入路径。")) }
     }
     public func cleanup(_ directory: String, cancellation: CancellationFlag) throws {
         guard Self.validDirectory(directory) else { throw WorkbenchError.message(L10n.text("拒绝清理非附件目录")) }

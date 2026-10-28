@@ -106,7 +106,14 @@ func checkDockerAttachments(arguments: [String]) throws {
     try handle.truncate(atOffset: 129 * 1024 * 1024); try handle.close()
     try rejects("超大文件在复制前拒绝") { _ = try uploader.upload([oversized], transport: transport, cancellation: CancellationFlag()) { _, _ in } }
     try FileManager.default.removeItem(at: oversized)
-    let result = try uploader.upload([file, folder], transport: transport, cancellation: CancellationFlag()) { _, _ in }
+    let started = ProcessInfo.processInfo.systemUptime
+    let result = try uploader.upload([file, folder], transport: transport, cancellation: CancellationFlag()) { _, fraction in
+        print(String(format: "PERF · Docker附件进度 %.0f%% %.3fs", fraction * 100, ProcessInfo.processInfo.systemUptime - started))
+    }
+    print(String(format: "PERF · Docker两文件含目录上传与校验 %.3fs", ProcessInfo.processInfo.systemUptime - started))
+    let verifyStarted = ProcessInfo.processInfo.systemUptime
+    try uploader.verify(result, cancellation: CancellationFlag())
+    print(String(format: "PERF · Docker插入前再校验 %.3fs", ProcessInfo.processInfo.systemUptime - verifyStarted))
     defer { try? uploader.cleanup(result.uploaded.directory, cancellation: CancellationFlag()) }
     let copied = try ProcessRunner.run(executable: executable, arguments: ["exec", "--user", "tester", container, "cat", result.uploaded.paths[0]]).checked().output
     try expect(copied == data && result.uploaded.fileCount == 2, "非root用户实际读取容器文件和目录，内容一致")
@@ -136,6 +143,35 @@ func checkDockerAttachments(arguments: [String]) throws {
     try rejects("目标文件变化后不插入") { try uploader.verify(result, cancellation: CancellationFlag()) }
     let cancelled = CancellationFlag(); cancelled.cancel()
     try rejects("取消后不上传") { _ = try uploader.upload([file], transport: transport, cancellation: cancelled) { _, _ in } }
+    let snapshot = try uploader.upload([file], transport: transport, cancellation: CancellationFlag()) { _, _ in }
+    defer { try? uploader.cleanup(snapshot.uploaded.directory, cancellation: CancellationFlag()) }
+    try uploader.verify(snapshot, cancellation: CancellationFlag())
+    let snapshotPath = snapshot.uploaded.paths[0]
+    let snapshotBytes = try ProcessRunner.run(executable: executable, arguments: ["exec", "--user", "tester", container, "cat", snapshotPath]).checked().output
+    try expect(snapshotBytes == data && snapshot.uploaded.fileCount == 1, "单文件内存快照直传保留内容、中文与Shell特殊字符")
+    let snapshotMode = try ProcessRunner.run(executable: executable, arguments: ["exec", "--user", "tester", container, "stat", "-c", "%a:%u:%g", snapshotPath]).checked().text.trimmingCharacters(in: .whitespacesAndNewlines)
+    try expect(snapshotMode == "600:" + binding.user, "单文件快路径仍使用已确认用户和600权限")
+    _ = try ProcessRunner.run(executable: executable, arguments: ["exec", "--user", "tester", container, "chmod", "000", snapshotPath]).checked()
+    try rejects("单文件直传后接收用户失去读取权限仍拒绝插入") { try uploader.verify(snapshot, cancellation: CancellationFlag()) }
+    _ = try ProcessRunner.run(executable: executable, arguments: ["exec", "--user", "tester", container, "chmod", "600", snapshotPath]).checked()
+    let hidden = RemotePath.join(snapshot.uploaded.directory, ".隐藏\n额外文件")
+    _ = try ProcessRunner.run(executable: executable, arguments: ["exec", "--user", "tester", container, "touch", hidden]).checked()
+    try rejects("批量校验不漏掉隐藏或含换行的额外文件") { try uploader.verify(snapshot, cancellation: CancellationFlag()) }
+    _ = try ProcessRunner.run(executable: executable, arguments: ["exec", "--user", "tester", container, "rm", hidden]).checked()
+    _ = try ProcessRunner.run(executable: executable, arguments: ["exec", "--user", "tester", container, "sh", "-c", "printf X | dd of=\"$1\" bs=1 count=1 conv=notrunc status=none", "check", snapshotPath]).checked()
+    try rejects("单文件等长篡改仍被SHA256发现") { try uploader.verify(snapshot, cancellation: CancellationFlag()) }
+    _ = try ProcessRunner.run(executable: executable, arguments: ["exec", "--user", "tester", container, "sh", "-c", "rm -- \"$1\"; ln -s /etc/passwd \"$1\"", "check", snapshotPath]).checked()
+    try rejects("单文件替换为符号链接仍拒绝读取和插入") { try uploader.verify(snapshot, cancellation: CancellationFlag()) }
+    let batchFolder = root.appendingPathComponent("校验分批")
+    try FileManager.default.createDirectory(at: batchFolder, withIntermediateDirectories: true)
+    for index in 0..<9 { try data.write(to: batchFolder.appendingPathComponent(".隐藏\n文件-\(index)")) }
+    let batch = try uploader.upload([batchFolder], transport: transport, cancellation: CancellationFlag()) { _, _ in }
+    defer { try? uploader.cleanup(batch.uploaded.directory, cancellation: CancellationFlag()) }
+    try uploader.verify(batch, cancellation: CancellationFlag())
+    try expect(batch.uploaded.fileCount == 9, "超过8项的批量校验不遗漏下一批哈希且支持换行文件名")
+    let lastFile = RemotePath.join(batch.uploaded.paths[0], ".隐藏\n文件-8")
+    _ = try ProcessRunner.run(executable: executable, arguments: ["exec", "--user", "tester", container, "sh", "-c", "printf X > \"$1\"", "check", lastFile]).checked()
+    try rejects("后续校验批次中的篡改仍阻止插入") { try uploader.verify(batch, cancellation: CancellationFlag()) }
     _ = try tmux.execute("respawn-pane -k -t docker 'sleep 60'").checked()
     try rejects("前台Docker进程变化后不发送旧附件") { try tmux.pasteDocker(reference, session: "docker", expected: terminal) }
     try uploader.cleanup(result.uploaded.directory, cancellation: CancellationFlag())

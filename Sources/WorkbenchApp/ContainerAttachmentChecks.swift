@@ -49,6 +49,7 @@ enum ContainerAttachmentChecks {
               let bytes = image.representation(using: .png, properties: [:]) else { throw WorkbenchError.message("无法创建图片夹具") }
         try bytes.write(to: file)
         for iteration in 1...2 {
+            let started = ProcessInfo.processInfo.systemUptime
             guard let window = session.terminal.window else { throw WorkbenchError.message("没有附件目标窗口") }
             if interactive {
                 clipboard.clearContents()
@@ -60,6 +61,7 @@ enum ContainerAttachmentChecks {
                   NSApp.mainMenu?.performKeyEquivalent(with: event) == true || window.performKeyEquivalent(with: event) else { throw WorkbenchError.message("Cmd+V未派发") }
             } else { workspace.requestAttachments(session: session, payload: TerminalAttachmentPayload(files: [file], temporaryDirectory: nil)) }
             guard let draft = workspace.attachmentDraft else { throw WorkbenchError.message("没有容器附件草稿") }
+            print(String(format: "PERF · 容器附件第%d轮摄取返回 %.3fs", iteration, ProcessInfo.processInfo.systemUptime - started))
             if iteration == 1 {
                 try await wait { draft.containerSelection != nil || draft.failure != nil }
                 guard draft.containerSelection?.detectedContainerID == identifier, draft.result == nil, draft.failure == nil else { throw WorkbenchError.message(draft.failure ?? "未确认前发生上传或未识别目标容器") }
@@ -81,6 +83,7 @@ enum ContainerAttachmentChecks {
                 await draft.insert()
             }
             try await wait { draft.inserted || draft.failure != nil }
+            print(String(format: "PERF · 容器附件第%d轮摄取到插入 %.3fs", iteration, ProcessInfo.processInfo.systemUptime - started))
             guard draft.inserted, let result = draft.result, draft.dockerBinding?.container.id == identifier, draft.containerSelection == nil else { throw WorkbenchError.message(draft.failure ?? "未插入容器附件") }
             let content = try ProcessRunner.run(executable: executable, arguments: ["exec", "--user", "tester", identifier, "cat", result.paths[0]]).checked().output
             guard content == (try Data(contentsOf: draft.payload.files[0])) else { throw WorkbenchError.message("容器用户读到内容不一致") }
