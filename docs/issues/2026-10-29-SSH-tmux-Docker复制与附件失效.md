@@ -2,7 +2,7 @@
 
 - 影响范围：Farport 0.1.18 及之前；远端 tmux 中运行 Claude Code（尤其是 docker-claude 容器内）的复制，远端 tmux 中 docker 窗格的附件/截图粘贴，所有持续输出窗格的 Shift 拖选
 - 发现日期：2026-10-29（用户在 SSH → mac-mini → tmux → docker-claude 中反馈）
-- 修复 commit：未提交（工作区改动，待确认后提交）
+- 修复 commit：`a432a94`（发布于 0.1.19）
 - 严重程度：高（核心复制/粘贴路径在用户主要工作场景完全不可用）
 
 ## 现象
