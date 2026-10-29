@@ -54,6 +54,15 @@ enum TerminalClipboardChecks {
         guard pasteboard.string(forType: .string) == text else { throw WorkbenchError.message("右键复制没有生效") }
         let editor = NSTextView(); editor.isRichText = false; editor.paste(nil)
         guard editor.string == text else { throw WorkbenchError.message("复制后在原生文本框粘贴不一致") }
+        func mouse(_ type: NSEvent.EventType, _ column: Int, _ modifiers: NSEvent.ModifierFlags) throws {
+            let location = terminal.convert(NSPoint(x: CGFloat(column) * cellWidth + 1, y: terminal.bounds.height - cellHeight / 2), to: nil)
+            guard let event = NSEvent.mouseEvent(with: type, location: location, modifierFlags: modifiers, timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber, context: nil, eventNumber: 1, clickCount: 1, pressure: 1) else { throw WorkbenchError.message("不能构造拖选事件") }
+            if type == .leftMouseDown { terminal.mouseDown(with: event) } else if type == .leftMouseUp { terminal.mouseUp(with: event) } else { terminal.mouseDragged(with: event) }
+        }
+        for (type, column, modifiers) in [(NSEvent.EventType.leftMouseDown, 5, NSEvent.ModifierFlags.shift), (.leftMouseDragged, 5, .shift), (.leftMouseDragged, text.count, .shift), (.leftMouseUp, text.count, [])] { try mouse(type, column, modifiers) }
+        guard terminal.getSelection() == String(text.dropFirst(5)), inputCount == 0 else { throw WorkbenchError.message("再次Shift拖选没有从新的点击处开始：\(terminal.getSelection() ?? "nil")") }
+        try mouse(.leftMouseDown, 2, []); try mouse(.leftMouseUp, 2, [])
+        guard (terminal.getSelection() ?? "").isEmpty, !terminal.clipboard.hasSelection, inputCount > 0 else { throw WorkbenchError.message("鼠标上报开启时单击未取消本地选区或未送达程序：\(terminal.getSelection() ?? "nil")") }
         let remote = TerminalClipboardState()
         var prompts = 0
         remote.receive(Data("denied text".utf8), interactive: true) { prompts += 1; return false }
@@ -84,7 +93,7 @@ enum TerminalClipboardChecks {
         terminal.feed(text: "\u{1b}c" + wrapped)
         terminal.selectAll(); terminal.copy(terminal)
         guard pasteboard.string(forType: .string)?.trimmingCharacters(in: .newlines) == wrapped else { throw WorkbenchError.message("自动换行的中文/emoji复制加入了多余换行") }
-        print("PASS · 无选区保护、Shift拖选绕过鼠标捕获、Cmd+C/右键复制与原生粘贴、OSC52授权/拒绝补复制、后台与无效内容保护")
+        print("PASS · 无选区保护、Shift拖选绕过鼠标捕获、再次Shift从新起点开始、单击取消本地选区、Cmd+C/右键复制与原生粘贴、OSC52授权/拒绝补复制、后台与无效内容保护")
         window.orderOut(nil)
         var hosts: [HostProfile?] = [nil]
         if let host = store.hosts.first(where: { $0.address == "127.0.0.1" && [22281, 22282].contains($0.port) }) { hosts.append(host) }

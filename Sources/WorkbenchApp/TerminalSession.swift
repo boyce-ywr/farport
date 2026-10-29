@@ -92,6 +92,8 @@ final class SafeTerminalView: LocalProcessTerminalView {
         remoteSelectionDrag = false
         if event.modifierFlags.contains(.control) { rightMouseDown(with: event); return }
         localSelectionDrag = event.modifierFlags.contains(.shift)
+        // 新的 Shift 拖选总从点击处重新开始；鼠标上报开启时普通单击不会经过 SwiftTerm 的选区处理，需在此清除本地选区。
+        if selectionActive, localSelectionDrag || (allowMouseReporting && getTerminal().mouseMode != .off) { selectNone() }
         if localSelectionDrag { withLocalSelection { super.mouseDown(with: event) } }
         else { noteMouseInput(event); if allowMouseReporting, getTerminal().mouseMode != .off { remoteBufferSnapshot = snapshotRemoteBuffers?() }; super.mouseDown(with: event) }
         onFocus?()

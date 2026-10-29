@@ -108,7 +108,7 @@ final class TerminalAttachmentDraft: ObservableObject, Identifiable {
                             let selection = try DockerAttachmentDaemon.discover(terminal: terminal, transport: transport, cancellation: flag)
                             // 已从原窗格 docker 命令核对出容器时直接使用，不再要求手动选择。
                             if selection.containers.contains(where: { $0.id == selection.detectedContainerID }) {
-                                return ("", terminal.target, nil, try selection.daemon.confirm(selection.detectedContainerID, terminal: terminal, cancellation: flag))
+                                return ("", terminal.target, nil, try selection.daemon.confirm(selection.detectedContainerID, terminal: terminal, revalidate: false, cancellation: flag))
                             }
                             return ("", terminal.target, selection, nil)
                         }

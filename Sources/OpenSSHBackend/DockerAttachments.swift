@@ -57,6 +57,25 @@ public struct DockerAttachmentDaemon: Equatable, Sendable {
     public var connectionDescription: String { usesHost ? "Unix socket · " + endpoint : context }
     private static let containerFormat = "{\"id\":{{json .Id}},\"name\":{{json .Name}},\"user\":{{json .Config.User}},\"running\":{{json .State.Running}},\"paused\":{{json .State.Paused}},\"restarting\":{{json .State.Restarting}},\"started\":{{json .State.StartedAt}},\"restarts\":{{json .RestartCount}},\"terminal\":{{json .Config.Tty}},\"openInput\":{{json .Config.OpenStdin}}}"
 
+    /// 按 Docker CLI 的优先级（--context > --host/DOCKER_HOST > DOCKER_CONTEXT > config.json）直接读取 context 配置，省去每次启动 docker CLI；无法确定时返回 nil，由调用方回退 CLI。
+    static func nativeContext(_ explicit: String?, environment: [String: String]) -> (context: String, endpoint: String)? {
+        let directory = environment["DOCKER_CONFIG"].map { URL(fileURLWithPath: $0) } ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".docker")
+        func json(_ url: URL) -> [String: Any]? { (try? Data(contentsOf: url)).flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] } }
+        let host = environment["DOCKER_HOST"].flatMap { $0.isEmpty ? nil : $0 }
+        let context: String
+        if let explicit { context = explicit }
+        else if host != nil { context = "default" }
+        else if let name = environment["DOCKER_CONTEXT"], !name.isEmpty { context = name }
+        else if FileManager.default.fileExists(atPath: directory.appendingPathComponent("config.json").path) {
+            guard let configuration = json(directory.appendingPathComponent("config.json")) else { return nil }
+            context = (configuration["currentContext"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? "default"
+        } else { context = "default" }
+        if context == "default" { return (context, host ?? "unix:///var/run/docker.sock") }
+        let digest = SHA256.hash(data: Data(context.utf8)).map { String(format: "%02x", $0) }.joined()
+        guard let meta = json(directory.appendingPathComponent("contexts/meta/\(digest)/meta.json")), meta["Name"] as? String == context,
+              let endpoint = ((meta["Endpoints"] as? [String: Any])?["docker"] as? [String: Any])?["Host"] as? String, !endpoint.isEmpty else { return nil }
+        return (context, endpoint)
+    }
     public static func discover(terminal: LocalDockerTerminal, transport: SSHTransport? = nil, cancellation: CancellationFlag) throws -> DockerAttachmentSelection {
         if let host = terminal.host {
             guard let transport else { throw WorkbenchError.message(L10n.text("Docker context 无效，未发送附件。")) }
@@ -82,20 +101,18 @@ public struct DockerAttachmentDaemon: Equatable, Sendable {
             try ProcessRunner.run(executable: terminal.executable, arguments: terminal.invocation.connectionArguments + arguments, environment: environment,
                                   cancellation: cancellation, timeout: 10).checked().text.trimmingCharacters(in: .whitespacesAndNewlines)
         }
-        let context = try run(["context", "show"])
+        let resolved = terminal.invocation.host == nil ? Self.nativeContext(terminal.invocation.context, environment: environment) : nil
+        let context = try resolved?.context ?? run(["context", "show"])
         guard !context.isEmpty, !context.hasPrefix("-"), context.rangeOfCharacter(from: .controlCharacters) == nil else { throw WorkbenchError.message(L10n.text("Docker context 无效，未发送附件。")) }
-        let endpoint = try run(["context", "inspect", context, "--format", "{{.Endpoints.docker.Host}}"])
+        let endpoint = try resolved?.endpoint ?? run(["context", "inspect", context, "--format", "{{.Endpoints.docker.Host}}"])
         try DockerUnixEndpoint.validate(endpoint)
         let usesHost = terminal.invocation.host != nil || (context == "default" && environment["DOCKER_HOST"]?.isEmpty == false)
         environment.removeValue(forKey: "DOCKER_CONTEXT"); environment.removeValue(forKey: "DOCKER_HOST")
         let identity = try DockerEngineIdentity.read(endpoint: endpoint, cancellation: cancellation)
         let daemon = DockerAttachmentDaemon(context: context, endpoint: endpoint, identifier: identity.identifier, executable: terminal.executable, environment: environment, usesHost: usesHost, apiVersion: identity.apiVersion)
+        // 目标容器由原窗格 docker 命令确定，不再列出全部容器供选择。
         let detected = try daemon.inspect(terminal.invocation.container, cancellation: cancellation)
-        let identifiers = try daemon.run(["ps", "--no-trunc", "--format", "{{.ID}}"], cancellation: cancellation).text.split(separator: "\n").map(String.init)
-        guard !identifiers.isEmpty, identifiers.count <= 100 else { throw WorkbenchError.message(L10n.text("没有可用容器或容器数量超过本次选择范围。")) }
-        let result = try daemon.run(["inspect", "--type", "container", "--format", containerFormat] + identifiers, cancellation: cancellation)
-        let containers = try result.text.split(separator: "\n").map { try JSONDecoder().decode(DockerContainer.self, from: Data($0.utf8)) }
-        return DockerAttachmentSelection(daemon: daemon, terminal: terminal, containers: containers, detectedContainerID: detected.id)
+        return DockerAttachmentSelection(daemon: daemon, terminal: terminal, containers: [detected], detectedContainerID: detected.id)
     }
     /// 远端沿用原窗格 docker 命令自带的 --context/--host 或其进程环境，不另行探测；目标身份以完整容器 ID 与状态逐次核对。
     private static func discoverRemote(terminal: LocalDockerTerminal, remote: RemoteDockerHost, cancellation: CancellationFlag) throws -> DockerAttachmentSelection {
@@ -114,10 +131,10 @@ public struct DockerAttachmentDaemon: Equatable, Sendable {
         let detected = try daemon.inspect(invocation.container, cancellation: cancellation)
         return DockerAttachmentSelection(daemon: daemon, terminal: terminal, containers: [detected], detectedContainerID: detected.id)
     }
-    public func confirm(_ containerID: String, terminal: LocalDockerTerminal, cancellation: CancellationFlag) throws -> DockerAttachmentBinding {
-        try validate(cancellation: cancellation)
-        let raw = try run(["inspect", "--type", "container", "--format", Self.containerFormat, containerID, terminal.invocation.container], cancellation: cancellation).output
-        let pair = try raw.split(separator: 10).map { try JSONDecoder().decode(DockerContainer.self, from: Data($0)) }
+    /// revalidate 为 false 仅用于刚完成 discover、daemon 身份已核对的情况。
+    public func confirm(_ containerID: String, terminal: LocalDockerTerminal, revalidate: Bool = true, cancellation: CancellationFlag) throws -> DockerAttachmentBinding {
+        if revalidate { try validate(cancellation: cancellation) }
+        let (pair, raw) = try inspectPair(containerID, terminal.invocation.container, cancellation: cancellation)
         guard pair.count == 2, let container = pair.first, container.id == containerID, pair[1].id == container.id,
               container.running, !container.paused, !container.restarting,
               !terminal.invocation.attachesExistingProcess || (container.terminal && container.openInput) else {
@@ -136,8 +153,7 @@ public struct DockerAttachmentDaemon: Equatable, Sendable {
     }
     public func validate(_ binding: DockerAttachmentBinding, cancellation: CancellationFlag) throws {
         try validate(cancellation: cancellation)
-        let output = try run(["inspect", "--type", "container", "--format", Self.containerFormat, binding.container.id, binding.terminal.invocation.container], cancellation: cancellation).output
-        let containers = try output.split(separator: 10).map { try JSONDecoder().decode(DockerContainer.self, from: Data($0)) }
+        let containers = try inspectPair(binding.container.id, binding.terminal.invocation.container, cancellation: cancellation).containers
         guard containers.count == 2, let current = containers.first, binding.daemon == self, current == binding.container,
               current.running, !current.paused, !current.restarting, current.id == containers[1].id else {
             throw WorkbenchError.message(L10n.text("Docker 服务、容器身份或启动状态已变化，请重新确认附件目标。"))
@@ -146,13 +162,25 @@ public struct DockerAttachmentDaemon: Equatable, Sendable {
     private func validate(cancellation: CancellationFlag) throws {
         if remote != nil { return }
         if !usesHost {
-            let result = try ProcessRunner.run(executable: executable, arguments: ["--context", context, "context", "inspect", context, "--format", "{{.Endpoints.docker.Host}}"], environment: environment, cancellation: cancellation, timeout: 10).checked()
-            guard result.text.trimmingCharacters(in: .whitespacesAndNewlines) == endpoint else { throw WorkbenchError.message(L10n.text("Docker 服务、容器身份或启动状态已变化，请重新确认附件目标。")) }
+            let current = try Self.nativeContext(context, environment: environment)?.endpoint ?? ProcessRunner.run(executable: executable, arguments: ["--context", context, "context", "inspect", context, "--format", "{{.Endpoints.docker.Host}}"], environment: environment, cancellation: cancellation, timeout: 10).checked().text
+            guard current.trimmingCharacters(in: .whitespacesAndNewlines) == endpoint else { throw WorkbenchError.message(L10n.text("Docker 服务、容器身份或启动状态已变化，请重新确认附件目标。")) }
         }
         let current = try DockerEngineIdentity.read(endpoint: endpoint, apiVersion: apiVersion, cancellation: cancellation).identifier
         guard current == identifier else { throw WorkbenchError.message(L10n.text("Docker 服务、容器身份或启动状态已变化，请重新确认附件目标。")) }
     }
+    /// 本机 daemon 优先经 socket API 读取容器（省去 docker CLI 启动开销）；远端或无法使用时返回 nil。
+    private func socketInspect(_ reference: String, cancellation: CancellationFlag) throws -> DockerContainer? {
+        guard remote == nil, !apiVersion.isEmpty else { return nil }
+        return try DockerEngineIdentity.container(reference, endpoint: endpoint, apiVersion: apiVersion, cancellation: cancellation)
+    }
+    /// 同时读取所选容器与原窗格容器引用；raw 为 CLI 原始输出，仅远端用于原子比对。
+    private func inspectPair(_ first: String, _ second: String, cancellation: CancellationFlag) throws -> (containers: [DockerContainer], raw: Data) {
+        if let one = try socketInspect(first, cancellation: cancellation), let two = try socketInspect(second, cancellation: cancellation) { return ([one, two], Data()) }
+        let raw = try run(["inspect", "--type", "container", "--format", Self.containerFormat, first, second], cancellation: cancellation).output
+        return (try raw.split(separator: 10).map { try JSONDecoder().decode(DockerContainer.self, from: Data($0)) }, raw)
+    }
     private func inspect(_ reference: String, cancellation: CancellationFlag) throws -> DockerContainer {
+        if let container = try socketInspect(reference, cancellation: cancellation) { return container }
         let result = try run(["inspect", "--type", "container", "--format", Self.containerFormat, reference], cancellation: cancellation)
         return try JSONDecoder().decode(DockerContainer.self, from: result.output)
     }
