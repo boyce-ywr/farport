@@ -38,7 +38,12 @@ enum TerminalClipboardChecks {
             if type == .leftMouseDown { terminal.mouseDown(with: event) }
             else if type == .leftMouseUp { terminal.mouseUp(with: event) }
             else { terminal.mouseDragged(with: event) }
+            if type == .leftMouseDragged, column == text.count {
+                terminal.dataReceived(slice: Array("\u{1b}[2;1HBACKGROUND_OUTPUT\u{1b}[1;1H".utf8)[...])
+                guard terminal.getSelection() == text else { throw WorkbenchError.message("持续输出清除了正在Shift拖选的本地选区") }
+            }
         }
+        terminal.dataReceived(slice: Array("\u{1b}[2;1HMORE_OUTPUT\u{1b}[1;1H".utf8)[...])
         guard inputCount == 0, terminal.getSelection() == text, terminal.allowMouseReporting else { throw WorkbenchError.message("Shift拖选未绕过终端程序或改变鼠标配置：\(terminal.getSelection() ?? "nil")") }
         window.makeFirstResponder(terminal)
         let copyEvent = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: .command, timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber, context: nil, characters: "c", charactersIgnoringModifiers: "c", isARepeat: false, keyCode: 8)!

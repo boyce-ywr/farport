@@ -20,11 +20,11 @@ public struct TmuxService: Sendable {
         }
         return executable
     }
-    private var prefix: String {
+    var prefix: String {
         get throws { (host == nil ? RemotePath.quote(try Self.localExecutable()) : RemoteTmuxCommand.executableReference) + (socketName.map { " -L " + RemotePath.quote($0) } ?? "") }
     }
     public func execute(_ arguments: String, cancellation: CancellationFlag = CancellationFlag(), timeout: TimeInterval = 45) throws -> CommandResult { try runShell(prefix + " " + arguments, cancellation: cancellation, timeout: timeout) }
-    private func runShell(_ command: String, cancellation: CancellationFlag, timeout: TimeInterval = 45) throws -> CommandResult {
+    func runShell(_ command: String, cancellation: CancellationFlag, timeout: TimeInterval = 45) throws -> CommandResult {
         if let host {
             try transport.requirePosixShell(host, cancellation: cancellation)
             return try transport.run(host, command: RemoteTmuxCommand.wrap(command), cancellation: cancellation, timeout: timeout)
@@ -35,7 +35,14 @@ public struct TmuxService: Sendable {
         return try ProcessRunner.run(executable: "/bin/sh", arguments: ["-c", command], environment: environment, cancellation: cancellation, timeout: timeout,
                                      currentDirectory: URL(fileURLWithPath: configuration.directory))
     }
-    public func copySelection(session: String, cancellation: CancellationFlag = CancellationFlag()) throws -> Data? {
+    /// 优先读取 tmux 复制模式选区；没有时，若提供了按下鼠标时的缓冲区快照，则读取之后由窗格程序新建的缓冲区。
+    public func copySelection(session: String, newBuffersSince existing: Set<String>? = nil, cancellation: CancellationFlag = CancellationFlag()) throws -> Data? {
+        if let data = try copyModeSelection(session: session, cancellation: cancellation) { return data }
+        guard let existing else { return nil }
+        try cancellation.check()
+        return try newBuffer(excluding: existing, cancellation: cancellation)
+    }
+    private func copyModeSelection(session: String, cancellation: CancellationFlag) throws -> Data? {
         let format = "#{session_id}\t#{pane_id}\t#{pane_pid}\t#{pane_mode}\t#{selection_present}\t#{selection_start_x}\t#{selection_start_y}\t#{selection_end_x}\t#{selection_end_y}\t#{copy_cursor_x}\t#{copy_cursor_y}\t#{rectangle_toggle}\t#{pane_dead}\t#{version}\t#{set-clipboard}"
         func snapshot() throws -> String {
             try execute("display-message -p -t \(RemotePath.quote(session)) \(RemotePath.quote(format))", cancellation: cancellation, timeout: 5).checked().text.trimmingCharacters(in: .newlines)
@@ -73,6 +80,30 @@ public struct TmuxService: Sendable {
         cleanupNeeded = false
         guard content.count >= size, content.dropFirst(size) == Data((initial + "\n").utf8) else { throw WorkbenchError.message(L10n.text("tmux 窗格或选区已变化，请重新选择后复制。")) }
         return Data(content.prefix(size))
+    }
+    /// 终端程序（如 Claude Code）自行处理鼠标选区时，会用 load-buffer 或 OSC52 写入 tmux 新缓冲区；按下鼠标时记录已有缓冲区，复制时只接受之后新出现的。
+    public func bufferNames(cancellation: CancellationFlag = CancellationFlag()) throws -> Set<String> {
+        let result = try execute("list-buffers -F '#{buffer_name}'", cancellation: cancellation, timeout: 5)
+        if result.status != 0, result.error.contains("no server running") || result.error.contains("no buffers") { return [] }
+        return Set(try result.checked().text.split(separator: "\n").map(String.init))
+    }
+    public func newBuffer(excluding existing: Set<String>, cancellation: CancellationFlag = CancellationFlag()) throws -> Data? {
+        let output = try execute("list-buffers -F '#{buffer_name}\t#{buffer_size}'", cancellation: cancellation, timeout: 5).checked().text
+        guard let fields = output.split(separator: "\n").map({ $0.split(separator: "\t", omittingEmptySubsequences: false).map(String.init) })
+            .first(where: { $0.count == 2 && !$0[0].hasPrefix("farport-") && !existing.contains($0[0]) }), let size = Int(fields[1]), size > 0 else { return nil }
+        guard size <= 1024 * 1024 else { throw WorkbenchError.message(L10n.text("tmux 选区超过 1 MiB，未写入 Mac 剪贴板。")) }
+        let content = try execute("save-buffer -b \(RemotePath.quote(fields[0])) -", cancellation: cancellation, timeout: 5).checked().output
+        return content.count == size ? content : nil
+    }
+    /// 返回窗格前台程序是否处于容器、嵌套 SSH 等环境，以及 tmux 是否接收窗格程序发出的 OSC52。
+    public func clipboardRelay(session: String, cancellation: CancellationFlag = CancellationFlag()) throws -> (nested: Bool, accepted: Bool) {
+        let output = try execute("display-message -p -t \(RemotePath.quote(session)) '#{pane_current_command}' \\; show-options -s -v set-clipboard", cancellation: cancellation, timeout: 5).checked().text
+        let lines = output.split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }
+        guard lines.count == 2 else { return (false, true) }
+        return (["ssh", "mosh", "docker", "podman", "su", "sudo"].contains(lines[0]), lines[1] == "on")
+    }
+    public func acceptProgramClipboard(cancellation: CancellationFlag = CancellationFlag()) throws {
+        _ = try execute("set-option -s set-clipboard on", cancellation: cancellation, timeout: 5).checked()
     }
     public func sessions(cancellation: CancellationFlag = CancellationFlag()) throws -> [TmuxSession] {
         let result = try execute("list-sessions -F '#{session_id}\t#{session_name}\t#{session_windows}\t#{session_attached}\t#{session_created}'", cancellation: cancellation)
@@ -142,14 +173,23 @@ public struct TmuxService: Sendable {
         try pasteValidated(text, session: session, expected: expected)
     }
     public func pasteDocker(_ text: String, session: String, expected: LocalDockerTerminal) throws {
-        guard try localDockerTerminal(session: session) == expected else { throw WorkbenchError.message(L10n.text("Docker 进程或原 tmux 窗格已变化，请重新确认容器。")) }
+        if host != nil {
+            // 远端：在同一次粘贴命令中核对前台 docker 进程的 PID 与启动时间，省去单独的识别往返。
+            let pane = RemotePath.quote(expected.target.processID), process = RemotePath.quote(String(expected.foregroundPID))
+            let condition = "[ \"$(ps -o tpgid= -p \(pane) | tr -d ' ')\" = \(process) ] && [ \"$(ps -o lstart= -p \(process) | tr -s ' ')\" = \(RemotePath.quote(expected.remoteStarted)) ]"
+            do { try pasteValidated(text, session: session, expected: expected.target, condition: condition) }
+            catch { throw WorkbenchError.message(L10n.text("Docker 进程或原 tmux 窗格已变化，请重新确认容器。")) }
+            return
+        }
+        guard try dockerTerminal(session: session) == expected else { throw WorkbenchError.message(L10n.text("Docker 进程或原 tmux 窗格已变化，请重新确认容器。")) }
         try pasteValidated(text, session: session, expected: expected.target)
     }
-    private func pasteValidated(_ text: String, session: String, expected: TmuxTarget) throws {
+    private func pasteValidated(_ text: String, session: String, expected: TmuxTarget, condition extra: String? = nil) throws {
         let buffer = "farport-" + UUID().uuidString
         let tmux = try prefix
         let fingerprint = [expected.paneID, expected.processID, expected.command, expected.directory, "0", "0"].joined(separator: "\t")
         let condition = "[ \"$(\(tmux) display-message -p -t \(RemotePath.quote(session)) '#{pane_id}\t#{pane_pid}\t#{pane_current_command}\t#{pane_current_path}\t#{pane_in_mode}\t#{pane_dead}')\" = \(RemotePath.quote(fingerprint)) ]"
+            + (extra.map { " && " + $0 } ?? "")
         let command = "printf %s \(RemotePath.quote(text)) | \(tmux) load-buffer -b \(RemotePath.quote(buffer)) - && \(condition) && \(tmux) paste-buffer -p -d -b \(RemotePath.quote(buffer)) -t \(RemotePath.quote(expected.paneID))"
         defer { _ = try? execute("delete-buffer -b \(RemotePath.quote(buffer))") }
         _ = try runShell(command, cancellation: CancellationFlag()).checked()

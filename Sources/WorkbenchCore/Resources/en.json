@@ -1075,5 +1075,12 @@
   "新建并进入": "Create and open",
   "新建的 tmux 会话已不可用，请刷新后重试。": "The newly created tmux session is unavailable. Refresh and try again.",
   "所选 tmux 会话已结束或变化，请重新选择。": "The selected tmux session ended or changed. Choose again.",
-  "目标主机已有新的 tmux 会话，请选择要进入的会话。": "New tmux sessions have appeared on this host. Choose a session to open."
+  "目标主机已有新的 tmux 会话，请选择要进入的会话。": "New tmux sessions have appeared on this host. Choose a session to open.",
+  "允许 tmux 接收容器或嵌套会话中的复制？": "Allow tmux to accept copies from containers or nested sessions?",
+  "已开启；请在程序中重新选择文本后复制。": "Enabled. Select the text again in the program, then copy.",
+  "无法从远端窗格的 docker 命令识别目标容器，且运行中的容器不止一个，未发送附件。": "Could not identify the container from the remote pane's docker command, and more than one container is running. Attachments were not sent.",
+  "无法修改 tmux 的 set-clipboard 设置：": "Could not change the tmux set-clipboard option: ",
+  "无法确认远端 tmux 窗格的 Docker 进程，未发送附件。": "Could not verify the Docker process in the remote tmux pane. Attachments were not sent.",
+  "窗格程序运行在容器或嵌套会话中，它发出的复制请求（OSC 52）被 tmux 的 set-clipboard 设置拦截了。开启后只对当前运行的 tmux 服务生效，不修改配置文件；写入 Mac 剪贴板仍按 Farport 的终端剪贴板权限处理。": "The program in this pane runs in a container or nested session, and tmux's set-clipboard option is blocking its copy requests (OSC 52). Enabling applies only to the running tmux server and does not change any config file. Writes to the Mac clipboard still follow Farport's terminal clipboard permission.",
+  "远端容器暂不支持在 Farport 中直接打开 Agent 终端。": "Opening an agent terminal directly in a remote container is not supported yet."
 }

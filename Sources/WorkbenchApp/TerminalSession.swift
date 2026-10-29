@@ -37,6 +37,8 @@ final class SafeTerminalView: LocalProcessTerminalView {
     var semanticCommandCopyAllowed = true
     var remoteSelectionContext = false
     var copyRemoteSelection: ((CancellationFlag) async throws -> Data?)?
+    var snapshotRemoteBuffers: (() -> Task<Set<String>?, Never>)?
+    private(set) var remoteBufferSnapshot: Task<Set<String>?, Never>?
     var confirmsMultilinePaste: () -> Bool = { true }
     var commandCapture = SemanticCommandCapture()
     private var shellMarkers = ShellMarkerStream()
@@ -64,6 +66,9 @@ final class SafeTerminalView: LocalProcessTerminalView {
     }
     deinit { if let scrollMonitor { NSEvent.removeMonitor(scrollMonitor) } }
     override func dataReceived(slice: ArraySlice<UInt8>) {
+        let mouseReporting = allowMouseReporting
+        if localSelectionDrag || selectionActive { allowMouseReporting = false }
+        defer { allowMouseReporting = mouseReporting }
         let filtered = graphicsInput.filter(slice)
         guard !filtered.isEmpty else { return }
         var offset = 0
@@ -88,7 +93,7 @@ final class SafeTerminalView: LocalProcessTerminalView {
         if event.modifierFlags.contains(.control) { rightMouseDown(with: event); return }
         localSelectionDrag = event.modifierFlags.contains(.shift)
         if localSelectionDrag { withLocalSelection { super.mouseDown(with: event) } }
-        else { noteMouseInput(event); super.mouseDown(with: event) }
+        else { noteMouseInput(event); if allowMouseReporting, getTerminal().mouseMode != .off { remoteBufferSnapshot = snapshotRemoteBuffers?() }; super.mouseDown(with: event) }
         onFocus?()
     }
     override func rightMouseDown(with event: NSEvent) {
@@ -369,9 +374,24 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable, LocalProc
                 guard let self, connected, connectionConfigurationValid() else { throw WorkbenchError.cancelled }
                 let connection = connectionID
                 let service = TmuxService(transport: transport, host: host)
-                let result = try await Task.detached { try service.copySelection(session: tmuxID, cancellation: cancellation) }.value
+                let existing = await terminal.remoteBufferSnapshot?.value ?? nil
+                let result = try await Task.detached { try service.copySelection(session: tmuxID, newBuffersSince: existing, cancellation: cancellation) }.value
                 guard connected, connectionID == connection, connectionConfigurationValid() else { throw WorkbenchError.cancelled }
                 return result
+            }
+            terminal.snapshotRemoteBuffers = { [weak self] in
+                guard let self, connected else { return Task { nil } }
+                let service = TmuxService(transport: transport, host: host)
+                return Task.detached { try? service.bufferNames() }
+            }
+            terminal.clipboard.offerProgramClipboard = { [weak self] in
+                guard let self, connected else { return nil }
+                let service = TmuxService(transport: transport, host: host)
+                guard let relay = try? await Task.detached(operation: { try service.clipboardRelay(session: tmuxID) }).value, relay.nested, !relay.accepted,
+                      confirm(L10n.text("允许 tmux 接收容器或嵌套会话中的复制？"), L10n.text("窗格程序运行在容器或嵌套会话中，它发出的复制请求（OSC 52）被 tmux 的 set-clipboard 设置拦截了。开启后只对当前运行的 tmux 服务生效，不修改配置文件；写入 Mac 剪贴板仍按 Farport 的终端剪贴板权限处理。")) else { return nil }
+                do { try await Task.detached { try service.acceptProgramClipboard() }.value }
+                catch { return L10n.text("无法修改 tmux 的 set-clipboard 设置：") + error.localizedDescription }
+                return L10n.text("已开启；请在程序中重新选择文本后复制。")
             }
         }
         terminal.font = NSFont.monospacedSystemFont(ofSize: 13, weight: .regular)

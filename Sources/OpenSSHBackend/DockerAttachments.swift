@@ -29,6 +29,16 @@ public struct DockerAttachmentBinding: Equatable, Sendable {
     public let container: DockerContainer
     public let terminal: LocalDockerTerminal
     public let user: String
+    /// 绑定时 inspect（所选容器 + 原窗格容器引用）的原始输出，远端执行前在同一 shell 内比对。
+    var fingerprint = ""
+}
+
+/// 远端 tmux 窗格中的 docker 客户端经 SSH 在原主机执行；比较时只看主机配置。
+public struct RemoteDockerHost: Equatable, Sendable {
+    let transport: SSHTransport
+    let host: HostProfile
+    static let path = "PATH=\"$PATH:/usr/local/bin:/opt/homebrew/bin:$HOME/.docker/bin:$HOME/.orbstack/bin:/Applications/Docker.app/Contents/Resources/bin\"; export PATH"
+    public static func == (left: Self, right: Self) -> Bool { left.host == right.host }
 }
 
 public struct DockerAttachmentDaemon: Equatable, Sendable {
@@ -39,10 +49,19 @@ public struct DockerAttachmentDaemon: Equatable, Sendable {
     private let environment: [String: String]
     private let usesHost: Bool
     private let apiVersion: String
+    private var remote: RemoteDockerHost? = nil
+    private var connection: [String] {
+        if remote == nil || usesHost { return endpoint.isEmpty ? [] : ["--host", endpoint] }
+        return context.isEmpty ? [] : ["--context", context]
+    }
     public var connectionDescription: String { usesHost ? "Unix socket · " + endpoint : context }
     private static let containerFormat = "{\"id\":{{json .Id}},\"name\":{{json .Name}},\"user\":{{json .Config.User}},\"running\":{{json .State.Running}},\"paused\":{{json .State.Paused}},\"restarting\":{{json .State.Restarting}},\"started\":{{json .State.StartedAt}},\"restarts\":{{json .RestartCount}},\"terminal\":{{json .Config.Tty}},\"openInput\":{{json .Config.OpenStdin}}}"
 
-    public static func discover(terminal: LocalDockerTerminal, cancellation: CancellationFlag) throws -> DockerAttachmentSelection {
+    public static func discover(terminal: LocalDockerTerminal, transport: SSHTransport? = nil, cancellation: CancellationFlag) throws -> DockerAttachmentSelection {
+        if let host = terminal.host {
+            guard let transport else { throw WorkbenchError.message(L10n.text("Docker context 无效，未发送附件。")) }
+            return try discoverRemote(terminal: terminal, remote: RemoteDockerHost(transport: transport, host: host), cancellation: cancellation)
+        }
         var environment = try LocalShellConfiguration().environment
         for key in ["DOCKER_HOST", "DOCKER_CONTEXT", "DOCKER_CONFIG"] { environment.removeValue(forKey: key) }
         environment.merge(terminal.environment) { _, value in value }
@@ -78,24 +97,42 @@ public struct DockerAttachmentDaemon: Equatable, Sendable {
         let containers = try result.text.split(separator: "\n").map { try JSONDecoder().decode(DockerContainer.self, from: Data($0.utf8)) }
         return DockerAttachmentSelection(daemon: daemon, terminal: terminal, containers: containers, detectedContainerID: detected.id)
     }
+    /// 远端沿用原窗格 docker 命令自带的 --context/--host 或其进程环境，不另行探测；目标身份以完整容器 ID 与状态逐次核对。
+    private static func discoverRemote(terminal: LocalDockerTerminal, remote: RemoteDockerHost, cancellation: CancellationFlag) throws -> DockerAttachmentSelection {
+        let invocation = terminal.invocation
+        let usesHost = invocation.host != nil || (invocation.context == nil && terminal.environment["DOCKER_HOST"]?.isEmpty == false)
+        let context = usesHost ? "" : invocation.context ?? terminal.environment["DOCKER_CONTEXT"] ?? ""
+        let endpoint = usesHost ? invocation.host ?? terminal.environment["DOCKER_HOST"] ?? "" : ""
+        guard [context, endpoint].allSatisfy({ !$0.hasPrefix("-") && $0.rangeOfCharacter(from: .controlCharacters) == nil }) else {
+            throw WorkbenchError.message(L10n.text("Docker context 无效，未发送附件。"))
+        }
+        var environment = terminal.environment
+        environment.removeValue(forKey: "DOCKER_CONTEXT"); environment.removeValue(forKey: "DOCKER_HOST")
+        var daemon = DockerAttachmentDaemon(context: context, endpoint: endpoint, identifier: remote.host.id.uuidString + "|" + context + "|" + endpoint,
+                                            executable: terminal.executable, environment: environment, usesHost: usesHost, apiVersion: "")
+        daemon.remote = remote
+        let detected = try daemon.inspect(invocation.container, cancellation: cancellation)
+        return DockerAttachmentSelection(daemon: daemon, terminal: terminal, containers: [detected], detectedContainerID: detected.id)
+    }
     public func confirm(_ containerID: String, terminal: LocalDockerTerminal, cancellation: CancellationFlag) throws -> DockerAttachmentBinding {
         try validate(cancellation: cancellation)
-        let container = try inspect(containerID, cancellation: cancellation)
-        guard container.id == containerID, container.id == (try inspect(terminal.invocation.container, cancellation: cancellation)).id,
+        let raw = try run(["inspect", "--type", "container", "--format", Self.containerFormat, containerID, terminal.invocation.container], cancellation: cancellation).output
+        let pair = try raw.split(separator: 10).map { try JSONDecoder().decode(DockerContainer.self, from: Data($0)) }
+        guard pair.count == 2, let container = pair.first, container.id == containerID, pair[1].id == container.id,
               container.running, !container.paused, !container.restarting,
               !terminal.invocation.attachesExistingProcess || (container.terminal && container.openInput) else {
             throw WorkbenchError.message(L10n.text("所选容器不是原窗格正在使用的运行中容器，请重新选择。"))
         }
         let configuredUser = terminal.invocation.user ?? container.user
         let userArguments = configuredUser.isEmpty ? [] : ["--user", configuredUser]
-        let uid = try run(["exec"] + userArguments + [container.id, "id", "-u"], cancellation: cancellation).text.trimmingCharacters(in: .whitespacesAndNewlines)
-        let gid = try run(["exec"] + userArguments + [container.id, "id", "-g"], cancellation: cancellation).text.trimmingCharacters(in: .whitespacesAndNewlines)
+        // 一次 exec 同时确认所需命令与接收用户，减少 docker CLI 往返。
+        let identity = try run(["exec"] + userArguments + [container.id, "sh", "-c", "set -eu; for tool in sh id mktemp mkdir cat chmod sha256sum rm; do command -v \"$tool\" >/dev/null; done; id -u; id -g"], cancellation: cancellation).text.split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }
+        let uid = identity.count == 2 ? identity[0] : "", gid = identity.count == 2 ? identity[1] : ""
         guard !uid.isEmpty, !gid.isEmpty, uid.utf8.allSatisfy({ (48...57).contains($0) }), gid.utf8.allSatisfy({ (48...57).contains($0) }) else {
             throw WorkbenchError.message(L10n.text("无法确认容器接收用户，不会提权上传。"))
         }
-        let binding = DockerAttachmentBinding(daemon: self, container: container, terminal: terminal, user: uid + ":" + gid)
-        _ = try execute(binding, script: "set -eu; for tool in sh id mktemp mkdir cat chmod sha256sum rm; do command -v \"$tool\" >/dev/null; done", cancellation: cancellation)
-        return binding
+        return DockerAttachmentBinding(daemon: self, container: container, terminal: terminal, user: uid + ":" + gid,
+                                       fingerprint: String(decoding: raw, as: UTF8.self).trimmingCharacters(in: .newlines))
     }
     public func validate(_ binding: DockerAttachmentBinding, cancellation: CancellationFlag) throws {
         try validate(cancellation: cancellation)
@@ -107,6 +144,7 @@ public struct DockerAttachmentDaemon: Equatable, Sendable {
         }
     }
     private func validate(cancellation: CancellationFlag) throws {
+        if remote != nil { return }
         if !usesHost {
             let result = try ProcessRunner.run(executable: executable, arguments: ["--context", context, "context", "inspect", context, "--format", "{{.Endpoints.docker.Host}}"], environment: environment, cancellation: cancellation, timeout: 10).checked()
             guard result.text.trimmingCharacters(in: .whitespacesAndNewlines) == endpoint else { throw WorkbenchError.message(L10n.text("Docker 服务、容器身份或启动状态已变化，请重新确认附件目标。")) }
@@ -118,17 +156,33 @@ public struct DockerAttachmentDaemon: Equatable, Sendable {
         let result = try run(["inspect", "--type", "container", "--format", Self.containerFormat, reference], cancellation: cancellation)
         return try JSONDecoder().decode(DockerContainer.self, from: result.output)
     }
-    private func run(_ arguments: [String], input: Data? = nil, cancellation: CancellationFlag, timeout: TimeInterval? = nil, outputLimit: Int = 2 * 1024 * 1024) throws -> CommandResult {
-        let result = try ProcessRunner.run(executable: executable, arguments: ["--host", endpoint] + arguments, environment: environment,
-                                          cancellation: cancellation, timeout: timeout ?? (input == nil ? 15 : 120), outputLimit: outputLimit, input: input)
+    private func run(_ arguments: [String], input: Data? = nil, cancellation: CancellationFlag, timeout: TimeInterval? = nil, outputLimit: Int = 2 * 1024 * 1024,
+                     guardedBy precheck: (arguments: [String], expected: String)? = nil) throws -> CommandResult {
+        let result: CommandResult
+        if let remote {
+            let assignments = environment.sorted { $0.key < $1.key }.map { RemotePath.quote($0.key + "=" + $0.value) }
+            func docker(_ arguments: [String]) -> String { "env " + (assignments + ([executable] + connection + arguments).map(RemotePath.quote)).joined(separator: " ") }
+            var command = RemoteDockerHost.path + "; "
+            if let precheck { command += "farport_state=$(" + docker(precheck.arguments) + ") && [ \"$farport_state\" = " + RemotePath.quote(precheck.expected) + " ] || exit 97; " }
+            command += "exec " + docker(arguments)
+            result = try remote.transport.run(remote.host, command: "/bin/sh -c " + RemotePath.quote(command), input: input, cancellation: cancellation,
+                                              timeout: timeout ?? (input == nil ? 20 : 180), outputLimit: outputLimit)
+        } else {
+            result = try ProcessRunner.run(executable: executable, arguments: connection + arguments, environment: environment,
+                                           cancellation: cancellation, timeout: timeout ?? (input == nil ? 15 : 120), outputLimit: outputLimit, input: input)
+        }
+        if precheck != nil, result.status == 97 { throw WorkbenchError.message(L10n.text("Docker 服务、容器身份或启动状态已变化，请重新确认附件目标。")) }
         guard result.status == 0 else { throw WorkbenchError.message(L10n.text("Docker 操作失败，请检查容器状态、目标用户权限及所需命令；未插入附件路径。")) }
         return result
     }
     func execute(_ binding: DockerAttachmentBinding, script: String, arguments: [String] = [], input: Data? = nil, cancellation: CancellationFlag, timeout: TimeInterval? = nil, outputLimit: Int = 2 * 1024 * 1024) throws -> CommandResult {
-        try validate(binding, cancellation: cancellation)
-        return try run(["exec", "-i", "--user", binding.user, binding.container.id, "sh", "-c", script, "farport-attachments"] + arguments, input: input, cancellation: cancellation, timeout: timeout, outputLimit: outputLimit)
+        let guarded = remote != nil && !binding.fingerprint.isEmpty && binding.daemon == self
+        if !guarded { try validate(binding, cancellation: cancellation) }
+        return try run(["exec", "-i", "--user", binding.user, binding.container.id, "sh", "-c", script, "farport-attachments"] + arguments, input: input, cancellation: cancellation, timeout: timeout, outputLimit: outputLimit,
+                       guardedBy: guarded ? (["inspect", "--type", "container", "--format", Self.containerFormat, binding.container.id, binding.terminal.invocation.container], binding.fingerprint) : nil)
     }
     public func agentTerminal(_ binding: DockerAttachmentBinding, command: String, cancellation: CancellationFlag) throws -> TerminalProcessLaunch {
+        guard remote == nil else { throw WorkbenchError.message(L10n.text("远端容器暂不支持在 Farport 中直接打开 Agent 终端。")) }
         try validate(binding, cancellation: cancellation)
         return TerminalProcessLaunch(executable: executable, arguments: ["--host", endpoint, "exec", "-it", "--user", binding.user, binding.container.id,
                                                                        "sh", "-c", "exec \"${SHELL:-/bin/sh}\" -l -c \"$1\"", "farport-agent", command], environment: environment)
@@ -233,7 +287,6 @@ public struct DockerAttachmentUploader: Sendable {
         guard output[1].split(whereSeparator: \.isWhitespace).first.map(String.init) == digest else {
             throw WorkbenchError.message(L10n.text("容器附件内容已变化，未插入路径。"))
         }
-        try binding.daemon.validate(binding, cancellation: cancellation)
         let path = RemotePath.join(directory, file.lastPathComponent)
         let result = DockerUploadedAttachments(uploaded: UploadedAttachments(directory: directory, paths: [path], fileCount: 1),
                                               hashes: [path: digest], directories: [directory: [file.lastPathComponent]])
@@ -249,7 +302,6 @@ public struct DockerAttachmentUploader: Sendable {
             try verifyBatch(paths: Array(paths.dropFirst(offset).prefix(8)), directories: Array(directories.dropFirst(offset).prefix(8)),
                             hashes: Array(hashes.dropFirst(offset).prefix(8)), cancellation: cancellation)
         }
-        try binding.daemon.validate(binding, cancellation: cancellation)
     }
     private func verifyBatch(paths: [String], directories: [(key: String, value: Set<String>)], hashes: [(key: String, value: String)], cancellation: CancellationFlag) throws {
         var script = "set -eu\n"
@@ -282,7 +334,6 @@ public struct DockerAttachmentUploader: Sendable {
     }
     public func cleanup(_ directory: String, cancellation: CancellationFlag) throws {
         guard Self.validDirectory(directory) else { throw WorkbenchError.message(L10n.text("拒绝清理非附件目录")) }
-        try binding.daemon.validate(binding, cancellation: cancellation)
         _ = try binding.daemon.execute(binding, script: "test ! -L \"$1\" && rm -rf -- \"$1\"", arguments: [directory], cancellation: cancellation)
     }
     private static func validDirectory(_ directory: String) -> Bool {

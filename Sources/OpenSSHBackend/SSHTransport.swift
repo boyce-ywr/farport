@@ -177,6 +177,9 @@ public final class SSHTransport: @unchecked Sendable {
     public func run(_ host: HostProfile, command: String, cancellation: CancellationFlag = CancellationFlag(), timeout: TimeInterval = 45) throws -> CommandResult {
         try ProcessRunner.run(executable: "/usr/bin/ssh", arguments: options(for: host) + [host.address, command], environment: environment(for: host), cancellation: cancellation, timeout: timeout)
     }
+    public func run(_ host: HostProfile, command: String, input: Data?, cancellation: CancellationFlag, timeout: TimeInterval, outputLimit: Int) throws -> CommandResult {
+        try ProcessRunner.run(executable: "/usr/bin/ssh", arguments: options(for: host) + [host.address, command], environment: environment(for: host), cancellation: cancellation, timeout: timeout, outputLimit: outputLimit, input: input)
+    }
     public func requirePosixShell(_ host: HostProfile, cancellation: CancellationFlag = CancellationFlag()) throws {
         guard try supportsPosixShell(host, cancellation: cancellation) else {
             guard shellLock.withLock({ windowsHosts.contains(connectionDigest(host)) }) else {

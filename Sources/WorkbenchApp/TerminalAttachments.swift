@@ -98,14 +98,19 @@ final class TerminalAttachmentDraft: ObservableObject, Identifiable {
         Task {
             do {
                 let context = try await Task.detached { () -> (String, TmuxTarget?, DockerAttachmentSelection?, DockerAttachmentBinding?) in
-                    if host == nil, let tmux {
-                        let service = TmuxService(transport: transport, host: nil)
+                    if let tmux {
+                        let service = TmuxService(transport: transport, host: host)
                         if try service.attachmentTarget(session: tmux).command == "docker" {
-                            let terminal = try service.localDockerTerminal(session: tmux)
+                            let terminal = try service.dockerTerminal(session: tmux, cancellation: flag)
                             if let remembered, remembered.terminal == terminal, (try? remembered.daemon.validate(remembered, cancellation: flag)) != nil {
                                 return ("", terminal.target, nil, remembered)
                             }
-                            return ("", terminal.target, try DockerAttachmentDaemon.discover(terminal: terminal, cancellation: flag), nil)
+                            let selection = try DockerAttachmentDaemon.discover(terminal: terminal, transport: transport, cancellation: flag)
+                            // 已从原窗格 docker 命令核对出容器时直接使用，不再要求手动选择。
+                            if selection.containers.contains(where: { $0.id == selection.detectedContainerID }) {
+                                return ("", terminal.target, nil, try selection.daemon.confirm(selection.detectedContainerID, terminal: terminal, cancellation: flag))
+                            }
+                            return ("", terminal.target, selection, nil)
                         }
                     }
                     let pane = try tmux.map { try TmuxService(transport: transport, host: host).target(session: $0) }
@@ -116,6 +121,7 @@ final class TerminalAttachmentDraft: ObservableObject, Identifiable {
                 target = context.1
                 directory = context.0
                 dockerBinding = context.3
+                if let binding = context.3 { session.dockerAttachmentBinding = binding }
                 if let selection = context.2 {
                     session.dockerAttachmentBinding = nil
                     containerSelection = selection; preparing = false
@@ -133,7 +139,7 @@ final class TerminalAttachmentDraft: ObservableObject, Identifiable {
         let transport = transport; let flag = cancellation
         do {
             let binding = try await Task.detached {
-                let current = try TmuxService(transport: transport, host: nil).localDockerTerminal(session: tmux)
+                let current = try TmuxService(transport: transport, host: selection.terminal.host).dockerTerminal(session: tmux, cancellation: flag)
                 guard current == selection.terminal else { throw WorkbenchError.message(L10n.text("Docker 进程或原 tmux 窗格已变化，请重新确认容器。")) }
                 return try selection.daemon.confirm(identifier, terminal: current, cancellation: flag)
             }.value
@@ -168,7 +174,7 @@ final class TerminalAttachmentDraft: ObservableObject, Identifiable {
                         DispatchQueue.main.async { guard owner?.disposed == false, owner?.running == true, !flag.isCancelled else { return }; owner?.status = message; owner?.progress = value }
                     }
                     if let binding, let tmux {
-                        guard try TmuxService(transport: transport, host: nil).localDockerTerminal(session: tmux) == binding.terminal else { throw WorkbenchError.message(L10n.text("Docker 进程或原 tmux 窗格已变化，请重新确认容器。")) }
+                        guard try TmuxService(transport: transport, host: binding.terminal.host).dockerTerminal(session: tmux, cancellation: flag) == binding.terminal else { throw WorkbenchError.message(L10n.text("Docker 进程或原 tmux 窗格已变化，请重新确认容器。")) }
                         let uploaded = try DockerAttachmentUploader(binding: binding).upload(files, transport: transport, cancellation: flag, progress: progress)
                         return (uploaded.uploaded, uploaded)
                     }
@@ -232,7 +238,7 @@ final class TerminalAttachmentDraft: ObservableObject, Identifiable {
             }
             let text = try AttachmentReference.text(paths: result.paths)
             if let binding, let tmuxID = session.tmuxID {
-                let service = TmuxService(transport: transport, host: nil)
+                let service = TmuxService(transport: transport, host: binding.terminal.host)
                 try await Task.detached { try service.pasteDocker(text, session: tmuxID, expected: binding.terminal) }.value
             } else if let tmuxID = session.tmuxID, let target {
                 let service = TmuxService(transport: transport, host: session.host)

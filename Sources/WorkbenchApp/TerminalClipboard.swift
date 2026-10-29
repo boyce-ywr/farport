@@ -13,6 +13,7 @@ final class TerminalClipboardState: ObservableObject {
     @Published var hasSelection = false
     var writePolicy: () -> TerminalClipboardWritePolicy = { .ask }
     var readAllowed: () -> Bool = { false }
+    var offerProgramClipboard: (() async -> String?)?
     private var lastPolicy: TerminalClipboardWritePolicy = .ask
     private var lastRead: TimeInterval = -.infinity
     private var prompting = false
@@ -129,7 +130,12 @@ final class TerminalClipboardState: ObservableObject {
                 }
                 guard let data else {
                     if confirmedRecentRemoteCopy() { report(L10n.text("已复制到 Mac 剪贴板")); reportedCopy = true }
-                    else { report(L10n.text("tmux 当前没有可读取的选区；请保持选区后按 ⌘C，或用 Shift 拖选直接复制。"), informational: true) }
+                    else {
+                        report(L10n.text("tmux 当前没有可读取的选区；请保持选区后按 ⌘C，或用 Shift 拖选直接复制。"), informational: true)
+                        if let offer = offerProgramClipboard {
+                            Task { [weak self] in if let message = await offer() { self?.report(message, informational: true) } }
+                        }
+                    }
                     return
                 }
                 guard data.count <= 1024 * 1024, let text = String(data: data, encoding: .utf8), !text.isEmpty else {

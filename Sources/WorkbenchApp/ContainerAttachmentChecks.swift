@@ -10,7 +10,9 @@ enum ContainerAttachmentChecks {
         let label = try ProcessRunner.run(executable: executable, arguments: ["inspect", "--format", "{{index .Config.Labels \"local.sshworkbench.docker-attachments\"}}", identifier]).checked().text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard label == "true" else { throw WorkbenchError.message("拒绝向非测试容器发送附件") }
         let store = workspace.store
-        let service = TmuxService(transport: store.transport, host: nil)
+        let host = environment["SWB_QA_DOCKER_SSH"] == "1" ? store.hosts.first(where: { $0.address == "127.0.0.1" && $0.port == 22 }) : nil
+        if environment["SWB_QA_DOCKER_SSH"] == "1", host == nil { throw WorkbenchError.message("远端容器附件测试仅允许本机回环 SSH") }
+        let service = TmuxService(transport: store.transport, host: host)
         let name = "farport-container-ui-" + UUID().uuidString
         try service.create(name: name)
         let original = store.automaticallyInsertAttachments
@@ -36,7 +38,7 @@ enum ContainerAttachmentChecks {
         let command = launch.map(RemotePath.quote).joined(separator: " ")
         _ = try service.execute("respawn-pane -k -t \(RemotePath.quote(name)) \(RemotePath.quote(command))").checked()
         guard let tmux = try service.sessions().first(where: { $0.name == name }) else { throw WorkbenchError.message("没有容器测试会话") }
-        workspace.attachTmux(nil, session: tmux)
+        workspace.attachTmux(host, session: tmux)
         guard let session = workspace.selectedTerminal else { throw WorkbenchError.message("没有附件终端") }
         try await wait { session.connected && session.terminal.window != nil }
         if interactive {
@@ -63,19 +65,12 @@ enum ContainerAttachmentChecks {
             guard let draft = workspace.attachmentDraft else { throw WorkbenchError.message("没有容器附件草稿") }
             print(String(format: "PERF · 容器附件第%d轮摄取返回 %.3fs", iteration, ProcessInfo.processInfo.systemUptime - started))
             if iteration == 1 {
-                try await wait { draft.containerSelection != nil || draft.failure != nil }
-                guard draft.containerSelection?.detectedContainerID == identifier, draft.result == nil, draft.failure == nil else { throw WorkbenchError.message(draft.failure ?? "未确认前发生上传或未识别目标容器") }
-                if interactive { try await wait { window.attachedSheet != nil } }
-                if let content = window.attachedSheet?.contentView, let bitmap = content.bitmapImageRepForCachingDisplay(in: content.bounds) {
+                try await wait { draft.dockerBinding != nil || draft.failure != nil }
+                guard draft.dockerBinding?.container.id == identifier, draft.containerSelection == nil, !draft.showContainerPicker, draft.failure == nil else { throw WorkbenchError.message(draft.failure ?? "已识别原窗格容器时仍要求手动选择") }
+                if let content = session.terminal.window?.contentView, let bitmap = content.bitmapImageRepForCachingDisplay(in: content.bounds) {
                     content.cacheDisplay(in: content.bounds, to: bitmap)
                     try bitmap.representation(using: .png, properties: [:])?.write(to: output)
                 }
-                if interactive {
-                    guard let sheet = window.attachedSheet,
-                          let confirm = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
-                                                         windowNumber: sheet.windowNumber, context: nil, characters: "\r", charactersIgnoringModifiers: "\r", isARepeat: false, keyCode: 36) else { throw WorkbenchError.message("没有容器确认弹窗") }
-                    NSApp.postEvent(confirm, atStart: false)
-                } else { await draft.chooseContainer(identifier) }
             }
             if !interactive {
                 try await wait { (!draft.busy && draft.result != nil) || draft.failure != nil }
@@ -97,18 +92,19 @@ enum ContainerAttachmentChecks {
             }
             await draft.deleteUploaded(); draft.dispose(); workspace.attachmentDraft = nil
         }
+        let previousBinding = session.dockerAttachmentBinding
         _ = try service.execute("respawn-pane -k -t \(RemotePath.quote(name)) \(RemotePath.quote(command))").checked()
         try await wait { (try? service.execute("capture-pane -p -t \(RemotePath.quote(name))").checked().text.contains("FARPORT_CONTAINER_READY")) == true }
         workspace.requestAttachments(session: session, payload: TerminalAttachmentPayload(files: [file], temporaryDirectory: nil))
         guard let changed = workspace.attachmentDraft else { throw WorkbenchError.message("没有重连后的容器草稿") }
-        try await wait { changed.containerSelection != nil || changed.failure != nil }
-        guard changed.containerSelection != nil, changed.result == nil, session.dockerAttachmentBinding == nil else { throw WorkbenchError.message("新的Docker进程复用了旧绑定") }
-        changed.cancel()
-        guard changed.result == nil, !changed.inserted, !changed.showContainerPicker else { throw WorkbenchError.message("取消选择仍产生了容器发送") }
-        try await Task.sleep(for: .milliseconds(300))
-        try await wait { session.terminal.window?.attachedSheet == nil }
+        try await wait { changed.dockerBinding != nil || changed.failure != nil }
+        guard let rebound = changed.dockerBinding, rebound.terminal != previousBinding?.terminal, rebound.container.id == identifier, !changed.showContainerPicker else { throw WorkbenchError.message(changed.failure ?? "新的Docker进程复用了旧绑定") }
+        try await wait { (interactive ? changed.inserted : changed.result != nil) || changed.failure != nil }
+        guard changed.failure == nil, session.dockerAttachmentBinding?.terminal == rebound.terminal else { throw WorkbenchError.message(changed.failure ?? "新的Docker进程未完成自动发送") }
+        await changed.deleteUploaded()
+        guard session.terminal.window?.attachedSheet == nil else { throw WorkbenchError.message("自动识别容器时不应弹出选择框") }
         changed.dispose(); workspace.attachmentDraft = nil
-        print(interactive ? "PASS · 本机tmux Docker真实Cmd+V、首次确认界面、后续绑定复用、非root读回、容器路径只插入一次且不自动回车"
+        print(interactive ? "PASS · \(host == nil ? "本机" : "SSH远端")tmux Docker真实Cmd+V、自动识别原窗格容器免选择、后续绑定复用、非root读回、容器路径只插入一次且不自动回车"
               : "PASS · Docker附件草稿准备/确认/绑定复用/手动插入/清理完整链，非root容器只收到一次路径；不代表界面点击或自动焦点验收")
         fflush(stdout)
     }

@@ -10,9 +10,15 @@ public struct LocalDockerTerminal: Equatable, Sendable {
     public let executable: String
     public let invocation: DockerTerminalCommand
     public let environment: [String: String]
+    /// 远端 tmux 窗格中的 docker 客户端：所在 SSH 主机与 ps 报告的启动时间；本机为 nil 与空串。
+    public var host: HostProfile? = nil
+    public var remoteStarted = ""
 }
 
 extension TmuxService {
+    public func dockerTerminal(session: String, cancellation: CancellationFlag = CancellationFlag()) throws -> LocalDockerTerminal {
+        host == nil ? try localDockerTerminal(session: session) : try remoteDockerTerminal(session: session, cancellation: cancellation)
+    }
     public func localDockerTerminal(session: String) throws -> LocalDockerTerminal {
         func unavailable() -> Error { WorkbenchError.message(L10n.text("无法确认原 tmux 窗格的 Docker 进程，未发送附件。")) }
         guard host == nil else { throw unavailable() }
@@ -65,5 +71,58 @@ extension TmuxService {
         return LocalDockerTerminal(target: target, foregroundPID: identifier, startedSeconds: info.pbi_start_tvsec,
                                    startedMicroseconds: info.pbi_start_tvusec, executable: executable,
                                    invocation: try DockerTerminalCommand(arguments: arguments), environment: environment)
+    }
+}
+
+extension TmuxService {
+    /// 远端窗格前台进程探测（一次 SSH）：前后两次核对 tmux 窗格；Linux 读 /proc，macOS 用 ps。参数无法解析时，仅在只有一个运行中容器时使用它。
+    private func remoteDockerProbe(session: String) throws -> String {
+        let tmux = try prefix
+        return """
+        farport_format='#{pane_id}\t#{pane_pid}\t#{pane_current_command}\t#{pane_current_path}\t#{pane_in_mode}\t#{pane_dead}'
+        before=$(\(tmux) display-message -p -t \(RemotePath.quote(session)) "$farport_format") || exit 4
+        pane=$(printf '%s\\n' "$before" | cut -f2)
+        fg=$(ps -o tpgid= -p "$pane" 2>/dev/null | tr -d ' ')
+        case $fg in ''|*[!0-9]*|0) exit 3;; esac
+        [ "$(ps -o uid= -p "$fg" | tr -d ' ')" = "$(id -u)" ] || exit 3
+        started=$(ps -o lstart= -p "$fg" | tr -s ' ')
+        if [ -r "/proc/$fg/cmdline" ]; then
+          exe=$(readlink "/proc/$fg/exe" 2>/dev/null || :); mode=nul
+          args=$(base64 < "/proc/$fg/cmdline" | tr -d '\\n')
+          environment=$( (tr '\\0' '\\n' < "/proc/$fg/environ" | grep -E '^DOCKER_(HOST|CONTEXT|CONFIG)=' | base64 | tr -d '\\n') 2>/dev/null || :)
+        else
+          exe=$(ps -o comm= -p "$fg"); mode=space
+          args=$(ps -ww -o args= -p "$fg" | base64 | tr -d '\\n')
+          environment=
+        fi
+        \(RemoteDockerHost.path)
+        case $exe in /*) ;; *) exe=$(command -v "${exe##*/}" 2>/dev/null || :);; esac
+        [ "$(\(tmux) display-message -p -t \(RemotePath.quote(session)) "$farport_format")" = "$before" ] || exit 5
+        printf '%s\\n%s\\n%s\\n%s\\n%s\\n%s\\n%s\\n' "$before" "$fg" "$started" "$exe" "$mode" "$args" "$environment"
+        """
+    }
+    public func remoteDockerTerminal(session: String, cancellation: CancellationFlag = CancellationFlag()) throws -> LocalDockerTerminal {
+        func unavailable() -> Error { WorkbenchError.message(L10n.text("无法确认远端 tmux 窗格的 Docker 进程，未发送附件。")) }
+        guard let host else { throw unavailable() }
+        let result = try runShell(try remoteDockerProbe(session: session), cancellation: cancellation, timeout: 15)
+        let lines = result.text.components(separatedBy: "\n")
+        guard result.status == 0, lines.count >= 7 else { throw unavailable() }
+        let pane = lines[0].components(separatedBy: "\t")
+        guard pane.count == 6, pane[2] == "docker", pane[4] == "0", pane[5] == "0", let identifier = Int32(lines[1]), identifier > 0, lines[3].hasPrefix("/"),
+              (lines[3] as NSString).lastPathComponent == "docker", let raw = Data(base64Encoded: lines[5]),
+              let text = String(data: raw, encoding: .utf8) else { throw unavailable() }
+        let target = TmuxTarget(paneID: pane[0], processID: pane[1], command: pane[2], directory: pane[3])
+        let arguments = lines[4] == "nul" ? text.split(separator: "\0").map(String.init) : text.split(whereSeparator: \.isWhitespace).map(String.init)
+        var environment: [String: String] = [:]
+        for line in (Data(base64Encoded: lines[6]).flatMap { String(data: $0, encoding: .utf8) } ?? "").split(separator: "\n") {
+            guard let separator = line.firstIndex(of: "=") else { continue }
+            environment[String(line[..<separator])] = String(line[line.index(after: separator)...])
+        }
+        let invocation: DockerTerminalCommand
+        if let parsed = try? DockerTerminalCommand(arguments: arguments) { invocation = parsed }
+        else if case let containers = try transport.run(host, command: "/bin/sh -c " + RemotePath.quote(RemoteDockerHost.path + "; exec " + RemotePath.quote(lines[3]) + " ps -q --no-trunc"), cancellation: cancellation, timeout: 15).checked().text.split(separator: "\n").map(String.init), containers.count == 1 { invocation = try DockerTerminalCommand(arguments: ["docker", "exec", "-it", containers[0]]) }
+        else { throw WorkbenchError.message(L10n.text("无法从远端窗格的 docker 命令识别目标容器，且运行中的容器不止一个，未发送附件。")) }
+        return LocalDockerTerminal(target: target, foregroundPID: identifier, startedSeconds: 0, startedMicroseconds: 0, executable: lines[3],
+                                   invocation: invocation, environment: environment, host: host, remoteStarted: lines[2])
     }
 }

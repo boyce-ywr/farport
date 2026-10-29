@@ -138,7 +138,68 @@ enum TmuxCopyChecks {
         if host == nil { print("PASS · 鼠标松开触发OSC52后，超过近期同步提示期限仍能显式复制同一快照") }
         try await checkLateResults()
         try await checkDragSnapshots()
+        try await checkProgramBuffers(terminal: terminal, window: window, service: service, sessionID: sessionID, host: host, tmux: tmux)
         print("PASS · \(host == nil ? "本机" : "隔离 SSH") 真实 tmux 选区关闭 OSC52 后 ⌘C 仍复制，保留选区、不取旧缓冲区、无内部缓冲残留")
+    }
+    /// 模拟 Claude Code 等自行处理鼠标选区的程序：选区不在 tmux 复制模式，而是由程序写入新的 tmux 缓冲区（load-buffer 或 OSC52）。
+    private static func checkProgramBuffers(terminal: SafeTerminalView, window: NSWindow, service: TmuxService, sessionID: String, host: HostProfile?, tmux: ([String]) throws -> String) async throws {
+        let board = NSPasteboard.general
+        terminal.snapshotRemoteBuffers = { Task.detached { try? service.bufferNames() } }
+        terminal.copyRemoteSelection = { cancellation in
+            let existing = await terminal.remoteBufferSnapshot?.value ?? nil
+            return try await Task.detached { try service.copySelection(session: sessionID, newBuffersSince: existing, cancellation: cancellation) }.value
+        }
+        defer { terminal.copyRemoteSelection = { cancellation in try await Task.detached { try service.copySelection(session: sessionID, cancellation: cancellation) }.value } }
+        func click() throws {
+            guard terminal.getTerminal().mouseMode != .off else { throw WorkbenchError.message("夹具 tmux 未开启鼠标") }
+            let point = terminal.convert(NSPoint(x: 5, y: terminal.bounds.height - 5), to: nil)
+            for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
+                let event = NSEvent.mouseEvent(with: type, location: point, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                                               windowNumber: window.windowNumber, context: nil, eventNumber: 1, clickCount: 1, pressure: type == .leftMouseUp ? 0 : 1)!
+                if type == .leftMouseDown { terminal.mouseDown(with: event) } else { terminal.mouseUp(with: event) }
+            }
+        }
+        func copied() async throws -> String? {
+            try copy(terminal)
+            try await wait { terminal.clipboard.message != L10n.text("正在复制 tmux 选区…") }
+            return board.string(forType: .string)
+        }
+        let side = host == nil ? "本机" : "SSH"
+        _ = try? tmux(["send-keys", "-t", "copy-check", "-X", "cancel"])
+        _ = try tmux(["set-buffer", "STALE_BEFORE_CLICK"])
+        try click()
+        _ = await terminal.remoteBufferSnapshot?.value
+        board.clearContents(); board.setString("KEEP_NO_PROGRAM_COPY", forType: .string)
+        guard try await copied() == "KEEP_NO_PROGRAM_COPY" else { throw WorkbenchError.message("\(side) 程序未写入新缓冲区时误取了点击前的旧缓冲区") }
+        let program = "PROGRAM_LOAD_BUFFER_中文_" + UUID().uuidString
+        try click()
+        _ = await terminal.remoteBufferSnapshot?.value
+        _ = try tmux(["set-buffer", program])
+        board.clearContents(); board.setString("KEEP_BEFORE_PROGRAM", forType: .string)
+        guard try await copied() == program else { throw WorkbenchError.message("\(side) 程序自行选区并写入 tmux 缓冲区后 ⌘C 未复制：\(terminal.clipboard.message)") }
+        print("PASS · \(side) 程序自管鼠标选区（如 Claude Code 的 load-buffer）⌘C 复制本次新缓冲区，不取点击前的旧缓冲区")
+        let osc = "PROGRAM_OSC52_" + UUID().uuidString
+        let emit = "sleep 1; printf '\\033]52;c;%s\\007' " + RemotePath.quote(Data(osc.utf8).base64EncodedString()) + "; sleep 120"
+        for accepted in [false, true] {
+            _ = try tmux(["set-option", "-s", "set-clipboard", accepted ? "on" : "external"])
+            try click()
+            _ = await terminal.remoteBufferSnapshot?.value
+            _ = try tmux(["respawn-pane", "-k", "-t", "copy-check", emit])
+            try await Task.sleep(for: .milliseconds(1600))
+            board.clearContents(); board.setString("KEEP_OSC52", forType: .string)
+            let result = try await copied()
+            if accepted { guard result == osc else { throw WorkbenchError.message("\(side) set-clipboard on 时窗格程序 OSC52 未能经 ⌘C 复制：\(result ?? "nil")") } }
+            else { guard result == "KEEP_OSC52" else { throw WorkbenchError.message("\(side) set-clipboard external 时不应凭空复制") } }
+        }
+        print("PASS · \(side) 容器内程序（无 TMUX 环境）只发 OSC52：external 时如实无内容，set-clipboard on 后 ⌘C 复制成功")
+        _ = try tmux(["set-option", "-s", "set-clipboard", "external"])
+        _ = try tmux(["respawn-pane", "-k", "-t", "copy-check", "if [ \"$(uname)\" = Darwin ]; then PATH=\"$PATH:/usr/local/bin:/opt/homebrew/bin:$HOME/.local/bin\" exec docker run --rm --pull=never --network none --label local.sshworkbench.docker-attachments=true --entrypoint /bin/sleep ssh-workbench-test:local 30; else d=$(mktemp -d); cp \"$(command -v sleep)\" \"$d/docker\"; exec \"$d/docker\" 120; fi"])
+        try await wait { (try? tmux(["display-message", "-p", "-t", "copy-check", "#{pane_current_command}"])) == "docker" }
+        let relay = try service.clipboardRelay(session: sessionID)
+        guard relay.nested, !relay.accepted else { throw WorkbenchError.message("\(side) 未识别容器窗格的 OSC52 被 tmux 拦截") }
+        try service.acceptProgramClipboard()
+        guard try tmux(["show-options", "-sv", "set-clipboard"]) == "on", try service.clipboardRelay(session: sessionID).accepted else { throw WorkbenchError.message("\(side) 未能开启 tmux 接收程序复制") }
+        print("PASS · \(side) 识别 docker 窗格的 OSC52 被 set-clipboard 拦截，并可按确认开启")
     }
     private static func checkDragSnapshots() async throws {
         let board = NSPasteboard.general
