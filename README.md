@@ -71,13 +71,13 @@ HTML 可引用同级目录或子目录中的图片、CSS、SVG、字体和媒体
 
 **旧版 0.1.8 构建 9 用户请更新**：当前版本包含预览服务闪退修复。
 
-从 [GitHub Releases](https://github.com/boyce-ywr/farport/releases/latest) 下载稳定版。**当前正式版为 0.1.18（24）**，支持按实时 tmux 会话数量新建或选择工作区，修复松开鼠标后的复制，并加速 Docker 图片附件插入；验证范围及签名、安装限制见 [版本说明](docs/releases/0.1.18.md)。
+从 [GitHub Releases](https://github.com/boyce-ywr/farport/releases/latest) 下载稳定版。**当前正式版为 0.1.19（25）**，支持远端 tmux 中 Docker 容器的截图与附件粘贴（识别出容器时免选择），修复 Claude Code 等全屏程序与容器内程序的复制；验证范围及签名、安装限制见 [版本说明](docs/releases/0.1.19.md)。
 
 | 你的 Mac | 下载 |
 | --- | --- |
-| Apple Silicon（M 系列） | [Apple Silicon 版](https://github.com/boyce-ywr/farport/releases/download/v0.1.18/Farport-0.1.18-arm64.dmg) |
-| Intel 芯片 | [Intel 版](https://github.com/boyce-ywr/farport/releases/download/v0.1.18/Farport-0.1.18-x86_64.dmg) |
-| 不确定芯片，或需要两种架构 | [Universal 通用版](https://github.com/boyce-ywr/farport/releases/download/v0.1.18/Farport-0.1.18-universal.dmg) |
+| Apple Silicon（M 系列） | [Apple Silicon 版](https://github.com/boyce-ywr/farport/releases/download/v0.1.19/Farport-0.1.19-arm64.dmg) |
+| Intel 芯片 | [Intel 版](https://github.com/boyce-ywr/farport/releases/download/v0.1.19/Farport-0.1.19-x86_64.dmg) |
+| 不确定芯片，或需要两种架构 | [Universal 通用版](https://github.com/boyce-ywr/farport/releases/download/v0.1.19/Farport-0.1.19-universal.dmg) |
 
 1. 打开 DMG，将 **Farport.app** 拖入 **Applications（应用程序）**。
 2. 从“应用程序”打开 Farport。升级前请先保存工作并退出旧版。
@@ -119,6 +119,8 @@ HTML 可引用同级目录或子目录中的图片、CSS、SVG、字体和媒体
 从 0.1.17 起支持 **Farport 管理的 tmux 当前选区主动复制**：无本地选区时，⌘C、复制按钮或右键复制会尝试读取当前 tmux 选区，不再只等待远端同步。不会退出复制模式，不会拿历史缓冲区冒充当前选择；输入、窗口、连接或剪贴板变化时放弃迟到结果。普通终端内手动进入的 tmux、已经取消的远端选区，以及无法安全独立读取的旧 tmux，仍请使用 Shift 拖选。
 
 0.1.18 进一步支持 **正常鼠标拖选松开后再复制**，只使用本次拖选快照，不猜测历史缓冲；同时减少 Docker 图片附件的重复暂存与命令开销，保留内容校验和插入前目标复核。复现、性能对比及边界见 [问题记录](docs/issues/2026-10-28-tmux鼠标松开复制与Docker附件延迟.md)。
+
+0.1.19 支持 **程序自管选区的复制**：Claude Code 等全屏程序自己处理鼠标选区并写入 tmux 缓冲区时，⌘C 读取本次按下鼠标后新建的缓冲区；容器内程序的 OSC52 被 tmux 拦截时，经确认为当前 tmux 服务开启接收。远端 tmux 中运行 docker 的窗格也能直接粘贴截图和附件。见 [问题记录](docs/issues/2026-10-29-SSH-tmux-Docker复制与附件失效.md)。
 
 **为什么程序显示 Copied，粘贴却不对？** 程序自己的提示不代表 Mac 已接收内容。远端写入剪贴板需授权；拒绝或后台请求会显示原因，可在分栏剪贴板菜单中选择“允许并复制刚才的内容”。授权仅针对当前连接，重连后重新确认；Mac 剪贴板读取仍禁止。
 
