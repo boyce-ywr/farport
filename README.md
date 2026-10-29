@@ -71,13 +71,13 @@ HTML 可引用同级目录或子目录中的图片、CSS、SVG、字体和媒体
 
 **旧版 0.1.8 构建 9 用户请更新**：当前版本包含预览服务闪退修复。
 
-从 [GitHub Releases](https://github.com/boyce-ywr/farport/releases/latest) 下载稳定版。**当前正式版为 0.1.19（25）**，支持远端 tmux 中 Docker 容器的截图与附件粘贴（识别出容器时免选择），修复 Claude Code 等全屏程序与容器内程序的复制；验证范围及签名、安装限制见 [版本说明](docs/releases/0.1.19.md)。
+从 [GitHub Releases](https://github.com/boyce-ywr/farport/releases/latest) 下载稳定版。**当前正式版为 0.1.20（26）**，修复 Shift 拖选无法取消和沿用旧起点，并缩短粘贴图片时“正在确认目标”的等待；0.1.19 起支持远端 tmux 中 Docker 容器的截图粘贴与全屏程序复制。验证范围及签名、安装限制见 [版本说明](docs/releases/0.1.20.md)。
 
 | 你的 Mac | 下载 |
 | --- | --- |
-| Apple Silicon（M 系列） | [Apple Silicon 版](https://github.com/boyce-ywr/farport/releases/download/v0.1.19/Farport-0.1.19-arm64.dmg) |
-| Intel 芯片 | [Intel 版](https://github.com/boyce-ywr/farport/releases/download/v0.1.19/Farport-0.1.19-x86_64.dmg) |
-| 不确定芯片，或需要两种架构 | [Universal 通用版](https://github.com/boyce-ywr/farport/releases/download/v0.1.19/Farport-0.1.19-universal.dmg) |
+| Apple Silicon（M 系列） | [Apple Silicon 版](https://github.com/boyce-ywr/farport/releases/download/v0.1.20/Farport-0.1.20-arm64.dmg) |
+| Intel 芯片 | [Intel 版](https://github.com/boyce-ywr/farport/releases/download/v0.1.20/Farport-0.1.20-x86_64.dmg) |
+| 不确定芯片，或需要两种架构 | [Universal 通用版](https://github.com/boyce-ywr/farport/releases/download/v0.1.20/Farport-0.1.20-universal.dmg) |
 
 1. 打开 DMG，将 **Farport.app** 拖入 **Applications（应用程序）**。
 2. 从“应用程序”打开 Farport。升级前请先保存工作并退出旧版。
