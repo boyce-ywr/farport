@@ -8,7 +8,7 @@ struct TerminalWorkspace: View {
     @ViewState private var search = ""
     @FocusState private var searchFocused: Bool
     var body: some View {
-        if workspace.sessions.isEmpty {
+        if workspace.sessions.isEmpty && workspace.desktops.isEmpty {
             VStack(spacing: 0) {
                 EmptyWorkspace(symbol: "terminal", title: L10n.text("连接工作，保持心流。"), detail: L10n.text("本机与 SSH，共享同一套原生终端体验。\n多标签、分屏与搜索，让工作随时继续。"), action: workspace.host == nil ? L10n.text("打开本机终端") : L10n.text("打开 SSH 终端")) {
                     workspace.newTerminal()
@@ -58,6 +58,11 @@ struct TerminalWorkspace: View {
                     EmptyWorkspace(symbol: "terminal", title: L10n.text("此主机尚未打开终端"), detail: L10n.text("选择终端标签，或打开一个新的终端。"), action: workspace.host == nil ? L10n.text("打开本机终端") : L10n.text("打开 SSH 终端")) {
                         if let host = workspace.host { workspace.connectPreferred(host) } else { workspace.newTerminal() }
                     }
+                }
+            }.overlay {
+                if let desktop = workspace.selectedDesktop {
+                    RemoteDesktopTab(session: desktop).id(desktop.id).padding(4).background(Color(nsColor: .windowBackgroundColor))
+                        .overlay { Rectangle().strokeBorder(Color.teal.opacity(0.6), lineWidth: 1).padding(4).allowsHitTesting(false) }
                 }
             }
         }

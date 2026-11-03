@@ -110,6 +110,7 @@ final class AppStore: ObservableObject {
         hosts.removeAll { $0.id == profile.id }
         do { try paths.save(hosts, to: paths.hosts) } catch { errorMessage = error.localizedDescription }
         forgetCredentials(profile)
+        RemoteDesktopCredentialStore.deleteAll(host: profile.id)
     }
     func rememberSession(_ host: HostProfile, session: String) {
         guard let index = hosts.firstIndex(where: { $0.id == host.id }) else { return }

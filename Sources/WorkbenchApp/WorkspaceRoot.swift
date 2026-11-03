@@ -48,7 +48,7 @@ struct WorkspaceRoot: View {
         .sheet(item: $workspace.preferredTmuxConnection) { request in
             PreferredTmuxConnectionView(request: request, cancel: { workspace.cancelPreferredTmuxConnection() })
         }
-        .sheet(item: $workspace.screenSharingHost) { host in ScreenSharingView(host: host, store: store) }
+        .sheet(item: $workspace.screenSharingHost) { host in ScreenSharingView(host: host, store: store, workspace: workspace) }
         .sheet(item: $workspace.webServiceHost) { host in WebServicesView(host: host, store: store) }
         .background(WindowTitlebar().frame(width: 0, height: 0))
         .sheet(item: $editingHost) { draft in
@@ -295,6 +295,11 @@ struct WorkspaceRoot: View {
         if screen == "terminal-paste" {
             do { try await TerminalPasteChecks.run(store: store, output: URL(fileURLWithPath: output)); NSApp.terminate(nil) }
             catch { fputs("FAIL · \(error.localizedDescription)\n", stderr); exit(1) }
+            return
+        }
+        if screen == "remote-desktop" {
+            do { try await RemoteDesktopChecks.run(workspace: workspace); NSApp.terminate(nil) }
+            catch { fputs("FAIL · \(error.localizedDescription)\n", stderr); workspace.desktops.forEach { $0.disconnect() }; exit(1) }
             return
         }
         if screen == "tmux-copy" {

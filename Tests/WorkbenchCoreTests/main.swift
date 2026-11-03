@@ -16,6 +16,8 @@ func rejects(_ message: String, _ operation: () throws -> Void) throws {
 }
 
 do {
+    try checkRemoteDesktopMath()
+    if let index = CommandLine.arguments.firstIndex(of: "--rfb-check") { try checkRemoteDesktopLive(arguments: Array(CommandLine.arguments.dropFirst(index + 1))); print("PASS · \(checks) 项远程桌面协议断言"); exit(0) }
     if CommandLine.arguments.contains("--html-resources-check") { try checkPreviewResourceConnections(); try checkPreviewServer(); print("PASS · \(checks) 项 HTML 资源断言"); exit(0) }
     if CommandLine.arguments.contains("--file-move-check") { try checkTransferMoves(); print("PASS · \(checks) 项文件移动断言"); exit(0) }
     if let index = CommandLine.arguments.firstIndex(of: "--file-move-ssh"), CommandLine.arguments.indices.contains(index + 1) { try checkTransferMovesSSH(root: CommandLine.arguments[index + 1]); exit(0) }

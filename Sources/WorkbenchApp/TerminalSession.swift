@@ -640,11 +640,12 @@ final class Workspace: ObservableObject {
             if page != oldValue { focusGeneration &+= 1; cancelPreferredTmuxConnection() }
             if page == .files, oldValue != .files, fileSource == nil { followCurrentTerminalFiles() }
             if page == .terminal { alignTerminalWithHost() }
+            updateDesktopVisibility()
         }
     }
     @Published var sessions: [TerminalSession] = []
     @Published var layout = TerminalLayout() {
-        didSet { if layout.focused != oldValue.focused { focusGeneration &+= 1 }; rememberWorkspace() }
+        didSet { if layout.focused != oldValue.focused { focusGeneration &+= 1; selectedDesktopID = nil }; rememberWorkspace() }
     }
     let tabDragScope = UUID()
     @Published var browsingLocalFiles = false
@@ -672,6 +673,10 @@ final class Workspace: ObservableObject {
     @Published var showAgentSessions = false
     @Published var preferredTmuxConnection: PreferredTmuxConnection?
     @Published var screenSharingHost: HostProfile?
+    /// 内嵌远程桌面会话：与终端共用标签栏，但不参与终端分栏布局。
+    @Published var desktops: [RemoteDesktopSession] = []
+    @Published var selectedDesktopID: UUID? { didSet { updateDesktopVisibility() } }
+    var selectedDesktop: RemoteDesktopSession? { desktops.first { $0.id == selectedDesktopID } }
     @Published var webServiceHost: HostProfile?
     @Published var followTerminalDirectory = false
     var savedWorkspaceID = UUID()
@@ -955,6 +960,7 @@ final class Workspace: ObservableObject {
     }
     func selectTerminal(_ session: TerminalSession) {
         cancelPreferredTmuxConnection()
+        selectedDesktopID = nil
         layout.select(session.id); browsingLocalFiles = session.isLocal; selectedHostID = session.host?.id
         fileSource = .terminal(session.id)
         session.terminal.window?.makeFirstResponder(session.terminal)
@@ -1044,5 +1050,43 @@ enum WorkspacePage: String, CaseIterable {
     var title: String { L10n.key(rawValue) }
     var symbol: String {
         switch self { case .terminal: return "terminal"; case .tmux: return "square.stack.3d.up"; case .files: return "folder"; case .transfers: return "arrow.left.arrow.right"; case .tunnels: return "point.3.connected.trianglepath.dotted"; case .monitor: return "waveform.path.ecg" }
+    }
+}
+
+extension Workspace {
+    func openDesktop(host: HostProfile, endpoint: ScreenSharingEndpoint, throughSSH: Bool) {
+        let session = RemoteDesktopSession(host: host, endpoint: endpoint, throughSSH: throughSSH, transport: store.transport)
+        session.onClose = { [weak self, weak session] in if let self, let session { self.removeDesktop(session) } }
+        session.onLayoutChange = { [weak self] in self?.updateDesktopVisibility() }
+        RemoteDesktopWindows.shared.systemFallback = { [weak self] desktop in self?.openSystemScreenSharing(desktop) }
+        RemoteDesktopWindows.shared.register(session)
+        session.rememberPreferences()
+        desktops.append(session)
+        page = .terminal; selectedDesktopID = session.id
+        session.connect()
+        DispatchQueue.main.async { session.view.window?.makeFirstResponder(session.view) }
+    }
+    func chooseDesktop(_ session: RemoteDesktopSession) {
+        page = .terminal; selectedDesktopID = session.id
+        if session.poppedOut { RemoteDesktopWindows.shared.show(session) }
+        else { DispatchQueue.main.async { session.view.window?.makeFirstResponder(session.view) } }
+    }
+    func closeDesktop(_ session: RemoteDesktopSession) { session.close() }
+    private func removeDesktop(_ session: RemoteDesktopSession) {
+        RemoteDesktopWindows.shared.remove(session)
+        desktops.removeAll { $0.id == session.id }
+        if selectedDesktopID == session.id { selectedDesktopID = nil; if let terminal = selectedTerminal { selectTerminal(terminal) } }
+    }
+    /// 只有正在显示（当前标签或独立窗口）的桌面请求画面更新，其余暂停以节省带宽。
+    func updateDesktopVisibility() {
+        for desktop in desktops { desktop.setVisible(desktop.poppedOut || (page == .terminal && selectedDesktopID == desktop.id)) }
+    }
+    /// 备用：用系统屏幕共享打开（沿用原有 SSH 通道实现）。
+    func openSystemScreenSharing(_ desktop: RemoteDesktopSession) {
+        do {
+            store.screenSharingSessions.removeAll { !$0.running }
+            let session = try ScreenSharingSession(host: desktop.host, endpoint: desktop.endpoint, throughSSH: desktop.throughSSH, transport: store.transport)
+            store.screenSharingSessions.append(session)
+        } catch { desktop.show(error.localizedDescription) }
     }
 }

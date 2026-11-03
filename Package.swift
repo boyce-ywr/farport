@@ -18,11 +18,12 @@ let package = Package(
     targets: [
         .target(name: "WorkbenchCore", resources: [.copy("Resources/en.json")]),
         .target(name: "OpenSSHBackend", dependencies: ["WorkbenchCore"], resources: [.copy("Resources")]),
-        .executableTarget(name: "WorkbenchApp", dependencies: ["WorkbenchCore", "OpenSSHBackend", .product(name: "SwiftTerm", package: "swiftterm")]),
+        .target(name: "RemoteDesktop", dependencies: ["WorkbenchCore"], linkerSettings: [.linkedLibrary("z")]),
+        .executableTarget(name: "WorkbenchApp", dependencies: ["WorkbenchCore", "OpenSSHBackend", "RemoteDesktop", .product(name: "SwiftTerm", package: "swiftterm")]),
         .executableTarget(name: "WorkbenchAskpass", dependencies: ["WorkbenchCore"]),
         .executableTarget(name: "WorkbenchCheck", dependencies: ["WorkbenchCore", "OpenSSHBackend"]),
         .executableTarget(name: "WorkbenchAttachmentCheck", dependencies: ["WorkbenchCore", "OpenSSHBackend"]),
-        .executableTarget(name: "WorkbenchCoreTests", dependencies: ["WorkbenchCore", "OpenSSHBackend"], path: "Tests/WorkbenchCoreTests", exclude: ["agent_session_listing_checks.py", "docker_engine_identity_fixture.py"])
+        .executableTarget(name: "WorkbenchCoreTests", dependencies: ["WorkbenchCore", "OpenSSHBackend", "RemoteDesktop"], path: "Tests/WorkbenchCoreTests", exclude: ["agent_session_listing_checks.py", "docker_engine_identity_fixture.py"])
     ],
     swiftLanguageModes: [.v5]
 )

@@ -15,7 +15,7 @@ struct SessionTabs: View {
                         ForEach(displayedSessions) { session in
                             let tab = workspace.page == .files ? nil : workspace.layout.tab(containing: session.id)
                             let identifier = tab?.id ?? session.id
-                            let selected = workspace.page == .files ? workspace.activeTabID == session.id : workspace.layout.selectedTabID == identifier
+                            let selected = workspace.page == .files ? workspace.activeTabID == session.id : workspace.layout.selectedTabID == identifier && workspace.selectedDesktopID == nil
                             let markColor = (workspace.store.hosts.first(where: { $0.id == session.host?.id }) ?? session.host)?.markColor ?? .teal
                             HStack(spacing: 0) {
                                 Button { if let tab { workspace.chooseTerminalTab(tab.id) } else { workspace.chooseTab(session) } } label: {
@@ -52,6 +52,9 @@ struct SessionTabs: View {
                                     }
                                 }
                         }
+                        if workspace.page != .files {
+                            ForEach(workspace.desktops) { desktop in RemoteDesktopTabButton(desktop: desktop, workspace: workspace).id(desktop.id) }
+                        }
                     }
                 }.onChange(of: workspace.page == .files ? workspace.activeTabID : workspace.layout.selectedTabID) { _, identifier in if let identifier { reader.scrollTo(identifier, anchor: .center) } }
                     .onChange(of: workspace.layout.tabs.map(\.id)) { _, _ in if let identifier = workspace.page == .files ? workspace.activeTabID : workspace.layout.selectedTabID { reader.scrollTo(identifier, anchor: .center) } }
@@ -66,6 +69,10 @@ struct SessionTabs: View {
                 Divider()
                 Button(L10n.text("左右分栏 · ⌘D")) { workspace.newTerminal(split: true) }
                 Button(L10n.text("上下分栏 · ⌘⇧D")) { workspace.newTerminal(split: true, axis: .topBottom) }
+                if let host = workspace.host {
+                    Divider()
+                    Button(L10n.text("打开 \(host.name) 的远程桌面…")) { workspace.screenSharingHost = host }
+                }
             } label: { Image(systemName: "plus").frame(width: 28, height: 36) }.menuStyle(.borderlessButton).frame(width: 30)
         }.padding(.horizontal, 10).padding(.vertical, 3)
             .onChange(of: workspace.page) { _, _ in pointer.dragging = nil; pointer.target = nil }
@@ -128,5 +135,37 @@ struct FileSourceBar: View {
             } label: { Label(L10n.text("切换文件来源"), systemImage: "arrow.left.arrow.right") }.menuStyle(.borderlessButton).frame(maxWidth: 150)
             Button(L10n.text("回到对应终端")) { workspace.openFileSourceTerminal() }.disabled(!workspace.fileSourceAvailable)
         }.font(.system(size: 11)).padding(.horizontal, 12).padding(.vertical, 6).background(.teal.opacity(0.05))
+    }
+}
+
+/// 远程桌面标签：与终端标签同一行，显示连接状态。
+private struct RemoteDesktopTabButton: View {
+    @ObservedObject var desktop: RemoteDesktopSession
+    @ObservedObject var workspace: Workspace
+    var body: some View {
+        let selected = workspace.selectedDesktopID == desktop.id
+        let markColor = (workspace.store.hosts.first(where: { $0.id == desktop.host.id }) ?? desktop.host).markColor
+        HStack(spacing: 0) {
+            Button { workspace.chooseDesktop(desktop) } label: {
+                HStack(spacing: 7) {
+                    Image(systemName: desktop.poppedOut ? "macwindow.on.rectangle" : "display").foregroundStyle(markColor)
+                    Text(desktop.title).lineLimit(1).truncationMode(.middle)
+                    Circle().fill(desktop.phase == .connected ? Color.teal : (desktop.phase == .connecting ? .orange : .secondary.opacity(0.5))).frame(width: 5, height: 5)
+                }.font(.system(size: 11, weight: .medium)).padding(.horizontal, 10).frame(minHeight: 32).frame(minWidth: 100, maxWidth: 230).contentShape(Rectangle())
+            }.buttonStyle(.plain)
+            Button { if desktop.phase != .connected || confirm(L10n.text("关闭此远程桌面？"), L10n.text("将断开与远端桌面的连接，远端会话本身不受影响。")) { workspace.closeDesktop(desktop) } } label: {
+                Image(systemName: "xmark").font(.system(size: 9)).frame(width: 28, height: 32).contentShape(Rectangle())
+            }.buttonStyle(.plain).help(L10n.text("关闭远程桌面"))
+        }.background(selected ? markColor.opacity(0.14) : .clear, in: RoundedRectangle(cornerRadius: 8))
+            .overlay(alignment: .bottom) { if selected { Capsule().fill(markColor).frame(height: 2).padding(.horizontal, 10) } }
+            .help(desktop.title + "\n" + desktop.endpoint.forwardingTarget + (desktop.throughSSH ? L10n.text(" · 经 SSH") : L10n.text(" · 直连")))
+            .contextMenu {
+                Button(desktop.poppedOut ? L10n.text("收回到标签") : L10n.text("弹出为独立窗口")) {
+                    if desktop.poppedOut { RemoteDesktopWindows.shared.dock(desktop) } else { RemoteDesktopWindows.shared.show(desktop) }
+                }
+                Button(L10n.text("重新连接")) { desktop.connect() }
+                Divider()
+                Button(L10n.text("关闭远程桌面")) { workspace.closeDesktop(desktop) }
+            }
     }
 }

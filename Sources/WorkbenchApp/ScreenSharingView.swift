@@ -59,6 +59,7 @@ final class ScreenSharingSession: ObservableObject, Identifiable {
 struct ScreenSharingView: View {
     let host: HostProfile
     @ObservedObject var store: AppStore
+    var workspace: Workspace?
     @Environment(\.dismiss) private var dismiss
     @ViewState private var throughSSH = true
     @ViewState private var target = "127.0.0.1"
@@ -66,7 +67,7 @@ struct ScreenSharingView: View {
     @ViewState private var errorMessage: String?
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            HStack { Text(L10n.text("远程 Mac 桌面（实验）")).font(.title2); Spacer(); Button(L10n.text("关闭")) { dismiss() }.keyboardShortcut(.cancelAction) }
+            HStack { Text(L10n.text("远程桌面")).font(.title2); Spacer(); Button(L10n.text("关闭")) { dismiss() }.keyboardShortcut(.cancelAction) }
             Text("\(host.name) · \(host.subtitle)").font(.caption).foregroundStyle(.secondary)
             Picker(L10n.text("连接方式"), selection: $throughSSH) {
                 Text(L10n.text("经 SSH 安全连接")).tag(true)
@@ -79,14 +80,15 @@ struct ScreenSharingView: View {
             }.font(.caption).textFieldStyle(.roundedBorder)
             Text(throughSSH ? L10n.text("SSH 主机就是目标 Mac 时使用 127.0.0.1；若它只是跳板，请填写跳板可达的 Mac 地址。仅建立标准屏幕共享通道，不承诺高性能模式。") : L10n.text("仅在可信网络中直连；不会自动改走 SSH。请勿将 VNC 端口暴露到公网。"))
                 .font(.caption).foregroundStyle(.secondary)
-            Text(L10n.text("账号由苹果屏幕共享窗口处理：使用目标 Mac 已授权的系统用户，不是 iCloud 登录；不需要自动开启传统 VNC 共享密码。Farport 不采集桌面密码，也不修改远端服务。"))
+            Text(L10n.text("在 Farport 中打开：由 Farport 询问目标 Mac 的系统用户名和密码（不是 Apple 账户），或 Linux/Windows VNC 服务的口令，可选保存到 Farport 自己的钥匙串条目。用系统屏幕共享打开：账号由系统窗口处理。Farport 不修改远端服务。"))
                 .font(.caption).foregroundStyle(.secondary)
             Text(L10n.text("SSH 模式下系统窗口显示本机转发地址，请核对此处的真实目标。此功能仍需目标 Mac 的系统账户、锁屏和多主机凭据隔离真机验收。"))
                 .font(.caption).foregroundStyle(.orange)
             HStack {
                 if let errorMessage { Text(errorMessage).font(.caption).foregroundStyle(.red) }
                 Spacer()
-                Button(L10n.text("打开系统屏幕共享")) { connect() }.buttonStyle(.borderedProminent)
+                Button(L10n.text("用系统屏幕共享打开")) { connect() }
+                if workspace != nil { Button(L10n.text("在 Farport 中打开")) { openEmbedded() }.buttonStyle(.borderedProminent).keyboardShortcut(.defaultAction) }
             }
             Divider()
             Text(L10n.text("桌面通道与终端独立；关闭此面板不会断开。退出 Farport 会关闭 SSH 桌面通道，直连窗口由系统客户端管理。"))
@@ -95,6 +97,19 @@ struct ScreenSharingView: View {
                 VStack(spacing: 10) { ForEach(store.screenSharingSessions.filter { $0.hostID == host.id }) { session in ScreenSharingRow(session: session) } }
             }.frame(height: 125)
         }.padding(24).frame(width: 660)
+            .onAppear {
+                if let saved = RemoteDesktopPreferences.load(host.id) { throughSSH = saved.throughSSH; target = saved.target; port = saved.port }
+            }
+    }
+    private func openEmbedded() {
+        do {
+            guard store.hosts.contains(where: { $0.id == host.id && $0.connectionKey == host.connectionKey }) else {
+                throw WorkbenchError.message(L10n.text("主机配置已变化，请关闭后重新打开桌面入口。"))
+            }
+            let endpoint = try ScreenSharingEndpoint(host: target, port: port)
+            workspace?.openDesktop(host: host, endpoint: endpoint, throughSSH: throughSSH)
+            dismiss()
+        } catch { errorMessage = error.localizedDescription }
     }
     private func connect() {
         do {
