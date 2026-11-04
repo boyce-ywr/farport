@@ -12,6 +12,8 @@ public enum RFBQuality: String, CaseIterable, Sendable {
         case .smooth: return [-32 + 4, -256 + 7]
         }
     }
+    /// 连接时的色深。macOS 屏幕共享对第三方客户端只提供 ZRLE/Raw，JPEG 参数无效；非无损档改用 16 位色（每像素 3 字节降到 2 字节，低带宽下实测帧率约翻倍）。
+    public func pixelDepth(macOS: Bool) -> Int { macOS && self != .lossless ? 16 : 32 }
 }
 
 public struct RFBServerInfo: Sendable {
@@ -50,6 +52,9 @@ public final class RFBClient: @unchecked Sendable {
     public var events = RFBClientEvents()
     /// 测试可强制只请求某种编码；nil 时按默认优先级。
     public var preferredEncodings: [Int32]?
+    /// 测试可强制色深：32（真彩）或 16（RGB565）；nil 时按画质与远端类型选择。只在连接时生效。
+    public var pixelDepth: Int?
+    private var activeDepth = 32
     private let stream: RFBStream
     private let writeQueue = DispatchQueue(label: "local.sshworkbench.rfb.write")
     private let stateLock = NSLock()
@@ -62,6 +67,11 @@ public final class RFBClient: @unchecked Sendable {
     private var pingSent: TimeInterval?
     private var latestLatency: TimeInterval?
     private var frameCount: UInt64 = 0
+    /// macOS 屏幕共享会漏报部分区域的变化（实测动画留下残影，整屏刷新后消失），对最近变化过的区域补发非增量请求。
+    private var activity: CGRect?
+    private var activitySince: TimeInterval = 0, activityLast: TimeInterval = 0
+    private var revalidating: [CGRect] = []
+    private var revalidationTimer: DispatchSourceTimer?
     public private(set) var info: RFBServerInfo?
     /// 编码统计：最近一帧使用的主要编码名称。
     public private(set) var lastEncoding = ""
@@ -97,7 +107,7 @@ public final class RFBClient: @unchecked Sendable {
         thread.name = "Farport RFB"; thread.qualityOfService = .userInteractive
         thread.start()
     }
-    public func stop() { stateLock.withLock { stopping = true }; stream.close() }
+    public func stop() { stateLock.withLock { stopping = true; revalidationTimer?.cancel(); revalidationTimer = nil }; stream.close() }
 
     // MARK: 协议主流程
 
@@ -154,12 +164,17 @@ public final class RFBClient: @unchecked Sendable {
         let name = String(decoding: try stream.read(nameLength), as: UTF8.self)
         framebuffer.resize(width: width, height: height)
         let serverInfo = RFBServerInfo(name: name, width: width, height: height, version: banner.trimmingCharacters(in: .newlines), isMacOS: isMacOS, securityType: chosen)
-        stateLock.withLock { info = serverInfo }
+        // 色深与 info 同时确定：此后 setQuality 据此判断是否需要重连。
+        let depth: Int = stateLock.withLock { activeDepth = pixelDepth ?? quality.pixelDepth(macOS: isMacOS); info = serverInfo; return activeDepth }
         events.connected(serverInfo)
         enter("接收画面")
-        try stream.write([0, 0, 0, 0, 32, 24, 0, 1, 0, 255, 0, 255, 0, 255, 16, 8, 0, 0, 0, 0])
+        // SetPixelFormat：小端真彩；各分量最大值与移位与解码器查找表一致。
+        if depth == 16 { try stream.write([0, 0, 0, 0, 16, 16, 0, 1, 0, 31, 0, 63, 0, 31, 11, 5, 0, 0, 0, 0]); decoders.setBytesPerPixel(2) }
+        else { try stream.write([0, 0, 0, 0, 32, 24, 0, 1, 0, 255, 0, 255, 0, 255, 16, 8, 0, 0, 0, 0]); decoders.setBytesPerPixel(4) }
         sendEncodings()
         requestUpdate(incremental: false)
+        if isMacOS { startRevalidation() }
+        defer { stateLock.withLock { revalidationTimer?.cancel(); revalidationTimer = nil } }
         while true { try handleMessage() }
     }
 
@@ -232,6 +247,11 @@ public final class RFBClient: @unchecked Sendable {
             frameCount &+= 1
             if let sent = pingSent, dirty.map({ $0.contains(CGPoint(x: 0, y: 0)) }) == true { latestLatency = now - sent; pingSent = nil }
             if let main = names.max(by: { $0.value < $1.value })?.key { lastEncoding = Self.name(main) }
+            // 补发刷新的响应与请求区域完全相同，不再计入变化区域，避免反复刷新。
+            if let dirty, revalidationTimer != nil {
+                if let index = revalidating.firstIndex(of: dirty) { revalidating.remove(at: index) }
+                else { if activity == nil { activitySince = now }; activity = activity.map { $0.union(dirty) } ?? dirty; activityLast = now }
+            }
         }
         stateLock.withLock { decodeSeconds += ProcessInfo.processInfo.systemUptime - decodeStarted }
         events.updated()
@@ -243,17 +263,45 @@ public final class RFBClient: @unchecked Sendable {
 
     // MARK: 客户端消息（可从任意线程调用）
 
+    /// 变化区域安静 0.2 秒或持续变化 0.5 秒后，对其请求一次非增量更新。
+    private func startRevalidation() {
+        let timer = DispatchSource.makeTimerSource(queue: writeQueue)
+        timer.schedule(deadline: .now() + 0.1, repeating: 0.1)
+        timer.setEventHandler { [weak self] in
+            guard let self else { return }
+            let now = ProcessInfo.processInfo.systemUptime
+            let area: CGRect? = stateLock.withLock {
+                guard !self.paused, let area = self.activity, now - self.activityLast >= 0.2 || now - self.activitySince >= 0.5 else { return nil }
+                self.activity = nil; self.revalidating = Array((self.revalidating + [area]).suffix(8)); return area
+            }
+            guard let area else { return }
+            try? stream.write([3, 0] + Self.u16(Int(area.minX)) + Self.u16(Int(area.minY)) + Self.u16(Int(area.width)) + Self.u16(Int(area.height)))
+        }
+        stateLock.withLock { revalidationTimer = timer }
+        timer.resume()
+    }
+
     private func send(_ bytes: [UInt8]) { writeQueue.async { [stream] in try? stream.write(bytes) } }
     private static func u16(_ value: Int) -> [UInt8] { [UInt8(truncatingIfNeeded: value >> 8), UInt8(truncatingIfNeeded: value)] }
     private static func u32(_ value: UInt32) -> [UInt8] { [UInt8(truncatingIfNeeded: value >> 24), UInt8(truncatingIfNeeded: value >> 16), UInt8(truncatingIfNeeded: value >> 8), UInt8(truncatingIfNeeded: value)] }
 
     private func sendEncodings() {
-        let base: [Int32] = preferredEncodings ?? [7, 16, 5, 1, 0]
+        // Tight 的压缩像素只按 32 位真彩实现，低色深时不请求。
+        let base: [Int32] = preferredEncodings ?? (stateLock.withLock({ activeDepth }) == 32 ? [7, 16, 5, 1, 0] : [16, 5, 1, 0])
         let pseudo: [Int32] = [-239, -223, -224, -308, Self.extendedClipboardEncoding]
         let list = base + stateLock.withLock({ quality }).pseudoEncodings + pseudo
         send([2, 0] + Self.u16(list.count) + list.flatMap { Self.u32(UInt32(bitPattern: $0)) })
     }
-    public func setQuality(_ value: RFBQuality) { stateLock.withLock { quality = value }; sendEncodings(); requestUpdate(incremental: false) }
+    /// 切换画质；新画质需要不同色深时返回 false，调用方须重连（RFB 无法安全地中途切换像素格式）。
+    @discardableResult public func setQuality(_ value: RFBQuality) -> Bool {
+        let compatible: Bool = stateLock.withLock {
+            quality = value
+            guard pixelDepth == nil, let info else { return true }
+            return value.pixelDepth(macOS: info.isMacOS) == activeDepth
+        }
+        guard compatible else { return false }
+        sendEncodings(); requestUpdate(incremental: false); return true
+    }
 
     public func requestUpdate(incremental: Bool) {
         let width = framebuffer.width, height = framebuffer.height

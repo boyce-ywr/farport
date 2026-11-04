@@ -77,7 +77,13 @@ final class RemoteDesktopSession: ObservableObject, Identifiable {
     @Published private(set) var cursor: NSCursor?
     @Published private(set) var utf8Clipboard = false
     @Published var notice: String?
-    @Published var quality: RFBQuality = .balanced { didSet { if quality != oldValue { client?.setQuality(quality) } } }
+    @Published var quality: RFBQuality = .balanced {
+        didSet {
+            // macOS 远端在无损与其他档之间切换要换色深，只能重新连接。
+            guard quality != oldValue, let client, !client.setQuality(quality) else { return }
+            show(L10n.text("切换画质需要更换色深，正在重新连接…")); connect()
+        }
+    }
     @Published var commandMapping: RFBKeyboard.CommandMapping = .native
     @Published var clipboardEnabled = true
     @Published var poppedOut = false { didSet { if poppedOut != oldValue { onLayoutChange?() } } }
@@ -155,7 +161,15 @@ final class RemoteDesktopSession: ObservableObject, Identifiable {
         }
         let client = RFBClient(stream: stream, quality: quality)
         self.client = client
+        let hostID = host.id, endpoint = endpoint, savedUser = savedUsername, skipSaved = skipSavedPassword
         client.events.credentials = { [weak self] kind in
+            // 钥匙串读取可能弹出系统授权框并长时间阻塞，在 RFB 线程完成，避免卡住界面。
+            let username = kind == .usernameAndPassword ? savedUser : ""
+            if !skipSaved, kind == .password || !username.isEmpty,
+               let password = RemoteDesktopCredentialStore.load(host: hostID, endpoint: endpoint, username: username) {
+                DispatchQueue.main.async { if self?.generation == current { self?.usedSavedPassword = (username, password) } }
+                return RFBCredentials(username: username, password: password)
+            }
             let request = CredentialRequest()
             DispatchQueue.main.async { guard let self, self.generation == current else { request.answer(nil); return }; self.requestCredentials(kind, request) }
             request.semaphore.wait()
@@ -176,12 +190,6 @@ final class RemoteDesktopSession: ObservableObject, Identifiable {
 
     private func requestCredentials(_ kind: RFBCredentialKind, _ request: CredentialRequest) {
         guard client != nil else { request.answer(nil); return }
-        let username = kind == .usernameAndPassword ? savedUsername : ""
-        if !skipSavedPassword, kind == .password || !username.isEmpty,
-           let password = RemoteDesktopCredentialStore.load(host: host.id, endpoint: endpoint, username: username) {
-            usedSavedPassword = (username, password)
-            request.answer(RFBCredentials(username: username, password: password)); return
-        }
         pendingCredential = request
         phase = .credentials(kind)
     }

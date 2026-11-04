@@ -99,7 +99,21 @@ final class RFBDecoders {
     private let tight = [RFBInflater(), RFBInflater(), RFBInflater(), RFBInflater()]
     /// Tight 的 3 字节像素顺序；默认 R,G,B，测试可对照 Raw 校验。
     var tightRGBOrder = true
+    /// 线路像素字节数：4 为 32 位真彩（ZRLE 压缩像素 3 字节），2 为 RGB565；连接时按请求的像素格式设定。
+    private(set) var bytesPerPixel = 4
+    /// RGB565 到帧缓冲像素的查找表（按小端值索引）。
+    private var table: [UInt32] = []
     init(framebuffer: RFBFramebuffer) { self.framebuffer = framebuffer }
+
+    func setBytesPerPixel(_ value: Int) {
+        bytesPerPixel = value
+        func expand(_ component: UInt32, bits: UInt32) -> UInt32 { component * 255 / ((1 << bits) - 1) }
+        table = value == 2 ? (0..<65536).map { v in 0xFF000000 | expand(v >> 11 & 31, bits: 5) << 16 | expand(v >> 5 & 63, bits: 6) << 8 | expand(v & 31, bits: 5) } : []
+    }
+    /// 读取一个线路像素（Raw、Hextile、光标）。
+    private func pixel(_ bytes: UnsafePointer<UInt8>) -> UInt32 {
+        bytesPerPixel == 2 ? table[Int(bytes[0]) | Int(bytes[1]) << 8] : UInt32(bytes[0]) | UInt32(bytes[1]) << 8 | UInt32(bytes[2]) << 16 | 0xFF000000
+    }
 
     private func check(_ rect: RFBRect) throws {
         guard rect.width >= 0, rect.height >= 0, rect.x + rect.width <= framebuffer.width, rect.y + rect.height <= framebuffer.height else {
@@ -114,8 +128,19 @@ final class RFBDecoders {
 
     func raw(_ rect: RFBRect, _ stream: RFBStream) throws {
         try check(rect)
+        guard bytesPerPixel != 4 else {
+            try framebuffer.withPixels { pixels, stride, _ in
+                for row in rect.y..<rect.y + rect.height { try stream.read(into: pixels + row * stride + rect.x, count: rect.width * 4) }
+            }
+            return
+        }
+        var line = [UInt8](repeating: 0, count: rect.width * bytesPerPixel)
         try framebuffer.withPixels { pixels, stride, _ in
-            for row in rect.y..<rect.y + rect.height { try stream.read(into: pixels + row * stride + rect.x, count: rect.width * 4) }
+            for row in rect.y..<rect.y + rect.height {
+                try line.withUnsafeMutableBytes { try stream.read(into: $0.baseAddress!, count: $0.count) }
+                let target = pixels + row * stride + rect.x
+                line.withUnsafeBufferPointer { source in for x in 0..<rect.width { target[x] = pixel(source.baseAddress! + x * bytesPerPixel) } }
+            }
         }
     }
 
@@ -133,7 +158,7 @@ final class RFBDecoders {
     func hextile(_ rect: RFBRect, _ stream: RFBStream) throws {
         try check(rect)
         var background: UInt32 = 0, foreground: UInt32 = 0
-        func pixel() throws -> UInt32 { let bytes = try stream.read(4); return UInt32(bytes[0]) | UInt32(bytes[1]) << 8 | UInt32(bytes[2]) << 16 | 0xFF000000 }
+        func pixel() throws -> UInt32 { let bytes = try stream.read(bytesPerPixel); return bytes.withUnsafeBufferPointer { self.pixel($0.baseAddress!) } }
         for tileY in stride(from: rect.y, to: rect.y + rect.height, by: 16) {
             for tileX in stride(from: rect.x, to: rect.x + rect.width, by: 16) {
                 let tile = RFBRect(x: tileX, y: tileY, width: min(16, rect.x + rect.width - tileX), height: min(16, rect.y + rect.height - tileY))
@@ -159,6 +184,7 @@ final class RFBDecoders {
         try check(rect)
         let length = Int(try stream.u32())
         let data = try zrle.inflate(try stream.read(length))
+        let size = bytesPerPixel == 4 ? 3 : 2, table = table
         // 指针直写：逐像素解码是热点，避免数组边界检查与闭包开销。
         try data.withUnsafeBufferPointer { buffer in
             guard let source = buffer.baseAddress else { return }
@@ -166,8 +192,9 @@ final class RFBDecoders {
             var index = 0
             func need(_ count: Int) throws { guard index + count <= total else { throw RFBError.protocolViolation("zrle 数据不足") } }
             func cpixel() -> UInt32 {
-                defer { index += 3 }
-                return UInt32(source[index]) | UInt32(source[index + 1]) << 8 | UInt32(source[index + 2]) << 16 | 0xFF000000
+                defer { index += size }
+                return size == 2 ? table[Int(source[index]) | Int(source[index + 1]) << 8]
+                    : UInt32(source[index]) | UInt32(source[index + 1]) << 8 | UInt32(source[index + 2]) << 16 | 0xFF000000
             }
             try framebuffer.withPixels { pixels, stride, _ in
                 var palette = [UInt32](repeating: 0, count: 128)
@@ -178,10 +205,10 @@ final class RFBDecoders {
                         try need(1)
                         let mode = Int(source[index]); index += 1
                         let rle = mode & 128 != 0, paletteSize = mode & 127
-                        try need(paletteSize * 3)
+                        try need(paletteSize * size)
                         for entry in 0..<paletteSize { palette[entry] = cpixel() }
                         if !rle && paletteSize == 0 {
-                            try need(width * height * 3)
+                            try need(width * height * size)
                             for y in 0..<height { let row = origin + y * stride; for x in 0..<width { row[x] = cpixel() } }
                         } else if !rle && paletteSize == 1 {
                             for y in 0..<height { (origin + y * stride).update(repeating: palette[0], count: width) }
@@ -211,7 +238,7 @@ final class RFBDecoders {
                             }
                             while position < count {
                                 let color: UInt32, run: Int
-                                if paletteSize == 0 { try need(3); color = cpixel(); run = try runLength() }
+                                if paletteSize == 0 { try need(size); color = cpixel(); run = try runLength() }
                                 else {
                                     try need(1)
                                     let entry = Int(source[index]); index += 1
@@ -315,7 +342,7 @@ final class RFBDecoders {
 
     /// 光标伪编码：返回 RGBA（非预乘）像素，透明度来自位掩码。
     func cursor(_ rect: RFBRect, _ stream: RFBStream) throws -> [UInt8] {
-        let pixelBytes = try stream.read(rect.width * rect.height * 4)
+        let pixelBytes = try stream.read(rect.width * rect.height * bytesPerPixel)
         let maskBytes = try stream.read((rect.width + 7) / 8 * rect.height)
         var rgba = [UInt8](repeating: 0, count: rect.width * rect.height * 4)
         let maskRow = (rect.width + 7) / 8
@@ -323,7 +350,8 @@ final class RFBDecoders {
             for x in 0..<rect.width {
                 let index = y * rect.width + x
                 let visible = maskBytes[y * maskRow + x / 8] & (0x80 >> UInt8(x % 8)) != 0
-                rgba[index * 4] = pixelBytes[index * 4 + 2]; rgba[index * 4 + 1] = pixelBytes[index * 4 + 1]; rgba[index * 4 + 2] = pixelBytes[index * 4]
+                let color = pixelBytes.withUnsafeBufferPointer { pixel($0.baseAddress! + index * bytesPerPixel) }
+                rgba[index * 4] = UInt8(color >> 16 & 0xFF); rgba[index * 4 + 1] = UInt8(color >> 8 & 0xFF); rgba[index * 4 + 2] = UInt8(color & 0xFF)
                 rgba[index * 4 + 3] = visible ? 255 : 0
             }
         }

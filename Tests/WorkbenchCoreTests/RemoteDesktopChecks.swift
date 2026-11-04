@@ -89,9 +89,9 @@ func checkRemoteDesktopLive(arguments: [String]) throws {
         let lock = NSLock()
         init(_ client: RFBClient) { self.client = client }
     }
-    func open(_ stream: RFBStream, encodings: [Int32]?, quality: RFBQuality = .lossless, password: String? = nil) -> Session {
+    func open(_ stream: RFBStream, encodings: [Int32]?, quality: RFBQuality = .lossless, password: String? = nil, depth: Int? = nil) -> Session {
         let client = RFBClient(stream: stream, quality: quality)
-        client.preferredEncodings = encodings
+        client.preferredEncodings = encodings; client.pixelDepth = depth
         let session = Session(client)
         client.events.credentials = { _ in password.map { RFBCredentials(password: $0) } }
         client.events.connected = { info in session.lock.withLock { session.connected = info } }
@@ -135,6 +135,22 @@ func checkRemoteDesktopLive(arguments: [String]) throws {
         }
         try expect(pixels.count == truth.count && differing == 0, "\(name) 解码与 Raw 逐像素一致（差异 \(differing) 像素，编码 \(session.client.lastEncoding)）")
     }
+    // 16 位色（macOS 非无损档）：各编码与 Raw 基准按 RGB565 量化后比对，每通道误差不超过一个 5 位量化级。
+    var worstOverall = 0
+    for (name, encodings) in [("Raw", [Int32(0)]), ("Hextile", [5]), ("ZRLE", [16])] {
+        let session = open(try RFBStream.connect(host: "127.0.0.1", port: 25901), encodings: encodings, depth: 16)
+        let pixels = try frame(session, "16 位色 \(name)")
+        session.client.stop()
+        var worst = 0
+        for (left, right) in zip(pixels, truth) {
+            for shift in [0, 8, 16] { worst = max(worst, abs(Int((left >> UInt32(shift)) & 0xFF) - Int((right >> UInt32(shift)) & 0xFF))) }
+        }
+        worstOverall = max(worstOverall, worst)
+        try expect(pixels.count == truth.count && worst <= 8, "16 位色 \(name) 解码与 Raw 基准一致（最大通道误差 \(worst)，编码 \(session.client.lastEncoding)）")
+    }
+    try expect(RFBQuality.balanced.pixelDepth(macOS: true) == 16 && RFBQuality.smooth.pixelDepth(macOS: true) == 16 && RFBQuality.lossless.pixelDepth(macOS: true) == 32
+               && RFBQuality.smooth.pixelDepth(macOS: false) == 32, "macOS 远端非无损档用 16 位色，其他远端保持 32 位色")
+    print("PASS · 16 位色 Raw/Hextile/ZRLE 与基准一致（最大通道误差 \(worstOverall)）")
     let jpeg = open(try RFBStream.connect(host: "127.0.0.1", port: 25901), encodings: [7], quality: .balanced)
     let lossy = try frame(jpeg, "Tight JPEG"); jpeg.client.stop()
     var total = 0

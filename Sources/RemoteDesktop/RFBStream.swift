@@ -108,7 +108,9 @@ public final class RFBStream: @unchecked Sendable {
             var noSignal: Int32 = 1; setsockopt(descriptor, SOL_SOCKET, SO_NOSIGPIPE, &noSignal, socklen_t(MemoryLayout<Int32>.size))
             var noDelay: Int32 = 1; setsockopt(descriptor, IPPROTO_TCP, TCP_NODELAY, &noDelay, socklen_t(MemoryLayout<Int32>.size))
             if Darwin.connect(descriptor, address.pointee.ai_addr, address.pointee.ai_addrlen) != 0 && errno != EINPROGRESS {
-                lastError = String(cString: strerror(errno)); Darwin.close(descriptor); continue
+                // 网络内容过滤器（如企业安全软件）在 connect 中丢弃连接时会拆掉套接字，表现为 EBADF。
+                lastError = errno == EBADF ? L10n.text("连接被本机网络过滤拦截（常见于企业安全软件），请改用经 SSH 连接") : String(cString: strerror(errno))
+                Darwin.close(descriptor); continue
             }
             var poller = pollfd(fd: descriptor, events: Int16(POLLOUT), revents: 0)
             var socketError: Int32 = 0; var length = socklen_t(MemoryLayout<Int32>.size)
