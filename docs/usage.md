@@ -110,6 +110,7 @@
 ### 本机 tmux 中的 Docker 附件（0.1.13 预览）
 
 - 从 Farport 的本机 tmux 管理页附着会话，在窗格里通过 `docker exec -it` 或可交互的 `docker attach` 进入容器。图片 `⌘V`、Finder 文件粘贴、文件拖入和发送附件入口复用同一流程。
+- 普通本机终端（非 tmux）里前台直接运行 `docker exec -it` / `docker attach` 时，也按 Shell 的前台 docker 进程识别容器并发送到容器内，不再上传到 Mac；插入前复核前台仍是同一 docker 进程。前台不是 docker 时照旧发往本机。
 - 首次发送会出现“选择目标容器”。列表标出“原窗格容器”，只允许确认与前台 Docker 进程一致的那个容器；同时显示 Docker 连接（context 或 Unix socket）、原窗格及接收用户。确认前不会向容器复制附件，也不能通过选择其他容器绕过目标核对。
 - 文件通过 Docker 的 exec 标准输入复制，按已核对的 `docker exec --user` 或容器配置用户创建私有目录；不默认提权为 root，不改变容器挂载或要求重建容器。目标需具有 `sh`、`id`、`mktemp`、`mkdir`、`cat`、`chmod`、`sha256sum`、`rm` 等基础命令。
 - 容器目录位于 `/tmp/.farport-attachments-*`，目录 700、文件 600；按目标用户检查目录清单、可读性和 SHA-256。校验后插入的是容器内路径，不是 Mac 路径，不自动回车。图片最终是否由 Agent 识别，以 Agent 自身结果为准。

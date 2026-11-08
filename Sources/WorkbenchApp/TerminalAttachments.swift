@@ -59,6 +59,12 @@ enum TerminalAttachmentIntake {
     }
 }
 
+/// 发送前复核的 Docker 终端：tmux 窗格按原主机读取，普通本机终端按 Shell 前台进程读取。
+private func currentDockerTerminal(_ terminal: LocalDockerTerminal, tmux: String?, shellPID: Int32?, transport: SSHTransport, cancellation: CancellationFlag) throws -> LocalDockerTerminal? {
+    if let tmux { return try TmuxService(transport: transport, host: terminal.host).dockerTerminal(session: tmux, cancellation: cancellation) }
+    return try shellPID.flatMap { try LocalDockerTerminal.local(shellPID: $0) }
+}
+
 @MainActor
 final class TerminalAttachmentDraft: ObservableObject, Identifiable {
     let id = UUID()
@@ -86,6 +92,8 @@ final class TerminalAttachmentDraft: ObservableObject, Identifiable {
     private var disposed = false
     private let transport: SSHTransport
     var targetDescription: String { dockerBinding.map { session.displayName + " → Docker · " + $0.container.displayName + " · " + $0.user } ?? session.displayName }
+    /// 普通本机终端（非 tmux）的 Shell PID，用于识别其中前台运行的 docker。
+    private var localShellPID: Int32? { session.host == nil && session.tmuxID == nil ? session.terminal.process.shellPid : nil }
     init(session: TerminalSession, payload: TerminalAttachmentPayload, workspace: Workspace) {
         self.session = session; self.payload = payload; self.workspace = workspace; transport = workspace.store.transport
         identity = workspace.attachmentIdentity(session)
@@ -94,24 +102,26 @@ final class TerminalAttachmentDraft: ObservableObject, Identifiable {
     }
     private func prepare() {
         let host = session.host; let tmux = session.tmuxID; let transport = transport; let flag = cancellation
-        let remembered = session.dockerAttachmentBinding
+        let remembered = session.dockerAttachmentBinding; let shellPID = localShellPID
         Task {
             do {
                 let context = try await Task.detached { () -> (String, TmuxTarget?, DockerAttachmentSelection?, DockerAttachmentBinding?) in
+                    var docker: LocalDockerTerminal?
                     if let tmux {
                         let service = TmuxService(transport: transport, host: host)
-                        if try service.attachmentTarget(session: tmux).command == "docker" {
-                            let terminal = try service.dockerTerminal(session: tmux, cancellation: flag)
-                            if let remembered, remembered.terminal == terminal, (try? remembered.daemon.validate(remembered, cancellation: flag)) != nil {
-                                return ("", terminal.target, nil, remembered)
-                            }
-                            let selection = try DockerAttachmentDaemon.discover(terminal: terminal, transport: transport, cancellation: flag)
-                            // 已从原窗格 docker 命令核对出容器时直接使用，不再要求手动选择。
-                            if selection.containers.contains(where: { $0.id == selection.detectedContainerID }) {
-                                return ("", terminal.target, nil, try selection.daemon.confirm(selection.detectedContainerID, terminal: terminal, revalidate: false, cancellation: flag))
-                            }
-                            return ("", terminal.target, selection, nil)
+                        if try service.attachmentTarget(session: tmux).command == "docker" { docker = try service.dockerTerminal(session: tmux, cancellation: flag) }
+                    } else if let shellPID { docker = try LocalDockerTerminal.local(shellPID: shellPID) }
+                    if let terminal = docker {
+                        let pane = tmux == nil ? nil : terminal.target
+                        if let remembered, remembered.terminal == terminal, (try? remembered.daemon.validate(remembered, cancellation: flag)) != nil {
+                            return ("", pane, nil, remembered)
                         }
+                        let selection = try DockerAttachmentDaemon.discover(terminal: terminal, transport: transport, cancellation: flag)
+                        // 已从原窗格 docker 命令核对出容器时直接使用，不再要求手动选择。
+                        if selection.containers.contains(where: { $0.id == selection.detectedContainerID }) {
+                            return ("", pane, nil, try selection.daemon.confirm(selection.detectedContainerID, terminal: terminal, revalidate: false, cancellation: flag))
+                        }
+                        return ("", pane, selection, nil)
                     }
                     let pane = try tmux.map { try TmuxService(transport: transport, host: host).target(session: $0) }
                     let temporary = try AttachmentUploader(transport: transport).temporaryDirectory(host: host, cancellation: flag)
@@ -134,13 +144,13 @@ final class TerminalAttachmentDraft: ObservableObject, Identifiable {
         }
     }
     func chooseContainer(_ identifier: String) async {
-        guard let selection = containerSelection, !preparing, !disposed, let tmux = session.tmuxID else { return }
+        guard let selection = containerSelection, !preparing, !disposed else { return }
         preparing = true; failure = nil
-        let transport = transport; let flag = cancellation
+        let transport = transport; let flag = cancellation; let tmux = session.tmuxID; let shellPID = localShellPID
         do {
             let binding = try await Task.detached {
-                let current = try TmuxService(transport: transport, host: selection.terminal.host).dockerTerminal(session: tmux, cancellation: flag)
-                guard current == selection.terminal else { throw WorkbenchError.message(L10n.text("Docker 进程或原 tmux 窗格已变化，请重新确认容器。")) }
+                let current = try currentDockerTerminal(selection.terminal, tmux: tmux, shellPID: shellPID, transport: transport, cancellation: flag)
+                guard let current, current == selection.terminal else { throw WorkbenchError.message(L10n.text("Docker 进程或原 tmux 窗格已变化，请重新确认容器。")) }
                 return try selection.daemon.confirm(identifier, terminal: current, cancellation: flag)
             }.value
             guard !disposed, !flag.isCancelled, session.connectionID == identity.connectionID,
@@ -166,15 +176,15 @@ final class TerminalAttachmentDraft: ObservableObject, Identifiable {
         guard !running, !preparing, !disposed, session.connected, session.connectionID == identity.connectionID else { return }
         running = true; failure = nil; result = nil; cancellation = CancellationFlag()
         let flag = cancellation; let host = session.host; let files = payload.files; let destination = directory; let transport = transport
-        let binding = dockerBinding; let tmux = session.tmuxID
+        let binding = dockerBinding; let tmux = session.tmuxID; let shellPID = localShellPID
         Task {
             do {
                 let outcome = try await Task.detached { () -> (UploadedAttachments, DockerUploadedAttachments?) in
                     let progress: (String, Double) -> Void = { [weak owner = self] message, value in
                         DispatchQueue.main.async { guard owner?.disposed == false, owner?.running == true, !flag.isCancelled else { return }; owner?.status = message; owner?.progress = value }
                     }
-                    if let binding, let tmux {
-                        guard try TmuxService(transport: transport, host: binding.terminal.host).dockerTerminal(session: tmux, cancellation: flag) == binding.terminal else { throw WorkbenchError.message(L10n.text("Docker 进程或原 tmux 窗格已变化，请重新确认容器。")) }
+                    if let binding {
+                        guard try currentDockerTerminal(binding.terminal, tmux: tmux, shellPID: shellPID, transport: transport, cancellation: flag) == binding.terminal else { throw WorkbenchError.message(L10n.text("Docker 进程或原 tmux 窗格已变化，请重新确认容器。")) }
                         let uploaded = try DockerAttachmentUploader(binding: binding).upload(files, transport: transport, cancellation: flag, progress: progress)
                         return (uploaded.uploaded, uploaded)
                     }
@@ -240,6 +250,13 @@ final class TerminalAttachmentDraft: ObservableObject, Identifiable {
             if let binding, let tmuxID = session.tmuxID {
                 let service = TmuxService(transport: transport, host: binding.terminal.host)
                 try await Task.detached { try service.pasteDocker(text, session: tmuxID, expected: binding.terminal) }.value
+            } else if let binding {
+                // 普通本机终端：写入前复核 Shell 前台仍是同一 docker 进程。
+                let shellPID = localShellPID; let flag = cancellation
+                guard try await Task.detached(operation: { try currentDockerTerminal(binding.terminal, tmux: nil, shellPID: shellPID, transport: transport, cancellation: flag) }).value == binding.terminal else {
+                    throw WorkbenchError.message(L10n.text("Docker 进程已变化，请重新确认容器。"))
+                }
+                session.terminal.sendAttachmentReference(text)
             } else if let tmuxID = session.tmuxID, let target {
                 let service = TmuxService(transport: transport, host: session.host)
                 try await Task.detached { try service.paste(text, session: tmuxID, expected: target) }.value

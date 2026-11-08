@@ -20,8 +20,9 @@ public struct TmuxService: Sendable {
         }
         return executable
     }
+    /// `-u`：远端非交互 SSH 常无 locale，tmux 3.3 会把格式输出中的 Tab 等控制字符替换为 `_`，导致会话列表与窗格指纹解析失败。
     var prefix: String {
-        get throws { (host == nil ? RemotePath.quote(try Self.localExecutable()) : RemoteTmuxCommand.executableReference) + (socketName.map { " -L " + RemotePath.quote($0) } ?? "") }
+        get throws { (host == nil ? RemotePath.quote(try Self.localExecutable()) : RemoteTmuxCommand.executableReference) + " -u" + (socketName.map { " -L " + RemotePath.quote($0) } ?? "") }
     }
     public func execute(_ arguments: String, cancellation: CancellationFlag = CancellationFlag(), timeout: TimeInterval = 45) throws -> CommandResult { try runShell(prefix + " " + arguments, cancellation: cancellation, timeout: timeout) }
     func runShell(_ command: String, cancellation: CancellationFlag, timeout: TimeInterval = 45) throws -> CommandResult {

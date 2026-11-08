@@ -926,6 +926,8 @@
   "容器内文件内容与读取权限校验通过": "Container file contents and read permissions verified",
   "容器附件内容已变化，未插入路径。": "Container attachment contents changed. No paths were inserted.",
   "无法确认原 tmux 窗格的 Docker 进程，未发送附件。": "Could not verify the Docker process in the original tmux pane. No attachments were sent.",
+  "无法确认本机终端的 Docker 进程，未发送附件。": "Could not verify the Docker process in this local terminal. No attachments were sent.",
+  "Docker 进程已变化，请重新确认容器。": "The Docker process changed. Confirm the container again.",
   "选择目标容器": "Select target container",
   "选择目标容器…": "Select target container…",
   "Docker context：{0} · 原窗格：{1}": "Docker context: {0} · Original pane: {1}",

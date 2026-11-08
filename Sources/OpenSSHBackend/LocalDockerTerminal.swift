@@ -25,6 +25,20 @@ extension TmuxService {
         let target = try attachmentTarget(session: session)
         guard target.command == "docker" else { throw unavailable() }
         guard let panePID = Int32(target.processID), panePID > 0 else { throw unavailable() }
+        return try LocalDockerTerminal.inspect(target: target, panePID: panePID, unavailable: unavailable) { try attachmentTarget(session: session) == target }
+    }
+}
+
+extension LocalDockerTerminal {
+    /// 普通本机终端（非 tmux）：Shell 的前台进程为 docker 时识别其容器；前台不是 docker 时返回 nil。target 只记录 Shell PID。
+    public static func local(shellPID: Int32) throws -> LocalDockerTerminal? {
+        guard shellPID > 0, (try? AgentSessionCatalog.localForegroundCommand(shellPID: shellPID)) == "docker" else { return nil }
+        func unavailable() -> Error { WorkbenchError.message(L10n.text("无法确认本机终端的 Docker 进程，未发送附件。")) }
+        let target = TmuxTarget(paneID: "", processID: String(shellPID), command: "docker", directory: "")
+        return try inspect(target: target, panePID: shellPID, unavailable: unavailable) { true }
+    }
+    /// 读取 panePID 所在终端的前台 docker 进程；读取前后核对前台进程与启动时间，并由 unchanged 核对外层窗格。
+    static func inspect(target: TmuxTarget, panePID: Int32, unavailable: () -> Error, unchanged: () throws -> Bool) throws -> LocalDockerTerminal {
         func foreground() throws -> Int32 {
             var pane = proc_bsdinfo()
             guard proc_pidinfo(panePID, PROC_PIDTBSDINFO, 0, &pane, Int32(MemoryLayout.size(ofValue: pane))) == MemoryLayout.size(ofValue: pane),
@@ -65,7 +79,7 @@ extension TmuxService {
             if ["DOCKER_CONTEXT", "DOCKER_HOST", "DOCKER_CONFIG"].contains(key) { environment[key] = String(value[value.index(after: separator)...]) }
         }
         var finalInfo = proc_bsdinfo()
-        guard try attachmentTarget(session: session) == target, try foreground() == identifier,
+        guard try unchanged(), try foreground() == identifier,
               proc_pidinfo(identifier, PROC_PIDTBSDINFO, 0, &finalInfo, Int32(MemoryLayout.size(ofValue: finalInfo))) == MemoryLayout.size(ofValue: finalInfo),
               finalInfo.pbi_uid == info.pbi_uid, finalInfo.pbi_start_tvsec == info.pbi_start_tvsec, finalInfo.pbi_start_tvusec == info.pbi_start_tvusec else { throw unavailable() }
         return LocalDockerTerminal(target: target, foregroundPID: identifier, startedSeconds: info.pbi_start_tvsec,

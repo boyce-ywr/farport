@@ -65,6 +65,10 @@ func checkDockerAttachments(arguments: [String]) throws {
         try expect(selection.daemon.endpoint.hasPrefix("unix:///") && selection.daemon.connectionDescription.hasPrefix("Unix socket"), "保留已识别Unix socket，不换到默认context")
     }
     try expect(selection.detectedContainerID == container, "从真实前台Docker进程匹配容器ID")
+    let shellTerminal = try LocalDockerTerminal.local(shellPID: Int32(terminal.target.processID)!)
+    try expect(shellTerminal?.foregroundPID == terminal.foregroundPID && shellTerminal?.invocation == terminal.invocation && shellTerminal?.target.paneID == "", "普通本机终端按Shell前台进程识别同一Docker客户端")
+    try expect(try DockerAttachmentDaemon.discover(terminal: shellTerminal!, cancellation: CancellationFlag()).detectedContainerID == container, "普通本机终端匹配同一容器")
+    try expect(try LocalDockerTerminal.local(shellPID: getpid()) == nil, "前台不是docker时普通终端仍发往本机")
     try rejects("不能选择另一个容器") { _ = try selection.daemon.confirm(other, terminal: terminal, cancellation: CancellationFlag()) }
     let binding = try selection.daemon.confirm(container, terminal: terminal, cancellation: CancellationFlag())
     try expect(binding.user != "0:0", "使用docker exec用户而非默认root")
