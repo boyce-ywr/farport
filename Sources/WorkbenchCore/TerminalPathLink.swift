@@ -5,6 +5,8 @@ import Foundation
 public struct TerminalPathLink: Equatable, Sendable {
     /// 去掉行列号后的路径文本；第二项（若有）是去掉紧贴的中文前缀后的版本。
     public let variants: [String]
+    /// 原文是否为相对路径（不以 `/`、`~`、`$` 开头）。
+    public var isRelative: Bool { variants.first.map { !$0.hasPrefix("/") && !$0.hasPrefix("~") && !$0.hasPrefix("$") } ?? false }
 
     public static func isWebLink(_ link: String) -> Bool {
         guard let scheme = URL(string: link)?.scheme?.lowercased() else { return false }
@@ -53,4 +55,39 @@ public struct TerminalPathLink: Equatable, Sendable {
 
     /// CJK 统一表意文字、假名、谚文及全角标点都位于 U+2E80 之后；路径里的 ASCII 部分不受影响。
     private static func isLeadingNoise(_ scalar: Unicode.Scalar) -> Bool { scalar.value >= 0x2E80 }
+}
+
+/// `docker inspect` 中的一个挂载。
+public struct ContainerMount: Decodable, Equatable, Sendable {
+    public let type: String
+    public let source: String
+    public let destination: String
+    enum CodingKeys: String, CodingKey { case type = "Type", source = "Source", destination = "Destination" }
+    public init(type: String, source: String, destination: String) { self.type = type; self.source = source; self.destination = destination }
+}
+
+/// 容器内路径与宿主路径的换算：只有 bind 挂载在宿主文件系统上有对应路径。
+public enum ContainerPath {
+    /// 绝对路径去掉 `.`、`..` 和重复斜杠（纯文本处理，不解析符号链接）。
+    public static func normalized(_ path: String) -> String {
+        var parts: [Substring] = []
+        for part in path.split(separator: "/") where part != "." {
+            if part == ".." { if !parts.isEmpty { parts.removeLast() } } else { parts.append(part) }
+        }
+        return "/" + parts.joined(separator: "/")
+    }
+    /// 按最长目标前缀匹配挂载；命中命名卷、tmpfs 或未命中任何挂载时返回 nil（只存在于容器内）。
+    public static func hostPath(for containerPath: String, mounts: [ContainerMount]) -> String? {
+        let path = normalized(containerPath)
+        func covers(_ destination: String) -> Bool { destination == "/" || path == destination || path.hasPrefix(destination + "/") }
+        guard let mount = mounts.filter({ $0.destination.hasPrefix("/") && covers(normalized($0.destination)) }).max(by: { normalized($0.destination).count < normalized($1.destination).count }),
+              mount.type == "bind", mount.source.hasPrefix("/") else { return nil }
+        let destination = normalized(mount.destination)
+        return normalized(mount.source + "/" + path.dropFirst(destination == "/" ? 0 : destination.count))
+    }
+    /// 容器用户为 root（含未指定）时 HOME 为 /root；其他用户不猜测。
+    public static func home(user: String) -> String? {
+        let name = user.split(separator: ":", maxSplits: 1).first.map(String.init) ?? ""
+        return name.isEmpty || name == "root" || name == "0" ? "/root" : nil
+    }
 }

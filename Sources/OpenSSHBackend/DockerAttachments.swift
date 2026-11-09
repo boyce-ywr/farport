@@ -215,6 +215,26 @@ public struct DockerAttachmentDaemon: Equatable, Sendable {
         return TerminalProcessLaunch(executable: executable, arguments: ["--host", endpoint, "exec", "-it", "--user", binding.user, binding.container.id,
                                                                        "sh", "-c", "exec \"${SHELL:-/bin/sh}\" -l -c \"$1\"", "farport-agent", command], environment: environment)
     }
+    /// 终端路径链接：读取容器工作目录、用户与挂载。守护进程不在本主机时拒绝，因为挂载源路径属于另一台机器。
+    public func pathContext(_ reference: String, cancellation: CancellationFlag) throws -> DockerPathContext {
+        if remote != nil {
+            let current = usesHost ? endpoint : try run(["context", "inspect"] + (context.isEmpty ? [] : [context]) + ["--format", "{{.Endpoints.docker.Host}}"], cancellation: cancellation)
+                .text.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard current.hasPrefix("unix://") else { throw WorkbenchError.message(L10n.text("窗格中的 Docker 服务不在此主机上，容器挂载的路径不属于此主机，未打开。")) }
+        }
+        let format = "{\"id\":{{json .Id}},\"workdir\":{{json .Config.WorkingDir}},\"user\":{{json .Config.User}},\"mounts\":{{json .Mounts}}}"
+        let output = try run(["inspect", "--type", "container", "--format", format, reference], cancellation: cancellation).output
+        struct Raw: Decodable { let id: String; let workdir: String?; let user: String?; let mounts: [ContainerMount]? }
+        let raw = try JSONDecoder().decode(Raw.self, from: output)
+        return DockerPathContext(containerID: raw.id, workingDirectory: raw.workdir ?? "", user: raw.user ?? "", mounts: raw.mounts ?? [])
+    }
+}
+
+public struct DockerPathContext: Equatable, Sendable {
+    public let containerID: String
+    public let workingDirectory: String
+    public let user: String
+    public let mounts: [ContainerMount]
 }
 
 public struct DockerUploadedAttachments: Sendable {

@@ -28,4 +28,31 @@ func checkTerminalPathLinks() throws {
     try expect(TerminalPathLink(link: "ssh://host/a", trustedHosts: trusted) == nil, "ssh 链接不当作路径")
     try expect(TerminalPathLink(link: "a\u{1b}b", trustedHosts: trusted) == nil, "拒绝控制字符")
     try expect(candidates("~other/a") == [], "不展开其他用户的 HOME")
+
+    // 容器路径 → 宿主路径
+    let mounts = [ContainerMount(type: "bind", source: "/Users", destination: "/Users"),
+                  ContainerMount(type: "volume", source: "/var/lib/docker/volumes/home/_data", destination: "/root"),
+                  ContainerMount(type: "bind", source: "/srv/proj", destination: "/app"),
+                  ContainerMount(type: "volume", source: "/var/lib/docker/volumes/cache/_data", destination: "/app/node_modules")]
+    try expect(ContainerPath.hostPath(for: "/Users/ywr/p/.test/x", mounts: mounts) == "/Users/ywr/p/.test/x", "同路径 bind 挂载")
+    try expect(ContainerPath.hostPath(for: "/app/src/./a.md", mounts: mounts) == "/srv/proj/src/a.md", "不同路径 bind 挂载并规范化")
+    try expect(ContainerPath.hostPath(for: "/app", mounts: mounts) == "/srv/proj", "挂载点本身")
+    try expect(ContainerPath.hostPath(for: "/application/a", mounts: mounts) == nil, "前缀须按路径段匹配")
+    try expect(ContainerPath.hostPath(for: "/root/.claude/x", mounts: mounts) == nil, "命名卷只在容器内")
+    try expect(ContainerPath.hostPath(for: "/app/node_modules/x", mounts: mounts) == nil, "更深的命名卷覆盖 bind")
+    try expect(ContainerPath.hostPath(for: "/tmp/a", mounts: mounts) == nil, "未挂载的容器路径")
+    try expect(ContainerPath.hostPath(for: "/app/../Users/a", mounts: mounts) == "/Users/a", ".. 先规范化再匹配")
+    try expect(ContainerPath.hostPath(for: "/x", mounts: [ContainerMount(type: "bind", source: "/host", destination: "/")]) == "/host/x", "根目录挂载")
+    try expect(ContainerPath.home(user: "") == "/root" && ContainerPath.home(user: "0:0") == "/root" && ContainerPath.home(user: "node") == nil, "容器用户 HOME")
+    let exec = try DockerTerminalCommand(arguments: ["docker", "exec", "-it", "-e", "A=1", "-w", "/Users/ywr/p", "docker-claude", "bash"])
+    try expect(exec.workdir == "/Users/ywr/p" && exec.container == "docker-claude", "解析 docker exec -w")
+    try expect(try DockerTerminalCommand(arguments: ["docker", "exec", "-it", "--workdir=/w", "c", "sh"]).workdir == "/w", "解析 --workdir=")
+    try expect(try DockerTerminalCommand(arguments: ["docker", "exec", "-it", "-w/w2", "c", "sh"]).workdir == "/w2", "解析 -w 紧贴")
+    try expect(try DockerTerminalCommand(arguments: ["docker", "attach", "c"]).workdir == nil, "attach 无工作目录")
+    let real = try DockerTerminalCommand(arguments: ["docker", "exec", "-it", "-e", "TERM=tmux-256color", "-e", "LANG=C.UTF-8", "-e", "COLORTERM=truecolor", "-e", "DOCKER_CLAUDE_CLIPBOARD_TOKEN",
+                                                     "-e", "DOCKER_CLAUDE_CLIPBOARD_URL=http://host.docker.internal:17337", "-e", "DOCKER_CLAUDE_MAC_TOKEN", "-e", "DOCKER_CLAUDE_MAC_URL", "-e", "DOCKER_CLAUDE_MAC_BIN",
+                                                     "-w", "/Users/ywr/projects/farport", "docker-claude", "bash", "-lc", "exec claude \"$@\"", "bash"])
+    try expect(real.workdir == "/Users/ywr/projects/farport" && real.container == "docker-claude", "真实 docker-claude 启动参数")
+    try expect(ContainerPath.hostPath(for: RemotePath.join(real.workdir!, ".test/stable-0.1.22/"), mounts: [ContainerMount(type: "bind", source: "/Users", destination: "/Users"),
+                                                                                                       ContainerMount(type: "volume", source: "/var/lib/docker/volumes/h/_data", destination: "/root")]) == "/Users/ywr/projects/farport/.test/stable-0.1.22", "docker-claude 项目内相对路径对应主机同路径")
 }

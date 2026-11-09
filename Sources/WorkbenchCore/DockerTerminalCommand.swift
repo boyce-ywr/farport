@@ -6,6 +6,8 @@ public struct DockerTerminalCommand: Equatable, Sendable {
     public let context: String?
     public let host: String?
     public let attachesExistingProcess: Bool
+    /// `docker exec -w` 指定的容器内工作目录；终端路径链接用作相对路径基准。
+    public let workdir: String?
     public var connectionArguments: [String] {
         if let context { return ["--context", context] }
         if let host { return ["--host", host] }
@@ -43,6 +45,7 @@ public struct DockerTerminalCommand: Equatable, Sendable {
         var interactive = operation == "attach"
         var terminal = operation == "attach"
         var user: String?
+        var workdir: String?
         while index < arguments.count, arguments[index].hasPrefix("-") {
             let option = arguments[index]; index += 1
             if option == "--" { break }
@@ -55,12 +58,15 @@ public struct DockerTerminalCommand: Equatable, Sendable {
             if ["--user", "-u", "--workdir", "-w", "--env", "-e", "--env-file"].contains(option) {
                 guard index < arguments.count else { throw unsupported() }
                 if option == "--user" || option == "-u" { user = arguments[index] }
+                if option == "--workdir" || option == "-w" { workdir = arguments[index] }
                 index += 1; continue
             }
             if option.hasPrefix("--user=") { user = String(option.dropFirst(7)); continue }
-            if ["--workdir=", "--env=", "--env-file="].contains(where: { option.hasPrefix($0) }) { continue }
+            if option.hasPrefix("--workdir=") { workdir = String(option.dropFirst(10)); continue }
+            if ["--env=", "--env-file="].contains(where: { option.hasPrefix($0) }) { continue }
             if option.hasPrefix("-u"), option.count > 2 { user = String(option.dropFirst(2)); continue }
-            if (option.hasPrefix("-w") || option.hasPrefix("-e")), option.count > 2 { continue }
+            if option.hasPrefix("-w"), option.count > 2 { workdir = String(option.dropFirst(2)); continue }
+            if option.hasPrefix("-e"), option.count > 2 { continue }
             throw unsupported()
         }
         guard interactive, terminal, index < arguments.count else { throw unsupported() }
@@ -72,6 +78,6 @@ public struct DockerTerminalCommand: Equatable, Sendable {
             let command = (arguments[index + 1] as NSString).lastPathComponent
             guard !["ssh", "mosh", "docker", "podman", "su", "sudo"].contains(command) else { throw unsupported() }
         }
-        self.container = container; self.user = user; self.context = context; self.host = host; attachesExistingProcess = operation == "attach"
+        self.container = container; self.user = user; self.context = context; self.host = host; attachesExistingProcess = operation == "attach"; self.workdir = workdir
     }
 }

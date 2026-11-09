@@ -1086,12 +1086,16 @@
   "窗格程序运行在容器或嵌套会话中，它发出的复制请求（OSC 52）被 tmux 的 set-clipboard 设置拦截了。开启后只对当前运行的 tmux 服务生效，不修改配置文件；写入 Mac 剪贴板仍按 Farport 的终端剪贴板权限处理。": "The program in this pane runs in a container or nested session, and tmux's set-clipboard option is blocking its copy requests (OSC 52). Enabling applies only to the running tmux server and does not change any config file. Writes to the Mac clipboard still follow Farport's terminal clipboard permission.",
   "远端容器暂不支持在 Farport 中直接打开 Agent 终端。": "Opening an agent terminal directly in a remote container is not supported yet.",
   "无法读取 tmux 窗格的当前目录。": "Cannot read the current folder of the tmux pane.",
-  "tmux 窗格正在运行 SSH、容器或其他用户环境，路径不属于此主机，未打开。": "The tmux pane is running SSH, a container, or another user's environment. The path does not belong to this host, so it was not opened.",
-  "此终端前台正在运行 SSH、容器或其他用户环境，路径不属于此 Mac，未打开。": "This terminal is running SSH, a container, or another user's environment. The path does not belong to this Mac, so it was not opened.",
   "未在目标主机上找到该路径：": "Path not found on the target host: ",
   "在文件中打开": "Open in Files",
-  "此终端运行在容器中，暂不支持打开容器内的路径。": "This terminal runs in a container. Opening paths inside containers is not supported yet.",
   "无法识别为此主机上的路径：": "Not recognized as a path on this host: ",
   "在文件页定位": "Show in Files",
-  "打开所在目录并选中此文件，可在那里编辑或下载": "Open the containing folder and select this file to edit or download it"
+  "打开所在目录并选中此文件，可在那里编辑或下载": "Open the containing folder and select this file to edit or download it",
+  "无法识别 tmux 窗格中的 Docker 容器（窗格处于复制模式时请先退出）：": "Cannot identify the Docker container in the tmux pane (exit copy mode first if it is active): ",
+  "该路径只存在于容器内（命名卷或容器文件系统），无法用文件功能打开：": "This path exists only inside the container (named volume or container filesystem) and cannot be opened in Files: ",
+  "终端前台正在通过 SSH 连接其他主机，路径不属于此主机，未打开。": "The terminal is connected to another host over SSH. The path does not belong to this host, so it was not opened.",
+  "无法读取终端中 Docker 容器的挂载信息：": "Cannot read the mounts of the Docker container in this terminal: ",
+  "窗格中的 Docker 服务不在此主机上，容器挂载的路径不属于此主机，未打开。": "The Docker daemon used in this pane is not on this host, so the container mount paths do not belong to it. Not opened.",
+  "容器路径": "Container path",
+  "主机路径": "Host path"
 }

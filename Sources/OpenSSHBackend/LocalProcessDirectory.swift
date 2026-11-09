@@ -3,6 +3,15 @@ import Darwin
 import WorkbenchCore
 
 public enum LocalProcessDirectory {
+    /// 本机终端前台进程的可执行文件名（如 ssh、sudo、docker）；用于判断终端里的路径属于哪台机器。
+    public static func foregroundName(shellPID: Int32) -> String? {
+        var shell = proc_bsdinfo()
+        guard shellPID > 0, proc_pidinfo(shellPID, PROC_PIDTBSDINFO, 0, &shell, Int32(MemoryLayout.size(ofValue: shell))) == MemoryLayout.size(ofValue: shell) else { return nil }
+        let foreground = Int32(bitPattern: shell.e_tpgid)
+        var executable = [CChar](repeating: 0, count: 4 * Int(MAXPATHLEN))
+        guard proc_pidpath(foreground > 0 ? foreground : shellPID, &executable, UInt32(executable.count)) > 0 else { return nil }
+        return (String(cString: executable) as NSString).lastPathComponent
+    }
     public static func current(shellPID: Int32) -> String? {
         var shell = proc_bsdinfo()
         guard shellPID > 0, proc_pidinfo(shellPID, PROC_PIDTBSDINFO, 0, &shell, Int32(MemoryLayout.size(ofValue: shell))) == MemoryLayout.size(ofValue: shell),

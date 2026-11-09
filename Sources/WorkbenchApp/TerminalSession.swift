@@ -862,28 +862,35 @@ final class Workspace: ObservableObject {
     /// Cmd+点击或右键打开终端输出里的路径：在终端所属主机上确认存在后，目录进文件页，文件弹出预览。
     func openTerminalPath(_ session: TerminalSession, link: String) {
         guard session.connected, session.connectionConfigurationValid() else { return }
-        if case .docker = session.agentLaunch?.0.target { store.errorMessage = L10n.text("此终端运行在容器中，暂不支持打开容器内的路径。"); return }
         guard let request = TerminalPathLink(link: link, trustedHosts: session.trustedDirectoryHosts) else { store.errorMessage = L10n.text("无法识别为此主机上的路径：") + link; return }
         let connection = session.connectionID, transport = store.transport, host = session.host, tmux = session.tmuxID
         let shellPID = session.terminal.process.shellPid, reported = session.reportedDirectory
+        var agentContainer: (binding: DockerAttachmentBinding, directory: String)?
+        if let (catalog, plan) = session.agentLaunch, case .docker(let binding) = catalog.target { agentContainer = (binding, plan.directory) }
         terminalLinkCancellation.cancel(); let cancellation = CancellationFlag(); terminalLinkCancellation = cancellation
-        Task { [weak self, weak session] in
+        Task { [weak self, weak session, agentContainer] in
             let result = await Task.detached {
-                Result { try TerminalPathResolver.resolve(request, transport: transport, host: host, tmuxID: tmux, shellPID: shellPID, reportedDirectory: reported, cancellation: cancellation) }
+                Result { try TerminalPathResolver.resolve(request, transport: transport, host: host, tmuxID: tmux, shellPID: shellPID, reportedDirectory: reported,
+                                                          agentContainer: agentContainer, cancellation: cancellation) }
             }.value
             guard let self, let session, !cancellation.isCancelled, session.connected, session.connectionID == connection else { return }
             switch result {
-            case .success(let file) where file.attributes.isDirectory:
-                browseFiles(.terminal(session.id))
-                let browser = fileBrowser(for: .terminal(session.id), host: session.host)
-                if browser.path != file.path { browser.load(file.path) }
-            case .success(let file):
-                closeTerminalLinkPreview()
-                let model = FileModel(host: session.host, store: store)
-                model.files = [file]; model.selection = [file.path]; model.spotlight = file; model.preview(file)
-                terminalLinkPreview = TerminalLinkPreview(sessionID: session.id, model: model)
-                // 预览期间键盘交给浮层（Esc 关闭），不再输入到终端。
-                session.terminal.window?.makeFirstResponder(nil)
+            case .success(let resolution):
+                let file = resolution.file
+                // 容器内外路径不同时说明换算关系，避免误以为看的是容器里的文件。
+                if let containerPath = resolution.containerPath, containerPath != file.path { store.taskNotice = L10n.text("容器路径") + " " + containerPath + " → " + L10n.text("主机路径") + " " + file.path }
+                if file.attributes.isDirectory {
+                    browseFiles(.terminal(session.id))
+                    let browser = fileBrowser(for: .terminal(session.id), host: session.host)
+                    if browser.path != file.path { browser.load(file.path) }
+                } else {
+                    closeTerminalLinkPreview()
+                    let model = FileModel(host: session.host, store: store)
+                    model.files = [file]; model.selection = [file.path]; model.spotlight = file; model.preview(file)
+                    terminalLinkPreview = TerminalLinkPreview(sessionID: session.id, model: model)
+                    // 预览期间键盘交给浮层（Esc 关闭），不再输入到终端。
+                    session.terminal.window?.makeFirstResponder(nil)
+                }
             case .failure(let error):
                 store.errorMessage = error.localizedDescription
             }
