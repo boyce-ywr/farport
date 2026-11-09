@@ -68,8 +68,9 @@ struct FilePreviewContentView: View {
                     }.font(.system(size: 10)).foregroundStyle(.secondary).padding(10)
                 } else if let image = model.previewImage {
                     GeometryReader { viewport in
+                        let fit = max(0.01, min(1, (viewport.size.width - 32) / max(image.size.width, 1), (viewport.size.height - 32) / max(image.size.height, 1)))
                         ScrollView([.horizontal, .vertical]) {
-                            Image(nsImage: image).resizable().scaledToFit().scaleEffect(imageScale).padding(16)
+                            Image(nsImage: image).resizable().frame(width: image.size.width * fit * imageScale, height: image.size.height * fit * imageScale).padding(16)
                                 .frame(minWidth: viewport.size.width, minHeight: viewport.size.height)
                         }
                     }
@@ -98,6 +99,8 @@ struct FilePreviewContentView: View {
 struct FileSpotlightOverlay: View {
     @ObservedObject var model: FileModel
     let file: RemoteFile
+    /// 从终端路径链接打开时提供：跳到文件页并选中该文件，便于编辑、下载等后续操作。
+    var locate: (() -> Void)? = nil
     @ViewState private var expanded = false
     @ViewState private var showHTMLSource = false
     @ViewState private var showMarkdownSource = false
@@ -155,6 +158,7 @@ struct FileSpotlightOverlay: View {
             }
             Spacer(minLength: 8)
             if siblings.count > 1 { Text(L10n.text("← → 切换同类型文件")).font(.system(size: 10)).foregroundStyle(.tertiary).lineLimit(1) }
+            if let locate { Button(action: locate) { Label(L10n.text("在文件页定位"), systemImage: "folder") }.help(L10n.text("打开所在目录并选中此文件，可在那里编辑或下载")) }
             Button { expanded.toggle() } label: { Image(systemName: expanded ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right") }
                 .help(expanded ? L10n.text("还原预览窗口") : L10n.text("放大预览窗口"))
             Button { model.closeSpotlight() } label: { Image(systemName: "xmark") }.help(L10n.text("关闭预览（Esc）"))

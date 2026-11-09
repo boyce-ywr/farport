@@ -42,6 +42,8 @@ do {
     if let index = CommandLine.arguments.firstIndex(of: "--screen-sharing-ssh"), CommandLine.arguments.indices.contains(index + 1) { try checkScreenSharingSSH(root: CommandLine.arguments[index + 1]); exit(0) }
     try checkMonitorProcessSorting()
     try checkTerminalGraphics()
+    try checkTerminalPathLinks()
+    if CommandLine.arguments.contains("--terminal-path-link-check") { print("PASS · \(checks) 项终端路径链接断言"); exit(0) }
     if CommandLine.arguments.contains("--preview-lifecycle-check") { try checkPreviewLifecycle(); exit(0) }
     if CommandLine.arguments.contains("--preview-timeout-check") { try checkPreviewTimeout(); exit(0) }
     if let index = CommandLine.arguments.firstIndex(of: "--preview-lifecycle-ssh"), CommandLine.arguments.indices.contains(index + 1) { try checkRemotePreviewLifecycle(root: CommandLine.arguments[index + 1]); exit(0) }

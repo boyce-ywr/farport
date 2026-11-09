@@ -34,6 +34,9 @@ final class SafeTerminalView: LocalProcessTerminalView {
     var onContextFocus: (() -> Void)?
     var prefersTmuxMenu: (() -> Bool)?
     var prepareTmuxMenu: (() -> Void)?
+    /// Cmd+点击或右键菜单打开终端里的路径；由工作区在终端所属主机上解析。
+    var onOpenPath: ((String) -> Void)?
+    private var contextPath: String?
     var semanticCommandCopyAllowed = true
     var remoteSelectionContext = false
     var copyRemoteSelection: ((CancellationFlag) async throws -> Data?)?
@@ -99,6 +102,7 @@ final class SafeTerminalView: LocalProcessTerminalView {
         onFocus?()
     }
     override func rightMouseDown(with event: NSEvent) {
+        contextPath = onOpenPath == nil ? nil : pathLink(at: event)
         if clipboard.hasDragSelection {
             window?.makeFirstResponder(self); onContextFocus?(); forwardedRightClick = false
             NSMenu.popUpContextMenu(ordinaryContextMenu(), with: event, for: self); return
@@ -185,6 +189,11 @@ final class SafeTerminalView: LocalProcessTerminalView {
         func item(_ title: String, _ action: Selector, enabled: Bool = true) {
             let entry = NSMenuItem(title: title, action: action, keyEquivalent: ""); entry.target = self; entry.isEnabled = enabled; menu.addItem(entry)
         }
+        if let contextPath {
+            let label = contextPath.count > 48 ? String(contextPath.prefix(22)) + "…" + String(contextPath.suffix(22)) : contextPath
+            item(L10n.text("在文件中打开") + " “\(label)”", #selector(contextOpenPath), enabled: process.running)
+            menu.addItem(.separator())
+        }
         item(L10n.text("复制"), #selector(contextCopy), enabled: selectionActive || copyRemoteSelection != nil)
         item(L10n.text("复制所选命令全文"), #selector(contextCommandCopy), enabled: selectionActive && semanticCommandCopyAllowed)
         item(L10n.text("复制所选命令的输出"), #selector(contextOutputCopy), enabled: selectionActive && semanticCommandCopyAllowed)
@@ -198,6 +207,24 @@ final class SafeTerminalView: LocalProcessTerminalView {
         return menu
     }
     @objc private func contextCopy() { copy(self) }
+    @objc private func contextOpenPath() { if let contextPath { onOpenPath?(contextPath) } }
+    /// 右键位置上的链接文本（OSC 8 或隐式识别）；网页链接不在此处理。
+    func pathLink(at event: NSEvent) -> String? {
+        let point = convert(event.locationInWindow, from: nil)
+        let cell = cellSize, terminal = getTerminal()
+        guard cell.width > 0, cell.height > 0, point.y <= frame.height else { return nil }
+        let column = min(max(0, Int(point.x / cell.width)), terminal.cols - 1), row = Int((frame.height - point.y) / cell.height)
+        guard row >= 0, row < terminal.rows,
+              let link = terminal.link(at: .screen(Position(col: column, row: row)), mode: .explicitAndImplicit), !TerminalPathLink.isWebLink(link) else { return nil }
+        return link
+    }
+    /// 与 SwiftTerm 内部 computeFontDimensions 相同的单元格尺寸（该属性未公开）。
+    var cellSize: CGSize {
+        let scale = window?.backingScaleFactor ?? 2
+        let width = (font.advancement(forGlyph: font.glyph(withName: "W")).width * scale).rounded() / scale
+        let height = ceil(ceil(CTFontGetAscent(font) + CTFontGetDescent(font) + CTFontGetLeading(font)) * scale) / scale
+        return CGSize(width: width, height: height)
+    }
     @objc private func contextCommandCopy() { copySemanticCommand(output: false) }
     @objc private func contextOutputCopy() { copySemanticCommand(output: true) }
     @objc private func contextPaste() { paste(self) }
@@ -275,7 +302,7 @@ final class SafeTerminalView: LocalProcessTerminalView {
         if bracketed { process.send(data: Array("\u{1b}[201~".utf8)[...]) }
     }
     override func requestOpenLink(source: TerminalView, link: String, params: [String: String]) {
-        guard let url = URL(string: link), ["https", "http"].contains(url.scheme?.lowercased() ?? "") else { return }
+        guard TerminalPathLink.isWebLink(link), let url = URL(string: link) else { onOpenPath?(link); return }
         let alert = NSAlert(); alert.messageText = L10n.text("在浏览器中打开链接？"); alert.informativeText = url.absoluteString; alert.addButton(withTitle: L10n.text("打开")); alert.addButton(withTitle: L10n.text("取消"))
         if alert.runModal() == .alertFirstButtonReturn { NSWorkspace.shared.open(url) }
     }
@@ -359,6 +386,8 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable, LocalProc
     var initialDirectory: String?
     var initialDirectoryResolver: (() async -> String?)?
     var isLocal: Bool { host == nil }
+    /// OSC 7 目录与 OSC 8 `file://` 链接中允许出现的主机名。
+    var trustedDirectoryHosts: Set<String> { host.map { [$0.address] } ?? Set(["localhost", "127.0.0.1", "::1", Host.current().name, Host.current().localizedName].compactMap { $0 }) }
     var displayName: String { host?.name ?? L10n.text("此 Mac") }
     var subtitle: String { host?.subtitle ?? L10n.text("\(NSUserName()) · \(LocalShellConfiguration.userShell) · 登录 Shell") }
     var restartLabel: String { isLocal ? L10n.text("重新打开") : L10n.text("重连") }
@@ -584,7 +613,7 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable, LocalProc
     nonisolated func hostCurrentDirectoryUpdate(source: TerminalView, directory: String?) {
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
-            let names: Set<String> = host.map { [$0.address] } ?? Set(["localhost", "127.0.0.1", "::1", Host.current().name, Host.current().localizedName].compactMap { $0 })
+            let names = trustedDirectoryHosts
             reportedDirectory = tmuxID == nil ? TerminalDirectory.path(from: directory, allowedHosts: names) : nil
             directoryChanged?()
         }
@@ -651,6 +680,9 @@ final class Workspace: ObservableObject {
     @Published var browsingLocalFiles = false
     @Published var showTransferTray = false
     @Published var hostSearch = ""
+    /// 终端路径链接打开的文件预览；独立于文件页的浏览器，不改变文件页当前目录。
+    @Published private(set) var terminalLinkPreview: TerminalLinkPreview?
+    private var terminalLinkCancellation = CancellationFlag()
     @Published var filePanes: [FilePane] = []
     @Published var fileLayout = TerminalLayout()
     var fileSource: FileBrowserSource? {
@@ -749,6 +781,7 @@ final class Workspace: ObservableObject {
         }
         session.terminal.prefersTmuxMenu = { [weak self, weak session] in self?.store.useTmuxContextMenu == true && session?.tmuxID != nil && session?.connected == true }
         session.terminal.prepareTmuxMenu = { [weak session] in session?.enableTmuxMenuIfNeeded() }
+        session.terminal.onOpenPath = { [weak self, weak session] link in if let self, let session { openTerminalPath(session, link: link) } }
         session.setAutomaticReconnect(store.automaticallyReconnectSSH)
         let configuredHost = session.host
         session.connectionConfigurationValid = { [weak self] in
@@ -825,6 +858,47 @@ final class Workspace: ObservableObject {
         guard session.connected, let directory = session.reportedDirectory else { return }
         let browser = fileBrowser(for: .terminal(session.id), host: session.host)
         if browser.path != directory { browser.load(directory) }
+    }
+    /// Cmd+点击或右键打开终端输出里的路径：在终端所属主机上确认存在后，目录进文件页，文件弹出预览。
+    func openTerminalPath(_ session: TerminalSession, link: String) {
+        guard session.connected, session.connectionConfigurationValid() else { return }
+        if case .docker = session.agentLaunch?.0.target { store.errorMessage = L10n.text("此终端运行在容器中，暂不支持打开容器内的路径。"); return }
+        guard let request = TerminalPathLink(link: link, trustedHosts: session.trustedDirectoryHosts) else { store.errorMessage = L10n.text("无法识别为此主机上的路径：") + link; return }
+        let connection = session.connectionID, transport = store.transport, host = session.host, tmux = session.tmuxID
+        let shellPID = session.terminal.process.shellPid, reported = session.reportedDirectory
+        terminalLinkCancellation.cancel(); let cancellation = CancellationFlag(); terminalLinkCancellation = cancellation
+        Task { [weak self, weak session] in
+            let result = await Task.detached {
+                Result { try TerminalPathResolver.resolve(request, transport: transport, host: host, tmuxID: tmux, shellPID: shellPID, reportedDirectory: reported, cancellation: cancellation) }
+            }.value
+            guard let self, let session, !cancellation.isCancelled, session.connected, session.connectionID == connection else { return }
+            switch result {
+            case .success(let file) where file.attributes.isDirectory:
+                browseFiles(.terminal(session.id))
+                let browser = fileBrowser(for: .terminal(session.id), host: session.host)
+                if browser.path != file.path { browser.load(file.path) }
+            case .success(let file):
+                closeTerminalLinkPreview()
+                let model = FileModel(host: session.host, store: store)
+                model.files = [file]; model.selection = [file.path]; model.spotlight = file; model.preview(file)
+                terminalLinkPreview = TerminalLinkPreview(sessionID: session.id, model: model)
+                // 预览期间键盘交给浮层（Esc 关闭），不再输入到终端。
+                session.terminal.window?.makeFirstResponder(nil)
+            case .failure(let error):
+                store.errorMessage = error.localizedDescription
+            }
+        }
+    }
+    func closeTerminalLinkPreview() {
+        guard let preview = terminalLinkPreview else { return }
+        preview.model.stop(); preview.model.stopWebPreview(); terminalLinkPreview = nil
+        if page == .terminal, let session = sessions.first(where: { $0.id == preview.sessionID }) { session.terminal.window?.makeFirstResponder(session.terminal) }
+    }
+    func revealTerminalLinkPreview() {
+        guard let preview = terminalLinkPreview, let file = preview.model.spotlight, let session = sessions.first(where: { $0.id == preview.sessionID }) else { return }
+        preview.model.stop(); preview.model.stopWebPreview(); terminalLinkPreview = nil
+        browseFiles(.terminal(session.id))
+        fileBrowser(for: .terminal(session.id), host: session.host).reveal(file.path)
     }
     func openTerminalDirectory() {
         guard let session = selectedTerminal, session.reportedDirectory != nil else {

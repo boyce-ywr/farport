@@ -229,6 +229,11 @@ struct WorkspaceRoot: View {
             catch { fputs("FAIL · \(error.localizedDescription)\n", stderr); exit(1) }
             return
         }
+        if screen == "terminal-path-links" {
+            do { try await TerminalPathLinkChecks.run(workspace: workspace, output: URL(fileURLWithPath: output)); NSApp.terminate(nil) }
+            catch { fputs("FAIL · \(error.localizedDescription)\n", stderr); exit(1) }
+            return
+        }
         if screen == "clipboard-policy" {
             do { try ClipboardPolicyChecks.run(store: store); NSApp.terminate(nil) }
             catch { fputs("FAIL · \(error.localizedDescription)\n", stderr); exit(1) }

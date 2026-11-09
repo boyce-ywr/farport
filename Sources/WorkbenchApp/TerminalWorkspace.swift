@@ -54,6 +54,7 @@ struct TerminalWorkspace: View {
                                 session.terminal.window?.makeFirstResponder(session.terminal)
                             }
                         }
+                        .overlay { if let preview = workspace.terminalLinkPreview { TerminalLinkPreviewOverlay(workspace: workspace, model: preview.model) } }
                 } else {
                     EmptyWorkspace(symbol: "terminal", title: L10n.text("此主机尚未打开终端"), detail: L10n.text("选择终端标签，或打开一个新的终端。"), action: workspace.host == nil ? L10n.text("打开本机终端") : L10n.text("打开 SSH 终端")) {
                         if let host = workspace.host { workspace.connectPreferred(host) } else { workspace.newTerminal() }
@@ -69,6 +70,19 @@ struct TerminalWorkspace: View {
     }
     private func feature(_ shortcut: String, _ title: String) -> some View {
         HStack(spacing: 8) { Text(shortcut).font(.system(size: 11, design: .monospaced)).padding(6).background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 5)); Text(title).font(.caption).foregroundStyle(.secondary) }
+    }
+}
+
+/// 终端里 Cmd+点击文件路径后的预览浮层；关闭后焦点回到原终端。
+struct TerminalLinkPreviewOverlay: View {
+    @ObservedObject var workspace: Workspace
+    @ObservedObject var model: FileModel
+    var body: some View {
+        if let file = model.spotlight {
+            FileSpotlightOverlay(model: model, file: file, locate: { workspace.revealTerminalLinkPreview() })
+        } else {
+            Color.clear.onAppear { workspace.closeTerminalLinkPreview() }
+        }
     }
 }
 

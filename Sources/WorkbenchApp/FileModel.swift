@@ -69,6 +69,7 @@ final class FileModel: ObservableObject {
     private var previewCancellation = CancellationFlag()
     private var generation = UUID()
     private var openingLink: String?
+    private var pendingReveal: String?
     private var hasLoaded = false
     private var refreshRequested = false
     let previewLimit = 512 * 1024
@@ -153,10 +154,16 @@ final class FileModel: ObservableObject {
                 if path != result.0 { previewCancellation.cancel(); generation = UUID(); previewBusy = false; filter = ""; selection = [] }
                 path = result.0; pathInput = result.0; files = result.1; skippedFileNames = result.2; busy = false; loadingPath = nil; hasLoaded = true
                 selection.formIntersection(Set(files.map(\.path)))
+                if let pendingReveal, files.contains(where: { $0.path == pendingReveal }) { selection = [pendingReveal] }
+                pendingReveal = nil
                 if selection.count != 1 { previewFile = nil; previewData = Data(); followLog = false }
                 if let spotlight, !files.contains(where: { $0.path == spotlight.path }) { self.spotlight = nil }
-            } catch { if !cancellation.isCancelled { errorMessage = error.localizedDescription; busy = false; loadingPath = nil } }
+            } catch { if !cancellation.isCancelled { errorMessage = error.localizedDescription; busy = false; loadingPath = nil; pendingReveal = nil } }
         }
+    }
+    /// 打开文件所在目录并在加载完成后选中它（终端路径链接“在文件页定位”）。
+    func reveal(_ filePath: String) {
+        pendingReveal = filePath; load(RemotePath.parent(filePath))
     }
     func activate(_ file: RemoteFile) {
         followLog = false
