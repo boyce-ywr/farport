@@ -57,7 +57,7 @@
 - 没有安装 tmux 时显示原因，仍可打开普通 SSH；不会自动安装软件。
 - 远端 tmux 管理与附着共用可执行文件探测，兼容非交互 SSH 的 PATH 缺少 Homebrew 等安装目录；不修改远端 Shell 配置。
 
-### Zellij 与 herdr（开发版，尚未发布）
+### Zellij 与 herdr（0.1.24 起）
 
 - 原“tmux 会话”页改名为“会话”，自动检测主机上已安装的 tmux、Zellij（≥0.44）和 herdr（≥0.9），按工具分组列出；未安装的工具只在页底注明，版本过低时提示并停用相关操作。本机与 POSIX SSH 主机都支持，Windows 原生 Shell 不支持。
 - 主机设置“连接时进入”可选普通终端、tmux、Zellij 或 herdr；旧版“连接时优先打开 tmux 工作区”自动对应 tmux。零个会话询问新建，一个直接进入，多个让用户选择，规则与 tmux 相同。
