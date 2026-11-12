@@ -14,6 +14,12 @@ public struct HostProfile: Identifiable, Codable, Hashable, Sendable {
     public var color: String
     public var configFile: String? = nil
     public var attachmentInsertion: AttachmentInsertionPolicy? = nil
+    /// 连接时进入的多路复用器；为空时沿用旧字段 `prefersTmux`，保证旧配置与旧版本互相兼容。
+    public var preferredMultiplexer: MultiplexerKind? = nil
+    public var entryMultiplexer: MultiplexerKind? {
+        get { preferredMultiplexer ?? (prefersTmux ? .tmux : nil) }
+        set { preferredMultiplexer = newValue; prefersTmux = newValue == .tmux }
+    }
 
     public init(id: UUID = UUID(), name: String = "", address: String = "", port: Int = 22,
                 username: String = "", group: String = "我的主机", identityFile: String = "",

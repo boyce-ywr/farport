@@ -15,7 +15,7 @@ macOS 14+ · Apple Silicon / Intel · [MIT license](LICENSE)
 - **Inspect host health.** View CPU, memory, processes, interface rates, ports, and system/user details without installing an agent. Collection stops when you leave. Linux/macOS have live validation; see release notes for Windows/Termux limitations.
 
 - **Work in multiple terminals.** Connect over SSH or open a local shell. Use tabs and nested splits, drag tabs to reorder them, and collapse the sidebar for more space.
-- **Return to your work.** Create, inspect, and attach to local or remote tmux sessions. Closing a terminal tab does not end its tmux session.
+- **Return to your work.** Create, inspect, and attach to local or remote tmux, Zellij and herdr sessions (Zellij and herdr are in the development build). Closing a terminal tab does not end its session.
 - **Move files between machines.** Copy files and folders between your Mac and SSH hosts, or between two SSH hosts. Multi-selection, verified resume, and overwrite confirmation are included.
 - **Read and edit remote files.** Preview text, images, Markdown, HTML, PDF, and audio/video. Common source files such as Java, Python, and JSON/XML have syntax highlighting. Edits check for conflicts before saving.
 - **Send images to a remote coding agent.** Paste a clipboard image or drag in files. Farport uploads and verifies them, then inserts a path the target machine can read. It does not press Enter for you.

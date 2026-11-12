@@ -48,6 +48,8 @@ bash scripts/check-workbench-ux.sh    # 实际界面回归，需要先准备隔�
 bash scripts/check-attachments.sh    # 附件上传、回读和 tmux
 bash scripts/check-tmux-copy.sh --ssh # tmux 当前选区主动复制、无OSC52路径及异步覆盖保护
 bash scripts/check-preferred-tmux.sh # 隔离SSH的零/单/多会话、创建确认、真实列表选择与取消
+bash scripts/check-multiplexers.sh --loopback # 本机与回环SSH的Zellij/herdr检测、附着、关闭只分离、herdr终端内新建、连接时进入与结束删除；需本机已装两者
+.build/debug/workbench-tests --multiplexer-live # 本机Zellij/herdr服务层实测，仅用随机farport-test-*会话
 .build/debug/workbench-tests --docker-engine-identity-check # Unix socket 身份读取、版本、HTTP错误和取消保护
 bash scripts/check-file-preview.sh   # 中英文、目录历史、源码高亮与媒体播放
 bash scripts/check-html-resources.sh --ssh # 本机/SSH 的 HTML 同级及子目录图片、CSS、SVG、脚本与并发资源加载

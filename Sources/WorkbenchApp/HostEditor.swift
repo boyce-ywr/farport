@@ -74,7 +74,10 @@ struct HostEditor: View {
                         if let config = profile.configFile { Text(L10n.text("SSH 配置：\(config)")).font(.caption).foregroundStyle(.secondary).lineLimit(2).truncationMode(.middle).help(config) }
                     }
                     section(L10n.text("工作区偏好"), symbol: "rectangle.3.group") {
-                        Toggle(L10n.text("连接时优先打开 tmux 工作区"), isOn: $profile.prefersTmux).font(.system(size: 12))
+                        Picker(L10n.text("连接时进入"), selection: $profile.entryMultiplexer) {
+                            Text(L10n.text("普通终端")).tag(MultiplexerKind?.none)
+                            ForEach(MultiplexerKind.allCases, id: \.self) { kind in Text(kind.title).tag(MultiplexerKind?.some(kind)) }
+                        }.font(.system(size: 12))
                         Picker(L10n.text("附件插入"), selection: Binding(get: { profile.attachmentInsertion ?? .inherit }, set: { profile.attachmentInsertion = $0 == .inherit ? nil : $0 })) {
                             ForEach(AttachmentInsertionPolicy.allCases, id: \.self) { policy in Text(policy.title).tag(policy) }
                         }.font(.system(size: 12))

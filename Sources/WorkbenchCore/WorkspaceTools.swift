@@ -5,8 +5,11 @@ public struct SavedTerminal: Codable, Equatable, Identifiable {
     public var hostID: UUID?
     public var connectionKey: String?
     public var tmuxID: String?
-    public init(id: UUID, hostID: UUID?, connectionKey: String?, tmuxID: String?) {
+    /// Zellij/herdr 会话；恢复时只附着已有会话，不新建。
+    public var multiplexer: MultiplexerAttachment?
+    public init(id: UUID, hostID: UUID?, connectionKey: String?, tmuxID: String?, multiplexer: MultiplexerAttachment? = nil) {
         self.id = id; self.hostID = hostID; self.connectionKey = connectionKey; self.tmuxID = tmuxID
+        self.multiplexer = multiplexer.map { MultiplexerAttachment(kind: $0.kind, session: $0.session) }
     }
 }
 

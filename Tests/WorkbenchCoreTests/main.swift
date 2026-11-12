@@ -29,6 +29,9 @@ do {
     if CommandLine.arguments.contains("--docker-engine-identity-check") { print("PASS · \(checks) 项Docker身份断言"); exit(0) }
     if let index = CommandLine.arguments.firstIndex(of: "--docker-attachments-check") { try checkDockerAttachments(arguments: Array(CommandLine.arguments.dropFirst(index + 1))); exit(0) }
     if CommandLine.arguments.contains("--local-tmux-directory-check") { try checkLocalTmuxDirectory(); exit(0) }
+    try checkMultiplexers()
+    if CommandLine.arguments.contains("--multiplexer-check") { print("PASS · \(checks) 项 Zellij/herdr 断言"); exit(0) }
+    if CommandLine.arguments.contains("--multiplexer-live") { try checkMultiplexersLive(); print("PASS · \(checks) 项 Zellij/herdr 实测断言"); exit(0) }
     try checkFileEndpointSnapshots()
     if CommandLine.arguments.contains("--file-endpoint-check") { print("PASS · \(checks) 项文件引用与主机身份断言"); exit(0) }
     try checkConnectionRecovery()

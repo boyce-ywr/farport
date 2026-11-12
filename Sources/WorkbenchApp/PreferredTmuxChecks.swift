@@ -111,7 +111,7 @@ enum PreferredTmuxChecks {
     private static func checkModel(store: AppStore) async throws {
         let service = TmuxService(transport: store.transport, host: nil, socketName: "farport-preferred-" + UUID().uuidString)
         let host = HostProfile(name: "隔离主机", address: "localhost", prefersTmux: true, lastSession: "obsolete")
-        var opened: [TmuxSession] = []
+        var opened: [PreferredSession] = []
         func request() -> PreferredTmuxConnection {
             let request = PreferredTmuxConnection(host: host, service: service)
             request.onConnect = { opened.append($0) }

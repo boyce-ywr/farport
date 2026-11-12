@@ -344,6 +344,10 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable, LocalProc
     let id: UUID
     let host: HostProfile?
     let tmuxID: String?
+    /// 附着的 Zellij/herdr 会话；与 tmuxID 互斥，tmux 专用功能（读 buffer、右键转发、窗格识别）不会作用于它。
+    let multiplexer: MultiplexerAttachment?
+    /// 是否附着在任一多路复用器（tmux、Zellij、herdr）中。
+    var inMultiplexer: Bool { tmuxID != nil || multiplexer != nil }
     let terminal = SafeTerminalView(frame: NSRect(x: 0, y: 0, width: 900, height: 560))
     @Published var title: String
     @Published private var stateKey = "待连接"
@@ -391,15 +395,16 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable, LocalProc
     var displayName: String { host?.name ?? L10n.text("此 Mac") }
     var subtitle: String { host?.subtitle ?? L10n.text("\(NSUserName()) · \(LocalShellConfiguration.userShell) · 登录 Shell") }
     var restartLabel: String { isLocal ? L10n.text("重新打开") : L10n.text("重连") }
-    init(host: HostProfile? = nil, tmuxID: String? = nil, transport: SSHTransport, id: UUID = UUID(), directoryResolver: (() async -> String?)? = nil) {
-        self.id = id; self.host = host; self.tmuxID = tmuxID; self.transport = transport
+    init(host: HostProfile? = nil, tmuxID: String? = nil, multiplexer: MultiplexerAttachment? = nil, transport: SSHTransport, id: UUID = UUID(), directoryResolver: (() async -> String?)? = nil) {
+        self.id = id; self.host = host; self.tmuxID = tmuxID; self.multiplexer = tmuxID == nil ? multiplexer : nil; self.transport = transport
         initialDirectoryResolver = directoryResolver
-        title = tmuxID == nil ? (host?.name ?? L10n.text("此 Mac")) : "tmux · \(host?.name ?? L10n.text("此 Mac"))"
+        let place = host?.name ?? L10n.text("此 Mac")
+        title = tmuxID != nil ? "tmux · \(place)" : (multiplexer.map { "\($0.kind.title) · \(place)" } ?? place)
         super.init()
         stateKey = isLocal ? "待启动" : "待连接"
         terminal.processDelegate = self; terminal.optionAsMetaKey = true
-        terminal.semanticCommandCopyAllowed = tmuxID == nil
-        terminal.remoteSelectionContext = tmuxID != nil
+        terminal.semanticCommandCopyAllowed = !inMultiplexer
+        terminal.remoteSelectionContext = inMultiplexer
         if let tmuxID {
             terminal.copyRemoteSelection = { [weak self] cancellation in
                 guard let self, connected, connectionConfigurationValid() else { throw WorkbenchError.cancelled }
@@ -469,7 +474,7 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable, LocalProc
                     terminal.prepareProcessStart()
                     terminal.startProcess(executable: launch.executable, args: launch.arguments, environment: launch.environment.map { "\($0.key)=\($0.value)" }, currentDirectory: launch.directory)
                 } else if let host {
-                    let tmux = tmuxID != nil
+                    let tmux = inMultiplexer
                     let graphicsCompatible = try await Task.detached {
                         _ = try transport.run(host, command: SSHTransport.connectionProbe, cancellation: cancellation, timeout: automatic ? 20 : 120).checked()
                         if tmux { try transport.requirePosixShell(host, cancellation: cancellation) }
@@ -478,14 +483,15 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable, LocalProc
                     guard !disposed, !cancellation.isCancelled, connectionID == attemptID else { return }
                     guard connectionConfigurationValid() else { connecting = false; started = false; stateKey = "主机配置已变化，请重新打开终端"; releaseNetworkActivity(); return }
                     terminal.prepareProcessStart()
-                    terminal.startProcess(executable: "/usr/bin/ssh", args: try transport.terminalArguments(for: host, tmuxSession: tmuxID, graphicsCompatible: graphicsCompatible, currentDirectory: initialDirectory), environment: transport.environment(for: host).map { "\($0.key)=\($0.value)" })
+                    terminal.startProcess(executable: "/usr/bin/ssh", args: try transport.terminalArguments(for: host, tmuxSession: tmuxID, multiplexer: multiplexer, graphicsCompatible: graphicsCompatible, currentDirectory: initialDirectory), environment: transport.environment(for: host).map { "\($0.key)=\($0.value)" })
                 } else {
                     let configuration = try LocalShellConfiguration(currentDirectory: initialDirectory)
-                    var environment = configuration.environment
-                    environment.removeValue(forKey: "TMUX"); environment.removeValue(forKey: "TMUX_PANE")
+                    let environment = MultiplexerService.isolatedEnvironment(configuration.environment)
                     terminal.prepareProcessStart()
                     if let tmuxID {
                         terminal.startProcess(executable: try TmuxService.localExecutable(), args: ["attach-session", "-t", tmuxID], environment: environment.map { "\($0.key)=\($0.value)" }, currentDirectory: configuration.directory)
+                    } else if let multiplexer {
+                        terminal.startProcess(executable: "/bin/sh", args: ["-c", MultiplexerService.attachScript(multiplexer)], environment: environment.map { "\($0.key)=\($0.value)" }, currentDirectory: NSHomeDirectory())
                     } else {
                         terminal.startProcess(executable: configuration.executable, environment: environment.map { "\($0.key)=\($0.value)" }, execName: configuration.executableName, currentDirectory: configuration.directory)
                     }
@@ -522,7 +528,7 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable, LocalProc
     }
     func requestManualReconnect() {
         guard !pendingReconnect else { return }
-        if childActive, tmuxID == nil, !confirm(L10n.text("重新连接当前终端？"), L10n.text("当前普通 Shell 的前台任务可能被结束；不会重放命令。tmux 只重新附着原会话。")) { return }
+        if childActive, !inMultiplexer, !confirm(L10n.text("重新连接当前终端？"), L10n.text("当前普通 Shell 的前台任务可能被结束；不会重放命令。tmux 只重新附着原会话。")) { return }
         reconnect()
     }
     func setAutomaticReconnect(_ enabled: Bool) {
@@ -614,7 +620,7 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable, LocalProc
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
             let names = trustedDirectoryHosts
-            reportedDirectory = tmuxID == nil ? TerminalDirectory.path(from: directory, allowedHosts: names) : nil
+            reportedDirectory = !inMultiplexer ? TerminalDirectory.path(from: directory, allowedHosts: names) : nil
             directoryChanged?()
         }
     }
@@ -766,7 +772,7 @@ final class Workspace: ObservableObject {
     }
     func sessionLabel(_ session: TerminalSession) -> String {
         if let (catalog, plan) = session.agentLaunch { return (plan.isShell ? L10n.text("终端") : plan.tool.title) + " · " + catalog.target.label + " · " + (plan.directory as NSString).lastPathComponent }
-        return "\(session.displayName) · \(session.isLocal ? L10n.text("本机") : (session.tmuxID == nil ? L10n.text("终端") : "tmux")) \(terminalNumbers[session.id] ?? 1)"
+        return "\(session.displayName) · \(session.isLocal ? L10n.text("本机") : (session.tmuxID != nil ? "tmux" : (session.multiplexer?.kind.title ?? L10n.text("终端")))) \(terminalNumbers[session.id] ?? 1)"
     }
     private func register(_ session: TerminalSession) {
         let next = (hostTerminalCounts[session.host?.id] ?? 0) + 1
@@ -825,7 +831,7 @@ final class Workspace: ObservableObject {
     func rememberWorkspace() {
         guard !restoringWorkspace else { return }
         let identifiers = Set(layout.tabs.flatMap(\.terminals))
-        let saved = sessions.filter { identifiers.contains($0.id) }.map { SavedTerminal(id: $0.id, hostID: $0.host?.id, connectionKey: $0.host?.connectionKey, tmuxID: $0.tmuxID) }
+        let saved = sessions.filter { identifiers.contains($0.id) }.map { SavedTerminal(id: $0.id, hostID: $0.host?.id, connectionKey: $0.host?.connectionKey, tmuxID: $0.tmuxID, multiplexer: $0.multiplexer) }
         store.workspaceTools.workspaces.removeAll { $0.id == savedWorkspaceID }
         if !saved.isEmpty {
             let names = sessions.filter { identifiers.contains($0.id) }.map(\.displayName)
@@ -847,7 +853,7 @@ final class Workspace: ObservableObject {
             for saved in snapshot.terminals {
                 let profile = saved.hostID.flatMap { identifier in store.hosts.first { $0.id == identifier && $0.connectionKey == saved.connectionKey } }
                 if saved.hostID != nil && profile == nil { restoredLayout.close(saved.id); skipped += 1; continue }
-                register(TerminalSession(host: profile, tmuxID: saved.tmuxID, transport: store.transport, id: saved.id))
+                register(TerminalSession(host: profile, tmuxID: saved.tmuxID, multiplexer: saved.multiplexer, transport: store.transport, id: saved.id))
             }
             layout = restoredLayout
             selectedHostID = selectedTerminal?.host?.id; page = .terminal
@@ -981,10 +987,10 @@ final class Workspace: ObservableObject {
             if let session = sessions.last(where: { $0.host?.id == selectedHostID }) { layout.select(session.id) }
         }
     }
-    func connect(_ host: HostProfile, tmux: String? = nil, split: Bool = false, sessionName: String? = nil, axis: TerminalSplitAxis = .leftRight, directoryResolver: (() async -> String?)? = nil) {
+    func connect(_ host: HostProfile, tmux: String? = nil, multiplexer: MultiplexerAttachment? = nil, split: Bool = false, sessionName: String? = nil, axis: TerminalSplitAxis = .leftRight, directoryResolver: (() async -> String?)? = nil) {
         cancelPreferredTmuxConnection()
         let preserveSplit = split && layout.primary != nil
-        let session = TerminalSession(host: host, tmuxID: tmux, transport: store.transport, directoryResolver: directoryResolver)
+        let session = TerminalSession(host: host, tmuxID: tmux, multiplexer: multiplexer, transport: store.transport, directoryResolver: directoryResolver)
         register(session)
         if preserveSplit { layout.split(with: session.id, axis: axis) } else { layout.select(session.id) }
         fileSource = .terminal(session.id)
@@ -993,9 +999,9 @@ final class Workspace: ObservableObject {
         page = .terminal
         if let tmux { store.rememberSession(host, session: sessionName ?? tmux) }
     }
-    func connectLocal(split: Bool = false, tmux: String? = nil, axis: TerminalSplitAxis = .leftRight, directoryResolver: (() async -> String?)? = nil) {
+    func connectLocal(split: Bool = false, tmux: String? = nil, multiplexer: MultiplexerAttachment? = nil, axis: TerminalSplitAxis = .leftRight, directoryResolver: (() async -> String?)? = nil) {
         cancelPreferredTmuxConnection()
-        let session = TerminalSession(tmuxID: tmux, transport: store.transport, directoryResolver: directoryResolver)
+        let session = TerminalSession(tmuxID: tmux, multiplexer: multiplexer, transport: store.transport, directoryResolver: directoryResolver)
         register(session)
         if split && layout.primary != nil { layout.split(with: session.id, axis: axis) } else { layout.select(session.id) }
         fileSource = .terminal(session.id)
@@ -1016,6 +1022,9 @@ final class Workspace: ObservableObject {
     func attachTmux(_ host: HostProfile?, session: TmuxSession) {
         if let host { connect(host, tmux: session.id, sessionName: session.name) } else { connectLocal(tmux: session.id) }
     }
+    func attachMultiplexer(_ host: HostProfile?, attachment: MultiplexerAttachment) {
+        if let host { connect(host, multiplexer: attachment, sessionName: attachment.session) } else { connectLocal(multiplexer: attachment) }
+    }
     func newTerminal(split: Bool = false, axis: TerminalSplitAxis = .leftRight) {
         if split, let source = selectedTerminal {
             let connection = source.connectionID
@@ -1027,6 +1036,8 @@ final class Workspace: ObservableObject {
                 if let tmux = source.tmuxID {
                     let host = source.host
                     directory = await Task.detached { try? TmuxService(transport: transport, host: host).target(session: tmux).directory }.value
+                } else if source.multiplexer != nil {
+                    directory = nil
                 } else if source.isLocal {
                     directory = LocalProcessDirectory.current(shellPID: source.terminal.process.shellPid)
                 } else { directory = source.reportedDirectory }
@@ -1072,31 +1083,33 @@ final class Workspace: ObservableObject {
     }
     func togglePaneZoom() { if page == .files { fileLayout.toggleZoom() } else { layout.toggleZoom() } }
     func confirmClosePane(_ session: TerminalSession) {
-        let detail = session.tmuxID != nil ? L10n.text("只分离此终端，tmux 会话继续运行。") : L10n.text("当前 Shell 和前台任务可能随连接关闭。")
+        let detail = session.tmuxID != nil ? L10n.text("只分离此终端，tmux 会话继续运行。") : session.multiplexer.map { L10n.text("只分离此终端，\($0.kind.title) 会话继续运行。") } ?? L10n.text("当前 Shell 和前台任务可能随连接关闭。")
         if session.connected && !confirm(L10n.text("关闭此分栏？"), detail) { return }
         close(session)
     }
     func closeTab(_ identifier: UUID) {
         guard let tab = layout.tabs.first(where: { $0.id == identifier }) else { return }
         let closing = sessions.filter { tab.terminals.contains($0.id) }
-        if closing.contains(where: \.connected) && !confirm(L10n.text("关闭此标签的 \(closing.count) 个终端？"), L10n.text("普通 Shell 和前台任务可能结束；tmux 只分离，不结束远端会话。其他标签不受影响。")) { return }
+        if closing.contains(where: \.connected) && !confirm(L10n.text("关闭此标签的 \(closing.count) 个终端？"), L10n.text("普通 Shell 和前台任务可能结束；tmux、Zellij、herdr 只分离，不结束会话。其他标签不受影响。")) { return }
         closing.forEach { close($0) }
     }
     func connectPreferred(_ host: HostProfile) {
         cancelPreferredTmuxConnection()
         selectedHostID = host.id
-        guard host.prefersTmux else { connect(host); return }
+        guard let kind = host.entryMultiplexer else { connect(host); return }
         page = .terminal
-        let request = PreferredTmuxConnection(host: host, service: TmuxService(transport: store.transport, host: host))
+        let request = kind == .tmux ? PreferredTmuxConnection(host: host, service: TmuxService(transport: store.transport, host: host))
+            : PreferredTmuxConnection(host: host, service: MultiplexerService(kind: kind, transport: store.transport, host: host))
         request.isCurrent = { [weak self, weak request] in
             guard let self, let request else { return false }
             return preferredTmuxConnection === request && selectedHostID == host.id && page == .terminal
-                && store.hosts.contains { $0.id == host.id && $0.connectionKey == host.connectionKey && $0.prefersTmux }
+                && store.hosts.contains { $0.id == host.id && $0.connectionKey == host.connectionKey && $0.entryMultiplexer == kind }
         }
         request.onConnect = { [weak self, weak request] session in
             guard let self, request?.isCurrent() == true else { return }
             cancelPreferredTmuxConnection()
-            connect(host, tmux: session.id, sessionName: session.name)
+            if kind == .tmux { connect(host, tmux: session.id, sessionName: session.name) }
+            else { connect(host, multiplexer: MultiplexerAttachment(kind: kind, session: session.name, create: session.create), sessionName: session.name) }
         }
         preferredTmuxConnection = request
     }
@@ -1127,7 +1140,7 @@ final class Workspace: ObservableObject {
 }
 
 enum WorkspacePage: String, CaseIterable {
-    case terminal = "终端", tmux = "tmux 会话", files = "文件", transfers = "传输", tunnels = "隧道", monitor = "监控"
+    case terminal = "终端", tmux = "会话", files = "文件", transfers = "传输", tunnels = "隧道", monitor = "监控"
     var title: String { L10n.key(rawValue) }
     var symbol: String {
         switch self { case .terminal: return "terminal"; case .tmux: return "square.stack.3d.up"; case .files: return "folder"; case .transfers: return "arrow.left.arrow.right"; case .tunnels: return "point.3.connected.trianglepath.dotted"; case .monitor: return "waveform.path.ecg" }

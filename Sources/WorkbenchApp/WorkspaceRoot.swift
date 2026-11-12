@@ -146,7 +146,7 @@ struct WorkspaceRoot: View {
             .onTapGesture(count: 2) { workspace.connectPreferred(host) }
             .contextMenu {
                 Button(L10n.text("连接普通终端")) { workspace.connect(host) }
-                Button(L10n.text("管理 tmux")) { workspace.selectedHostID = host.id; workspace.page = .tmux }
+                Button(L10n.text("管理会话")) { workspace.selectedHostID = host.id; workspace.page = .tmux }
                 Button(L10n.text("浏览文件")) { workspace.browseFiles(.host(host.id)) }
                 Button(L10n.text("主机监控")) { workspace.selectedHostID = host.id; workspace.page = .monitor }
                 Button(L10n.text("打开远程 Mac 桌面…")) { workspace.screenSharingHost = host }
@@ -216,6 +216,11 @@ struct WorkspaceRoot: View {
         let screen = ProcessInfo.processInfo.environment["SWB_QA_SCREEN"] ?? "terminal"
         if screen == "preferred-tmux" {
             do { try await PreferredTmuxChecks.run(workspace: workspace, output: URL(fileURLWithPath: output)); NSApp.terminate(nil) }
+            catch { fputs("FAIL · \(error.localizedDescription)\n", stderr); workspace.sessions.forEach { $0.close() }; exit(1) }
+            return
+        }
+        if screen == "multiplexer-sessions" {
+            do { try await MultiplexerAppChecks.run(workspace: workspace, output: URL(fileURLWithPath: output)); NSApp.terminate(nil) }
             catch { fputs("FAIL · \(error.localizedDescription)\n", stderr); workspace.sessions.forEach { $0.close() }; exit(1) }
             return
         }
