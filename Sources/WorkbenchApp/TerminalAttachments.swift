@@ -65,6 +65,18 @@ private func currentDockerTerminal(_ terminal: LocalDockerTerminal, tmux: String
     return try shellPID.flatMap { try LocalDockerTerminal.local(shellPID: $0) }
 }
 
+/// 附件发送的一个阶段及其耗时。
+struct AttachmentStageTiming {
+    let name: String
+    let started: Date
+    var seconds: TimeInterval = 0
+    static func format(_ seconds: TimeInterval) -> String {
+        if seconds < 10 { return String(format: "%.1fs", seconds) }
+        if seconds < 60 { return String(format: "%.0fs", seconds) }
+        return String(format: "%dm%02ds", Int(seconds) / 60, Int(seconds) % 60)
+    }
+}
+
 @MainActor
 final class TerminalAttachmentDraft: ObservableObject, Identifiable {
     let id = UUID()
@@ -87,6 +99,9 @@ final class TerminalAttachmentDraft: ObservableObject, Identifiable {
     @Published var containerSelection: DockerAttachmentSelection?
     @Published var showContainerPicker = false
     @Published private(set) var dockerBinding: DockerAttachmentBinding?
+    /// 各阶段耗时，按发生顺序；用于提示条展示实际时间花在哪里。
+    @Published private(set) var timings: [AttachmentStageTiming] = []
+    @Published private(set) var currentStage: AttachmentStageTiming?
     private var dockerResult: DockerUploadedAttachments?
     private var cancellation = CancellationFlag()
     private var disposed = false
@@ -103,6 +118,7 @@ final class TerminalAttachmentDraft: ObservableObject, Identifiable {
     private func prepare() {
         let host = session.host; let tmux = session.tmuxID; let transport = transport; let flag = cancellation
         let remembered = session.dockerAttachmentBinding; let shellPID = localShellPID
+        begin(L10n.text("确认目标"))
         Task {
             do {
                 let context = try await Task.detached { () -> (String, TmuxTarget?, DockerAttachmentSelection?, DockerAttachmentBinding?) in
@@ -136,16 +152,16 @@ final class TerminalAttachmentDraft: ObservableObject, Identifiable {
                     session.dockerAttachmentBinding = nil
                     containerSelection = selection; preparing = false
                     status = L10n.text("请选择并确认原窗格的目标容器，确认前不会复制附件。")
-                    showContainerPicker = true; return
+                    finishStage(); showContainerPicker = true; return
                 }
                 preparing = false; status = L10n.text("目标：\(session.displayName)\(target.map { L10n.text(" · 窗格 ") + $0.paneID } ?? "")")
                 upload()
-            } catch { guard !disposed else { return }; preparing = false; failure = error.localizedDescription }
+            } catch { guard !disposed else { return }; preparing = false; finishStage(); failure = error.localizedDescription }
         }
     }
     func chooseContainer(_ identifier: String) async {
         guard let selection = containerSelection, !preparing, !disposed else { return }
-        preparing = true; failure = nil
+        preparing = true; failure = nil; begin(L10n.text("确认容器"))
         let transport = transport; let flag = cancellation; let tmux = session.tmuxID; let shellPID = localShellPID
         do {
             let binding = try await Task.detached {
@@ -170,11 +186,11 @@ final class TerminalAttachmentDraft: ObservableObject, Identifiable {
                 try await Task.sleep(for: .milliseconds(50))
             }
             upload()
-        } catch { preparing = false; failure = error.localizedDescription }
+        } catch { preparing = false; finishStage(); failure = error.localizedDescription }
     }
     func upload() {
         guard !running, !preparing, !disposed, session.connected, session.connectionID == identity.connectionID else { return }
-        running = true; failure = nil; result = nil; cancellation = CancellationFlag()
+        running = true; failure = nil; result = nil; cancellation = CancellationFlag(); begin(L10n.text("上传并回读校验"))
         let flag = cancellation; let host = session.host; let files = payload.files; let destination = directory; let transport = transport
         let binding = dockerBinding; let tmux = session.tmuxID; let shellPID = localShellPID
         Task {
@@ -193,15 +209,15 @@ final class TerminalAttachmentDraft: ObservableObject, Identifiable {
                 guard !disposed else { return }
                 let uploaded = outcome.0; dockerResult = outcome.1
                 directory = uploaded.directory
-                running = false; result = uploaded; status = L10n.text("目标机器的 \(uploaded.fileCount) 个文件回读校验通过")
+                finishStage(); running = false; result = uploaded; status = L10n.text("目标机器的 \(uploaded.fileCount) 个文件回读校验通过")
                 if !automaticallyInsert { status += L10n.text("；已按设置等待手动插入。") }
                 else if await waitForAutomaticTarget() { await insert(requireOriginalFocus: true) }
-            } catch { guard !disposed else { return }; running = false; failure = error.localizedDescription }
+            } catch { guard !disposed else { return }; running = false; finishStage(); failure = error.localizedDescription }
         }
     }
     private func waitForAutomaticTarget() async -> Bool {
         guard let workspace else { return false }
-        settlingFocus = true; defer { settlingFocus = false }
+        settlingFocus = true; begin(L10n.text("等待终端焦点")); defer { settlingFocus = false; finishStage() }
         var stable = 0
         for _ in 0..<120 {
             guard !disposed, !cancellation.isCancelled, !inserted else { return false }
@@ -226,6 +242,7 @@ final class TerminalAttachmentDraft: ObservableObject, Identifiable {
             failure = L10n.text("接收终端或连接已变化。请回到原连接，确认输入位置后重试；未插入路径。"); return
         }
         inserting = true; defer { inserting = false }
+        begin(L10n.text("插入前复核"))
         do {
             let transport = transport; let host = session.host
             let binding = dockerBinding; let dockerResult = dockerResult; let flag = cancellation
@@ -246,6 +263,7 @@ final class TerminalAttachmentDraft: ObservableObject, Identifiable {
                   (!requireOriginalFocus || workspace.canAutomaticallyInsert(self)) else {
                 throw WorkbenchError.message(L10n.text("插入前目标发生变化，附件未发送。"))
             }
+            begin(L10n.text("粘贴到终端"))
             let text = try AttachmentReference.text(paths: result.paths)
             if let binding, let tmuxID = session.tmuxID {
                 let service = TmuxService(transport: transport, host: binding.terminal.host)
@@ -263,8 +281,8 @@ final class TerminalAttachmentDraft: ObservableObject, Identifiable {
             } else {
                 session.terminal.sendAttachmentReference(text)
             }
-            inserted = true; status = L10n.text("已插入目标机器路径引用，未自动回车。Agent 读取/图片识别状态以 Agent 提示为准。"); failure = nil
-        } catch { failure = error.localizedDescription }
+            finishStage(); inserted = true; status = L10n.text("已插入目标机器路径引用，未自动回车。Agent 读取/图片识别状态以 Agent 提示为准。"); failure = nil
+        } catch { finishStage(); failure = error.localizedDescription }
     }
     func deleteUploaded() async {
         guard let result, !running, !inserting else { return }
@@ -287,9 +305,27 @@ final class TerminalAttachmentDraft: ObservableObject, Identifiable {
     func retry() {
         guard !busy, !disposed else { return }
         failure = nil; containerSelection = nil; dockerBinding = nil; dockerResult = nil
+        timings = []; currentStage = nil
         preparing = true; cancellation = CancellationFlag(); prepare()
     }
     var busy: Bool { preparing || running || inserting || settlingFocus || containerSelection != nil }
+    private func begin(_ stage: String) { finishStage(); currentStage = AttachmentStageTiming(name: stage, started: Date()) }
+    private func finishStage() {
+        guard var stage = currentStage else { return }
+        stage.seconds = Date().timeIntervalSince(stage.started); timings.append(stage); currentStage = nil
+    }
+    /// 例如“确认目标 0.8s · 上传并回读校验 2.3s · 插入前复核 1.4s… · 共 4.5s”；进行中的阶段按 now 实时计算。总计只累加各阶段，不含等待用户操作的时间。
+    func timingSummary(now: Date = Date()) -> String? {
+        var parts = timings.map { $0.name + " " + AttachmentStageTiming.format($0.seconds) }
+        var total = timings.reduce(0) { $0 + $1.seconds }
+        if let currentStage {
+            let elapsed = now.timeIntervalSince(currentStage.started); total += elapsed
+            parts.append(currentStage.name + " " + AttachmentStageTiming.format(elapsed) + "…")
+        }
+        guard !parts.isEmpty else { return nil }
+        return L10n.text("耗时") + (L10n.language == .english ? ": " : "：") + parts.joined(separator: " · ") + " · " + L10n.text("共") + " " + AttachmentStageTiming.format(total)
+    }
+    var totalSeconds: TimeInterval { timings.reduce(0) { $0 + $1.seconds } }
     func dispose() {
         disposed = true; cancellation.cancel()
         showContainerPicker = false; containerSelection = nil
@@ -308,6 +344,9 @@ struct TerminalAttachmentBanner: View {
             VStack(alignment: .leading, spacing: 4) {
                 Text(L10n.text("\(draft.payload.files.count) 个附件 → \(draft.targetDescription)")).font(.system(size: 11, weight: .semibold))
                 Text(draft.failure ?? draft.status).font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(2)
+                if draft.currentStage != nil {
+                    TimelineView(.periodic(from: .now, by: 0.2)) { context in timingText(draft.timingSummary(now: context.date)) }
+                } else { timingText(draft.timingSummary()) }
             }
             if draft.running { ProgressView(value: draft.progress).frame(width: 90) }
             else if draft.preparing || draft.inserting { ProgressView().controlSize(.small) }
@@ -337,5 +376,8 @@ struct TerminalAttachmentBanner: View {
             .sheet(isPresented: $draft.showContainerPicker) {
                 if let selection = draft.containerSelection { ContainerAttachmentPicker(draft: draft, selection: selection) }
             }
+    }
+    @ViewBuilder private func timingText(_ summary: String?) -> some View {
+        if let summary { Text(summary).font(.system(size: 10).monospacedDigit()).foregroundStyle(.tertiary).lineLimit(2).textSelection(.enabled) }
     }
 }

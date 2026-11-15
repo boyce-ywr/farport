@@ -10,6 +10,10 @@ struct CompactAttachmentNotice: View {
             HStack(spacing: 8) {
                 Image(systemName: "checkmark.circle.fill").foregroundStyle(.teal)
                 Text(L10n.text("附件已发送至 \(draft.targetDescription)")).lineLimit(1)
+                if !draft.timings.isEmpty {
+                    Text(L10n.text("共") + " " + AttachmentStageTiming.format(draft.totalSeconds)).monospacedDigit().foregroundStyle(.secondary)
+                        .help(draft.timingSummary() ?? "")
+                }
                 Spacer()
                 Button(L10n.text("详情")) { showDetails.toggle() }
                 Button(action: close) { Image(systemName: "xmark") }

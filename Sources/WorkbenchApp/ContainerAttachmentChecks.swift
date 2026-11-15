@@ -79,6 +79,10 @@ enum ContainerAttachmentChecks {
             }
             try await wait { draft.inserted || draft.failure != nil }
             print(String(format: "PERF · 容器附件第%d轮摄取到插入 %.3fs", iteration, ProcessInfo.processInfo.systemUptime - started))
+            let stages = draft.timings.map(\.name)
+            guard draft.currentStage == nil, [L10n.text("确认目标"), L10n.text("上传并回读校验"), L10n.text("插入前复核"), L10n.text("粘贴到终端")].allSatisfy(stages.contains),
+                  let summary = draft.timingSummary() else { throw WorkbenchError.message("附件阶段耗时未完整记录：\(stages)") }
+            print("PERF · 容器附件第\(iteration)轮 " + summary)
             guard draft.inserted, let result = draft.result, draft.dockerBinding?.container.id == identifier, draft.containerSelection == nil else { throw WorkbenchError.message(draft.failure ?? "未插入容器附件") }
             let content = try ProcessRunner.run(executable: executable, arguments: ["exec", "--user", "tester", identifier, "cat", result.paths[0]]).checked().output
             guard content == (try Data(contentsOf: draft.payload.files[0])) else { throw WorkbenchError.message("容器用户读到内容不一致") }

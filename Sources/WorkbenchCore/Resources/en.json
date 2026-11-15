@@ -1137,5 +1137,13 @@
   "无法读取终端中 Docker 容器的挂载信息：": "Cannot read the mounts of the Docker container in this terminal: ",
   "窗格中的 Docker 服务不在此主机上，容器挂载的路径不属于此主机，未打开。": "The Docker daemon used in this pane is not on this host, so the container mount paths do not belong to it. Not opened.",
   "容器路径": "Container path",
-  "主机路径": "Host path"
+  "主机路径": "Host path",
+  "确认目标": "Resolve target",
+  "确认容器": "Confirm container",
+  "上传并回读校验": "Upload and verify",
+  "等待终端焦点": "Wait for terminal focus",
+  "插入前复核": "Recheck before insert",
+  "粘贴到终端": "Paste into terminal",
+  "耗时": "Time",
+  "共": "Total"
 }
