@@ -78,7 +78,7 @@ struct WorkspaceRoot: View {
                         .frame(width: 34, height: 36).background(.teal.opacity(0.1), in: RoundedRectangle(cornerRadius: 8))
                     VStack(alignment: .leading, spacing: 4) {
                         Text(L10n.text("本机终端")).font(.system(size: 12, weight: .semibold))
-                        Text(L10n.text("此 Mac · 登录 Shell")).font(.system(size: 10)).foregroundStyle(.secondary)
+                        Text(store.localEntryMultiplexer.map { L10n.text("此 Mac · \($0.title)") } ?? L10n.text("此 Mac · 登录 Shell")).font(.system(size: 10)).foregroundStyle(.secondary)
                     }
                     Spacer(minLength: 0)
                     if showingLocalTerminal { RoundedRectangle(cornerRadius: 2).fill(.teal).frame(width: 3, height: 22) }
@@ -87,7 +87,8 @@ struct WorkspaceRoot: View {
             }.buttonStyle(.plain).padding(.horizontal, 10).padding(.top, 14).help(L10n.text("在 Farport 中打开本机登录 Shell"))
                 .interactionFrame("local-terminal")
                 .contextMenu {
-                    Button(L10n.text("新建本机终端")) { workspace.connectLocal() }
+                    Button(L10n.text("新建本机终端")) { workspace.connectLocalPreferred() }
+                    if store.localEntryMultiplexer != nil { Button(L10n.text("新建本机普通终端")) { workspace.connectLocal() } }
                     Button(L10n.text("添加本机分屏")) { workspace.connectLocal(split: true) }
                 }
             HStack {
@@ -172,7 +173,7 @@ struct WorkspaceRoot: View {
             Spacer()
             Menu {
                 if workspace.page == .files { Button(L10n.text("此 Mac 的文件")) { workspace.browseFiles(.local) } }
-                else { Button(L10n.text("新建本机终端")) { workspace.connectLocal() } }
+                else { Button(L10n.text("新建本机终端")) { workspace.connectLocalPreferred() } }
                 ForEach(store.hosts) { host in Button(host.name) { if workspace.page == .files { workspace.browseFiles(.host(host.id)) } else { workspace.connectPreferred(host) } } }
                 Divider(); Button(L10n.text("添加 SSH 主机…")) { editingHost = HostProfile() }
             } label: { Label(displayHost?.name ?? L10n.text("此 Mac"), systemImage: "server.rack").lineLimit(1) }.menuStyle(.borderlessButton).frame(maxWidth: 160)

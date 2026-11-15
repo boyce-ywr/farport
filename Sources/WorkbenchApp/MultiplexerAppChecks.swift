@@ -9,6 +9,7 @@ enum MultiplexerAppChecks {
     static func run(workspace: Workspace, output: URL) async throws {
         let store = workspace.store
         let suffix = String(UUID().uuidString.prefix(6)).lowercased()
+        try await checkLocalEntry(workspace: workspace, suffix: suffix)
         var targets: [HostProfile?] = [nil]
         if let loopback = store.hosts.first(where: { $0.address == "127.0.0.1" && $0.port == 22 }) { targets.append(loopback) }
         var cleanup: [(MultiplexerService, MultiplexerSession)] = []
@@ -166,6 +167,65 @@ enum MultiplexerAppChecks {
             print("PASS · 本机 \(kind.title) 鼠标拖选经 OSC 52 写入 Mac 剪贴板")
             workspace.close(session)
         }
+    }
+    /// 本机终端打开方式：普通终端不变；Zellij 零/一/多会话、打开普通终端、侧栏复用匹配标签、分屏仍为普通 Shell。
+    private static func checkLocalEntry(workspace: Workspace, suffix: String) async throws {
+        let store = workspace.store
+        let original = store.localEntryMultiplexer
+        let zellij = MultiplexerService(kind: .zellij, transport: store.transport, host: nil)
+        let first = "fp-local-a" + suffix, second = "fp-local-b" + suffix
+        defer {
+            store.localEntryMultiplexer = original
+            workspace.cancelPreferredTmuxConnection(); workspace.sessions.forEach { workspace.close($0) }
+            for name in [first, second] { _ = try? zellij.kill(session: MultiplexerSession(kind: .zellij, name: name, running: true)) }
+        }
+        workspace.sessions.forEach { workspace.close($0) }
+        store.localEntryMultiplexer = nil
+        workspace.openLocalTerminal()
+        guard workspace.preferredTmuxConnection == nil, let plain = workspace.selectedTerminal, plain.isLocal, !plain.inMultiplexer else { throw WorkbenchError.message("普通终端设置下侧栏未直接打开登录 Shell") }
+        workspace.close(plain)
+        print("PASS · 本机打开方式为普通终端时行为不变")
+
+        guard try await detached({ try zellij.sessions().filter(\.running) }).isEmpty else { print("SKIP · 本机已有 Zellij 会话，跳过本机打开方式实测"); return }
+        store.localEntryMultiplexer = .zellij
+        workspace.connectLocalPreferred()
+        try await wait("零会话时未询问新建") { workspace.preferredTmuxConnection?.loaded == true && workspace.preferredTmuxConnection?.busy == false }
+        guard workspace.sessions.isEmpty, workspace.preferredTmuxConnection?.host == nil else { throw WorkbenchError.message("零会话时未经确认打开了终端") }
+        try await wait("本机会话确认框未显示") { NSApp.windows.contains { $0.attachedSheet != nil } }
+        try await Task.sleep(for: .milliseconds(500))
+        try snapshot(NSApp.windows.first { $0.attachedSheet != nil }?.attachedSheet, output: URL(fileURLWithPath: FileManager.default.currentDirectoryPath + "/.test/ui-regression/local-entry-\(L10n.language == .english ? "en" : "zh").png"))
+        workspace.preferredTmuxConnection?.onPlain()
+        guard workspace.preferredTmuxConnection == nil, let fallback = workspace.selectedTerminal, fallback.isLocal, !fallback.inMultiplexer else { throw WorkbenchError.message("“打开普通终端”未打开本机登录 Shell") }
+        workspace.close(fallback)
+        guard try await detached({ try zellij.sessions() }).isEmpty else { throw WorkbenchError.message("打开普通终端时创建了 Zellij 会话") }
+        print("PASS · 本机 Zellij 零会话询问新建，“打开普通终端”不创建会话")
+
+        workspace.connectLocalPreferred()
+        try await wait("新建确认未就绪") { workspace.preferredTmuxConnection?.loaded == true && workspace.preferredTmuxConnection?.busy == false }
+        await workspace.preferredTmuxConnection?.create(name: first)
+        guard let created = workspace.selectedTerminal, created.isLocal, created.multiplexer?.session == first else { throw WorkbenchError.message("确认新建后未进入本机 Zellij 会话") }
+        try await wait("本机 Zellij 未附着") { await clients(zellij, first) > 0 }
+        workspace.close(created)
+        try await wait("关闭后本机 Zellij 未分离") { await clients(zellij, first) == 0 }
+        print("PASS · 本机 Zellij 确认新建后进入，关闭标签只分离")
+
+        workspace.openLocalTerminal()
+        try await wait("唯一会话未自动进入") { workspace.selectedTerminal?.multiplexer?.session == first }
+        let single = workspace.selectedTerminal!
+        workspace.openLocalTerminal()
+        guard workspace.sessions.count == 1, workspace.selectedTerminal === single, workspace.preferredTmuxConnection == nil else { throw WorkbenchError.message("侧栏未复用已打开的本机 Zellij 标签") }
+        workspace.newTerminal(split: true)
+        guard workspace.sessions.count == 2, let split = workspace.selectedTerminal, split !== single, split.isLocal, !split.inMultiplexer else { throw WorkbenchError.message("本机 Zellij 标签分屏不是普通 Shell") }
+        workspace.sessions.forEach { workspace.close($0) }
+        print("PASS · 侧栏唯一会话自动进入并复用匹配标签，分屏仍为普通 Shell")
+
+        _ = try await detached { try zellij.createDetached(name: second) }
+        workspace.connectLocalPreferred()
+        try await wait("多会话未列出选择") { workspace.preferredTmuxConnection?.sessions.count == 2 && workspace.preferredTmuxConnection?.busy == false }
+        guard workspace.sessions.isEmpty else { throw WorkbenchError.message("多会话时绕过了选择") }
+        await workspace.preferredTmuxConnection?.choose(second)
+        guard workspace.selectedTerminal?.multiplexer?.session == second else { throw WorkbenchError.message("未进入所选的本机 Zellij 会话") }
+        print("PASS · 本机 Zellij 多会话让用户选择并进入所选会话")
     }
     private static func clients(_ service: MultiplexerService, _ session: String) async -> Int {
         let host = service.host, transport = service.transport

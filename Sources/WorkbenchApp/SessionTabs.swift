@@ -65,7 +65,8 @@ struct SessionTabs: View {
                 .popover(isPresented: $showTabList) { tabList }
             Menu {
                 Button(L10n.text("新建当前主机终端")) { workspace.newTerminal() }
-                Button(L10n.text("新建本机终端")) { workspace.connectLocal() }
+                Button(L10n.text("新建本机终端")) { workspace.connectLocalPreferred() }
+                if workspace.store.localEntryMultiplexer != nil { Button(L10n.text("新建本机普通终端")) { workspace.connectLocal() } }
                 Divider()
                 Button(L10n.text("左右分栏 · ⌘D")) { workspace.newTerminal(split: true) }
                 Button(L10n.text("上下分栏 · ⌘⇧D")) { workspace.newTerminal(split: true, axis: .topBottom) }

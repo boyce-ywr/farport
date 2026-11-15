@@ -37,6 +37,10 @@ final class AppStore: ObservableObject {
     @Published var useTmuxContextMenu = UserDefaults.standard.bool(forKey: "useTmuxContextMenu") {
         didSet { UserDefaults.standard.set(useTmuxContextMenu, forKey: "useTmuxContextMenu") }
     }
+    /// 新建本机终端时进入的多路复用器；nil 为普通登录 Shell。
+    @Published var localEntryMultiplexer = UserDefaults.standard.string(forKey: "localEntryMultiplexer").flatMap(MultiplexerKind.init(rawValue:)) {
+        didSet { UserDefaults.standard.set(localEntryMultiplexer?.rawValue, forKey: "localEntryMultiplexer") }
+    }
     @Published var terminalClipboardWritePolicy = TerminalClipboardWritePolicy(stored: UserDefaults.standard.string(forKey: "terminalClipboardWritePolicy")) {
         didSet { UserDefaults.standard.set(terminalClipboardWritePolicy.rawValue, forKey: "terminalClipboardWritePolicy") }
     }

@@ -16,7 +16,8 @@ struct PreferredSession: Identifiable, Equatable, Sendable {
 @MainActor
 final class PreferredTmuxConnection: ObservableObject, Identifiable {
     let id = UUID()
-    let host: HostProfile
+    /// nil 表示此 Mac。
+    let host: HostProfile?
     let kind: MultiplexerKind
     @Published private(set) var sessions: [PreferredSession] = []
     @Published private(set) var loaded = false
@@ -24,22 +25,30 @@ final class PreferredTmuxConnection: ObservableObject, Identifiable {
     @Published private(set) var failure: String?
     var isCurrent: () -> Bool = { true }
     var onConnect: (PreferredSession) -> Void = { _ in }
+    /// 用户改为打开普通终端。
+    var onPlain: () -> Void = {}
     private let cancellation = CancellationFlag()
     private let list: @Sendable (CancellationFlag) throws -> [PreferredSession]
     /// nil 表示无法后台创建，确认后交给终端创建。
     private let make: (@Sendable (String, CancellationFlag) throws -> PreferredSession)?
     private let validate: @Sendable (String) throws -> Void
 
-    init(host: HostProfile, service: TmuxService) {
+    init(host: HostProfile?, service: TmuxService) {
         self.host = host; kind = .tmux
         list = { try service.sessions(cancellation: $0).map(Self.item) }
         make = { try Self.item(service.createSession(name: $0, cancellation: $1)) }
         validate = { _ in }
     }
-    init(host: HostProfile, service: MultiplexerService) {
+    init(host: HostProfile?, service: MultiplexerService) {
         self.host = host; kind = service.kind
         let kind = service.kind
-        list = { try service.sessions(cancellation: $0).filter(\.running).map { PreferredSession(id: $0.name, name: $0.name, detail: kind.title, created: nil) } }
+        list = {
+            switch try service.availability(cancellation: $0) {
+            case .missing: throw WorkbenchError.message(L10n.text("未检测到 \(kind.title)。可以打开普通终端，或安装后重试；不会自动安装。"))
+            case .outdated(let version): throw WorkbenchError.message(L10n.text("\(kind.title) 版本过低（\(version)），需要 \(kind.minimumVersion.0).\(kind.minimumVersion.1) 或更高版本。"))
+            case .available: break
+            }
+            return try service.sessions(cancellation: $0).filter(\.running).map { PreferredSession(id: $0.name, name: $0.name, detail: kind.title, created: nil) } }
         if service.createsInBackground {
             make = { name, flag in
                 let session = try service.createDetached(name: name, cancellation: flag)
@@ -110,8 +119,8 @@ struct PreferredTmuxConnectionView: View {
         let tool = request.kind.title
         VStack(alignment: .leading, spacing: 16) {
             Text(L10n.text("打开 \(tool) 工作区")).font(.headline)
-            Text(request.host.name).font(.subheadline).textSelection(.enabled)
-            Text(verbatim: "\(request.host.address):\(request.host.port)").font(.caption.monospaced()).foregroundStyle(.secondary)
+            Text(request.host?.name ?? L10n.text("此 Mac")).font(.subheadline).textSelection(.enabled)
+            if let host = request.host { Text(verbatim: "\(host.address):\(host.port)").font(.caption.monospaced()).foregroundStyle(.secondary) }
             if !request.loaded {
                 Text(request.failure == nil ? L10n.text("正在检测目标主机的 \(tool) 会话…") : L10n.text("暂时无法读取 \(tool)")).foregroundStyle(.secondary)
             } else if request.sessions.isEmpty {
@@ -135,6 +144,7 @@ struct PreferredTmuxConnectionView: View {
             HStack {
                 Button(L10n.text("取消"), action: cancel).keyboardShortcut(.cancelAction)
                 Button(L10n.text("刷新")) { Task { await request.refresh() } }.disabled(request.busy)
+                Button(L10n.text("打开普通终端")) { request.onPlain() }.disabled(request.busy).fixedSize()
                 Spacer()
                 if request.busy { ProgressView().controlSize(.small) }
                 if request.loaded, request.sessions.isEmpty {
@@ -145,7 +155,7 @@ struct PreferredTmuxConnectionView: View {
                         .buttonStyle(.borderedProminent).keyboardShortcut(.defaultAction).disabled(request.busy || !request.sessions.contains(where: { $0.id == selectedID }))
                 }
             }
-        }.padding(22).frame(width: 460)
+        }.padding(22).frame(width: 540)
             .task { await request.refresh() }
             .onDisappear { request.cancel() }
     }

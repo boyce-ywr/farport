@@ -57,7 +57,7 @@ struct WorkbenchCommands: Commands {
         CommandGroup(replacing: .newItem) {
             Button(L10n.text("新建窗口")) { openWindow(id: "workspace") }.keyboardShortcut("n")
             Button(L10n.text("新建终端")) { workspace?.newTerminal() }.keyboardShortcut("t").disabled(workspace == nil)
-            Button(L10n.text("新建本机终端")) { workspace?.connectLocal() }.keyboardShortcut("t", modifiers: [.command, .shift]).disabled(workspace == nil)
+            Button(L10n.text("新建本机终端")) { workspace?.connectLocalPreferred() }.keyboardShortcut("t", modifiers: [.command, .shift]).disabled(workspace == nil)
             Button(L10n.text("左右分栏")) { workspace?.splitCurrentWorkspace() }.keyboardShortcut("d").disabled(workspace?.page != .terminal && workspace?.page != .files)
             Button(L10n.text("上下分栏")) { workspace?.splitCurrentWorkspace(axis: .topBottom) }.keyboardShortcut("d", modifiers: [.command, .shift]).disabled(workspace?.page != .terminal && workspace?.page != .files)
         }
@@ -119,6 +119,14 @@ struct PreferencesView: View {
                 Picker(L10n.text("配色"), selection: $store.appearance) { Text(L10n.text("跟随系统")).tag("system"); Text(L10n.text("浅色")).tag("light"); Text(L10n.text("深色")).tag("dark") }
                 Picker(L10n.text("终端字体"), selection: $store.fontName) { Text(L10n.text("系统等宽字体")).tag("SF Mono"); Text("Menlo").tag("Menlo"); Text("Monaco").tag("Monaco") }
                 Slider(value: $store.fontSize, in: 10...28, step: 1) { Text(L10n.text("字号 \(Int(store.fontSize))")) }
+            }
+            Section(L10n.text("本机终端")) {
+                Picker(L10n.text("本机终端打开方式"), selection: $store.localEntryMultiplexer) {
+                    Text(L10n.text("普通终端")).tag(MultiplexerKind?.none)
+                    ForEach(MultiplexerKind.allCases, id: \.self) { kind in Text(kind.title).tag(MultiplexerKind?.some(kind)) }
+                }
+                Text(L10n.text("用于侧栏“本机终端”、⌘⇧T 和“新建本机终端”。选择 tmux、Zellij 或 herdr 时：没有会话先询问新建，一个直接进入，多个让你选择。分屏和“打开普通终端”仍是普通 Shell。"))
+                    .font(.caption).foregroundStyle(.secondary)
             }
             Section(L10n.text("隐私与安全")) {
                 Toggle(L10n.text("SSH 异常断线后自动重连"), isOn: $store.automaticallyReconnectSSH)

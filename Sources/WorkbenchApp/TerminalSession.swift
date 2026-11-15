@@ -980,7 +980,7 @@ final class Workspace: ObservableObject {
         if let identifier = fileSource?.terminalID, let session = sessions.first(where: { $0.id == identifier }) {
             selectTerminal(session); page = .terminal
         } else if let host = fileHost { connect(host) }
-        else if fileSource == .local { connectLocal() }
+        else if fileSource == .local { connectLocalPreferred() }
     }
     private func alignTerminalWithHost() {
         if page == .terminal, selectedTerminal?.host?.id != selectedHostID {
@@ -1015,9 +1015,19 @@ final class Workspace: ObservableObject {
         layout.select(session.id); fileSource = .terminal(session.id)
         selectedHostID = session.host?.id; browsingLocalFiles = session.isLocal; page = .terminal
     }
+    /// 侧栏“本机终端”：已有符合设置的本机标签就切过去，否则按设置新建。
     func openLocalTerminal() {
-        if let session = sessions.last(where: \.isLocal) { selectTerminal(session); page = .terminal }
-        else { connectLocal() }
+        let kind = store.localEntryMultiplexer
+        let matching = sessions.last { session in
+            guard session.isLocal else { return false }
+            switch kind {
+            case nil: return true
+            case .tmux: return session.tmuxID != nil
+            case .some(let kind): return session.multiplexer?.kind == kind
+            }
+        }
+        if let matching { selectTerminal(matching); page = .terminal }
+        else { connectLocalPreferred() }
     }
     func attachTmux(_ host: HostProfile?, session: TmuxSession) {
         if let host { connect(host, tmux: session.id, sessionName: session.name) } else { connectLocal(tmux: session.id) }
@@ -1110,6 +1120,33 @@ final class Workspace: ObservableObject {
             cancelPreferredTmuxConnection()
             if kind == .tmux { connect(host, tmux: session.id, sessionName: session.name) }
             else { connect(host, multiplexer: MultiplexerAttachment(kind: kind, session: session.name, create: session.create), sessionName: session.name) }
+        }
+        request.onPlain = { [weak self, weak request] in
+            guard let self, request?.isCurrent() == true else { return }
+            cancelPreferredTmuxConnection(); connect(host)
+        }
+        preferredTmuxConnection = request
+    }
+    /// 按设置新建本机终端：普通 Shell，或进入本机 tmux/Zellij/herdr 会话（规则同主机“连接时进入”）。
+    func connectLocalPreferred() {
+        cancelPreferredTmuxConnection()
+        guard let kind = store.localEntryMultiplexer else { connectLocal(); return }
+        browsingLocalFiles = true; selectedHostID = nil; page = .terminal
+        let request = kind == .tmux ? PreferredTmuxConnection(host: nil, service: TmuxService(transport: store.transport, host: nil))
+            : PreferredTmuxConnection(host: nil, service: MultiplexerService(kind: kind, transport: store.transport, host: nil))
+        request.isCurrent = { [weak self, weak request] in
+            guard let self, let request else { return false }
+            return preferredTmuxConnection === request && selectedHostID == nil && page == .terminal && store.localEntryMultiplexer == kind
+        }
+        request.onConnect = { [weak self, weak request] session in
+            guard let self, request?.isCurrent() == true else { return }
+            cancelPreferredTmuxConnection()
+            if kind == .tmux { connectLocal(tmux: session.id) }
+            else { connectLocal(multiplexer: MultiplexerAttachment(kind: kind, session: session.name, create: session.create)) }
+        }
+        request.onPlain = { [weak self, weak request] in
+            guard let self, request?.isCurrent() == true else { return }
+            cancelPreferredTmuxConnection(); connectLocal()
         }
         preferredTmuxConnection = request
     }
