@@ -870,13 +870,14 @@ final class Workspace: ObservableObject {
         guard session.connected, session.connectionConfigurationValid() else { return }
         guard let request = TerminalPathLink(link: link, trustedHosts: session.trustedDirectoryHosts) else { store.errorMessage = L10n.text("无法识别为此主机上的路径：") + link; return }
         let connection = session.connectionID, transport = store.transport, host = session.host, tmux = session.tmuxID
+        let herdr = session.multiplexer?.kind == .herdr ? session.multiplexer?.session : nil
         let shellPID = session.terminal.process.shellPid, reported = session.reportedDirectory
         var agentContainer: (binding: DockerAttachmentBinding, directory: String)?
         if let (catalog, plan) = session.agentLaunch, case .docker(let binding) = catalog.target { agentContainer = (binding, plan.directory) }
         terminalLinkCancellation.cancel(); let cancellation = CancellationFlag(); terminalLinkCancellation = cancellation
         Task { [weak self, weak session, agentContainer] in
             let result = await Task.detached {
-                Result { try TerminalPathResolver.resolve(request, transport: transport, host: host, tmuxID: tmux, shellPID: shellPID, reportedDirectory: reported,
+                Result { try TerminalPathResolver.resolve(request, transport: transport, host: host, tmuxID: tmux, herdr: herdr, shellPID: shellPID, reportedDirectory: reported,
                                                           agentContainer: agentContainer, cancellation: cancellation) }
             }.value
             guard let self, let session, !cancellation.isCancelled, session.connected, session.connectionID == connection else { return }

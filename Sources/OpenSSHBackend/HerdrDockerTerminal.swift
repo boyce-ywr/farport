@@ -7,6 +7,8 @@ public struct HerdrFocusedPane: Equatable, Sendable {
     public let shellPID: Int32
     /// 前台进程名，例如 ["docker"]。
     public let foreground: [String]
+    /// 窗格前台进程在主机上的目录（herdr 的 foreground_cwd，缺省为 cwd）。
+    public let directory: String
 }
 
 extension MultiplexerService {
@@ -43,7 +45,8 @@ extension MultiplexerService {
         let names = ((info["foreground_processes"] as? [[String: Any]]) ?? []).compactMap { item -> String? in
             ((item["name"] as? String) ?? (item["argv0"] as? String)).map { ($0 as NSString).lastPathComponent }
         }
-        return HerdrFocusedPane(paneID: paneID, shellPID: shell, foreground: names)
+        let directory = (focused[0]["foreground_cwd"] as? String) ?? (focused[0]["cwd"] as? String) ?? ""
+        return HerdrFocusedPane(paneID: paneID, shellPID: shell, foreground: names, directory: directory)
     }
 
     /// herdr 聚焦窗格前台是 docker 时识别其容器；不是 docker 时返回 nil（按普通附着主机处理）。

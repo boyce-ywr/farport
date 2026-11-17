@@ -20,7 +20,7 @@ struct TerminalPathResolution: Sendable {
 enum TerminalPathResolver {
     private static let containers = DockerPathContextCache()
 
-    static func resolve(_ link: TerminalPathLink, transport: SSHTransport, host: HostProfile?, tmuxID: String?, shellPID: Int32, reportedDirectory: String?,
+    static func resolve(_ link: TerminalPathLink, transport: SSHTransport, host: HostProfile?, tmuxID: String?, herdr: String? = nil, shellPID: Int32, reportedDirectory: String?,
                         agentContainer: (binding: DockerAttachmentBinding, directory: String)?, cancellation: CancellationFlag) throws -> TerminalPathResolution {
         var hostBases: [String] = []
         var container: (context: DockerPathContext, bases: [String], home: String?)?
@@ -43,6 +43,16 @@ enum TerminalPathResolver {
                 let terminal: LocalDockerTerminal
                 do { terminal = try host == nil ? service.localDockerTerminal(session: tmuxID) : service.remoteDockerTerminal(session: tmuxID, cancellation: cancellation) }
                 catch { throw WorkbenchError.message(L10n.text("无法识别 tmux 窗格中的 Docker 容器（窗格处于复制模式时请先退出）：") + error.localizedDescription) }
+                container = try dockerContainer(terminal, transport: transport, cancellation: cancellation)
+            }
+        } else if let herdr {
+            // herdr：按其聚焦窗格的前台进程与目录解析。
+            let service = MultiplexerService(kind: .herdr, transport: transport, host: host)
+            let pane = try service.herdrFocusedPane(session: herdr, cancellation: cancellation)
+            for name in pane.foreground { try rejectRemoteShell(name) }
+            if TerminalDirectory.validPath(pane.directory) { hostBases.append(pane.directory) }
+            if pane.foreground.contains("docker") {
+                guard let terminal = try service.herdrDockerTerminal(session: herdr, cancellation: cancellation) else { throw WorkbenchError.message(L10n.text("无法识别 herdr 窗格中的 Docker 容器。")) }
                 container = try dockerContainer(terminal, transport: transport, cancellation: cancellation)
             }
         } else if host == nil {

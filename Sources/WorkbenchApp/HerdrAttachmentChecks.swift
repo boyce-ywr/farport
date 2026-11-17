@@ -71,8 +71,37 @@ enum HerdrAttachmentChecks {
             guard content == bytes else { throw WorkbenchError.message("\(place) 容器内文件内容不一致") }
             print("PASS · \(place) herdr 窗格中 docker exec：识别容器、上传到容器内 \(result.paths[0])，插入到容器程序，内容一致")
             await draft.deleteUploaded(); workspace.attachmentDraft?.dispose(); workspace.attachmentDraft = nil
+            try await checkPathLinks(place: place, host: host, transport: store.transport, session: session, pane: pane!.id, herdr: herdr, executable: executable)
             workspace.close(session)
         }
+    }
+    /// Cmd+点击路径：普通 Shell 窗格按窗格目录解析；docker exec -w /app 时容器相对路径经 bind 挂载换算成主机路径。
+    private static func checkPathLinks(place: String, host: HostProfile?, transport: SSHTransport, session: TerminalSession, pane: String, herdr: (String) async throws -> String, executable: String) async throws {
+        let environment = ProcessInfo.processInfo.environment
+        guard let mounted = environment["SWB_QA_MOUNT_CONTAINER_ID"], let directory = environment["SWB_QA_MOUNT_DIR"] else { return }
+        let name = session.multiplexer!.session
+        func resolve(_ text: String) async throws -> TerminalPathResolution {
+            guard let link = TerminalPathLink(link: text, trustedHosts: session.trustedDirectoryHosts) else { throw WorkbenchError.message("无法构造路径链接") }
+            return try await Task.detached { try TerminalPathResolver.resolve(link, transport: transport, host: host, tmuxID: nil, herdr: name, shellPID: 0, reportedDirectory: nil, agentContainer: nil, cancellation: CancellationFlag()) }.value
+        }
+        // 普通 Shell：结束容器接收程序，回到窗格 Shell，cd 到挂载目录后点击相对路径。
+        _ = try await herdr("pane send-keys \(RemotePath.quote(pane)) ctrl+c")
+        try await Task.sleep(for: .seconds(1))
+        _ = try await herdr("pane run \(RemotePath.quote(pane)) \(RemotePath.quote("cd " + RemotePath.quote(directory)))")
+        try await Task.sleep(for: .seconds(1))
+        let plain = try await resolve("probe.txt")
+        guard plain.containerPath == nil, plain.file.path.hasSuffix("/probe.txt"), plain.file.path.contains((directory as NSString).lastPathComponent) else { throw WorkbenchError.message("\(place) herdr 普通窗格相对路径未按窗格目录解析：\(plain.file.path)") }
+        // 容器：docker exec -w /app，容器内相对路径与绝对路径都换算到主机挂载目录。
+        let launch = [executable, "exec", "-it", "-w", "/app", mounted, "sh", "-c", "sleep 60"].map(RemotePath.quote).joined(separator: " ")
+        _ = try await herdr("pane run \(RemotePath.quote(pane)) \(RemotePath.quote(launch))")
+        try await Task.sleep(for: .seconds(2))
+        for text in ["probe.txt", "/app/probe.txt"] {
+            let mapped = try await resolve(text)
+            guard mapped.containerPath == "/app/probe.txt", mapped.file.path.hasSuffix((directory as NSString).lastPathComponent + "/probe.txt") else {
+                throw WorkbenchError.message("\(place) herdr 容器窗格路径 \(text) 未经挂载换算：\(mapped.file.path) \(mapped.containerPath ?? "nil")")
+            }
+        }
+        print("PASS · \(place) herdr 路径点击：普通窗格按窗格目录解析，docker exec -w /app 的相对与绝对路径经挂载换算成主机路径")
     }
     private static func wait(_ failure: String, timeout: TimeInterval = 40, _ condition: () async -> Bool) async throws {
         let deadline = Date().addingTimeInterval(timeout)
