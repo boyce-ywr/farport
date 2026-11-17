@@ -59,9 +59,10 @@ enum TerminalAttachmentIntake {
     }
 }
 
-/// 发送前复核的 Docker 终端：tmux 窗格按原主机读取，普通本机终端按 Shell 前台进程读取。
-private func currentDockerTerminal(_ terminal: LocalDockerTerminal, tmux: String?, shellPID: Int32?, transport: SSHTransport, cancellation: CancellationFlag) throws -> LocalDockerTerminal? {
+/// 发送前复核的 Docker 终端：tmux 窗格按原主机读取，herdr 按聚焦窗格读取，普通本机终端按 Shell 前台进程读取。
+private func currentDockerTerminal(_ terminal: LocalDockerTerminal, tmux: String?, herdr: String? = nil, shellPID: Int32?, transport: SSHTransport, cancellation: CancellationFlag) throws -> LocalDockerTerminal? {
     if let tmux { return try TmuxService(transport: transport, host: terminal.host).dockerTerminal(session: tmux, cancellation: cancellation) }
+    if let herdr { return try MultiplexerService(kind: .herdr, transport: transport, host: terminal.host).herdrDockerTerminal(session: herdr, cancellation: cancellation) }
     return try shellPID.flatMap { try LocalDockerTerminal.local(shellPID: $0) }
 }
 
@@ -108,7 +109,9 @@ final class TerminalAttachmentDraft: ObservableObject, Identifiable {
     private let transport: SSHTransport
     var targetDescription: String { dockerBinding.map { session.displayName + " → Docker · " + $0.container.displayName + " · " + $0.user } ?? session.displayName }
     /// 普通本机终端（非 tmux）的 Shell PID，用于识别其中前台运行的 docker。
-    private var localShellPID: Int32? { session.host == nil && session.tmuxID == nil ? session.terminal.process.shellPid : nil }
+    private var localShellPID: Int32? { session.host == nil && !session.inMultiplexer ? session.terminal.process.shellPid : nil }
+    /// 附着的 herdr 会话名；附件按其聚焦窗格识别容器。
+    private var herdrSession: String? { session.multiplexer?.kind == .herdr ? session.multiplexer?.session : nil }
     init(session: TerminalSession, payload: TerminalAttachmentPayload, workspace: Workspace) {
         self.session = session; self.payload = payload; self.workspace = workspace; transport = workspace.store.transport
         identity = workspace.attachmentIdentity(session)
@@ -118,6 +121,7 @@ final class TerminalAttachmentDraft: ObservableObject, Identifiable {
     private func prepare() {
         let host = session.host; let tmux = session.tmuxID; let transport = transport; let flag = cancellation
         let remembered = session.dockerAttachmentBinding; let shellPID = localShellPID
+        let herdr = herdrSession
         begin(L10n.text("确认目标"))
         Task {
             do {
@@ -126,6 +130,8 @@ final class TerminalAttachmentDraft: ObservableObject, Identifiable {
                     if let tmux {
                         let service = TmuxService(transport: transport, host: host)
                         if try service.attachmentTarget(session: tmux).command == "docker" { docker = try service.dockerTerminal(session: tmux, cancellation: flag) }
+                    } else if let herdr {
+                        docker = try MultiplexerService(kind: .herdr, transport: transport, host: host).herdrDockerTerminal(session: herdr, cancellation: flag)
                     } else if let shellPID { docker = try LocalDockerTerminal.local(shellPID: shellPID) }
                     if let terminal = docker {
                         let pane = tmux == nil ? nil : terminal.target
@@ -162,10 +168,10 @@ final class TerminalAttachmentDraft: ObservableObject, Identifiable {
     func chooseContainer(_ identifier: String) async {
         guard let selection = containerSelection, !preparing, !disposed else { return }
         preparing = true; failure = nil; begin(L10n.text("确认容器"))
-        let transport = transport; let flag = cancellation; let tmux = session.tmuxID; let shellPID = localShellPID
+        let transport = transport; let flag = cancellation; let tmux = session.tmuxID; let shellPID = localShellPID; let herdr = herdrSession
         do {
             let binding = try await Task.detached {
-                let current = try currentDockerTerminal(selection.terminal, tmux: tmux, shellPID: shellPID, transport: transport, cancellation: flag)
+                let current = try currentDockerTerminal(selection.terminal, tmux: tmux, herdr: herdr, shellPID: shellPID, transport: transport, cancellation: flag)
                 guard let current, current == selection.terminal else { throw WorkbenchError.message(L10n.text("Docker 进程或原 tmux 窗格已变化，请重新确认容器。")) }
                 return try selection.daemon.confirm(identifier, terminal: current, cancellation: flag)
             }.value
@@ -192,7 +198,7 @@ final class TerminalAttachmentDraft: ObservableObject, Identifiable {
         guard !running, !preparing, !disposed, session.connected, session.connectionID == identity.connectionID else { return }
         running = true; failure = nil; result = nil; cancellation = CancellationFlag(); begin(L10n.text("上传并回读校验"))
         let flag = cancellation; let host = session.host; let files = payload.files; let destination = directory; let transport = transport
-        let binding = dockerBinding; let tmux = session.tmuxID; let shellPID = localShellPID
+        let binding = dockerBinding; let tmux = session.tmuxID; let shellPID = localShellPID; let herdr = herdrSession
         Task {
             do {
                 let outcome = try await Task.detached { () -> (UploadedAttachments, DockerUploadedAttachments?) in
@@ -200,7 +206,7 @@ final class TerminalAttachmentDraft: ObservableObject, Identifiable {
                         DispatchQueue.main.async { guard owner?.disposed == false, owner?.running == true, !flag.isCancelled else { return }; owner?.status = message; owner?.progress = value }
                     }
                     if let binding {
-                        guard try currentDockerTerminal(binding.terminal, tmux: tmux, shellPID: shellPID, transport: transport, cancellation: flag) == binding.terminal else { throw WorkbenchError.message(L10n.text("Docker 进程或原 tmux 窗格已变化，请重新确认容器。")) }
+                        guard try currentDockerTerminal(binding.terminal, tmux: tmux, herdr: herdr, shellPID: shellPID, transport: transport, cancellation: flag) == binding.terminal else { throw WorkbenchError.message(L10n.text("Docker 进程或原 tmux 窗格已变化，请重新确认容器。")) }
                         let uploaded = try DockerAttachmentUploader(binding: binding).upload(files, transport: transport, cancellation: flag, progress: progress)
                         return (uploaded.uploaded, uploaded)
                     }
@@ -269,9 +275,9 @@ final class TerminalAttachmentDraft: ObservableObject, Identifiable {
                 let service = TmuxService(transport: transport, host: binding.terminal.host)
                 try await Task.detached { try service.pasteDocker(text, session: tmuxID, expected: binding.terminal) }.value
             } else if let binding {
-                // 普通本机终端：写入前复核 Shell 前台仍是同一 docker 进程。
-                let shellPID = localShellPID; let flag = cancellation
-                guard try await Task.detached(operation: { try currentDockerTerminal(binding.terminal, tmux: nil, shellPID: shellPID, transport: transport, cancellation: flag) }).value == binding.terminal else {
+                // 普通本机终端与 herdr：写入前复核前台（herdr 为聚焦窗格）仍是同一 docker 进程，再经本终端输入，由 herdr 转发给聚焦窗格。
+                let shellPID = localShellPID; let flag = cancellation; let herdr = herdrSession
+                guard try await Task.detached(operation: { try currentDockerTerminal(binding.terminal, tmux: nil, herdr: herdr, shellPID: shellPID, transport: transport, cancellation: flag) }).value == binding.terminal else {
                     throw WorkbenchError.message(L10n.text("Docker 进程已变化，请重新确认容器。"))
                 }
                 session.terminal.sendAttachmentReference(text)

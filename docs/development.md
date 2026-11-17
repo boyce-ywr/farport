@@ -49,6 +49,7 @@ bash scripts/check-attachments.sh    # 附件上传、回读和 tmux
 bash scripts/check-tmux-copy.sh --ssh # tmux 当前选区主动复制、无OSC52路径及异步覆盖保护
 bash scripts/check-preferred-tmux.sh # 隔离SSH的零/单/多会话、创建确认、真实列表选择与取消
 bash scripts/check-multiplexers.sh --loopback # 本机与回环SSH的Zellij/herdr检测、附着、关闭只分离、herdr终端内新建、连接时进入与结束删除；需本机已装两者
+bash scripts/check-herdr-attachments.sh --loopback # herdr窗格中docker exec：识别容器、上传到容器、插入容器内路径且不回车；本机与回环SSH
 .build/debug/workbench-tests --multiplexer-live # 本机Zellij/herdr服务层实测，仅用随机farport-test-*会话
 .build/debug/workbench-tests --docker-engine-identity-check # Unix socket 身份读取、版本、HTTP错误和取消保护
 bash scripts/check-file-preview.sh   # 中英文、目录历史、源码高亮与媒体播放

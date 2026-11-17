@@ -220,6 +220,11 @@ struct WorkspaceRoot: View {
             catch { fputs("FAIL · \(error.localizedDescription)\n", stderr); workspace.sessions.forEach { $0.close() }; exit(1) }
             return
         }
+        if screen == "herdr-attachments" {
+            do { try await HerdrAttachmentChecks.run(workspace: workspace); NSApp.terminate(nil) }
+            catch { fputs("FAIL · \(error.localizedDescription)\n", stderr); workspace.sessions.forEach { $0.close() }; exit(1) }
+            return
+        }
         if screen == "multiplexer-sessions" {
             do { try await MultiplexerAppChecks.run(workspace: workspace, output: URL(fileURLWithPath: output)); NSApp.terminate(nil) }
             catch { fputs("FAIL · \(error.localizedDescription)\n", stderr); workspace.sessions.forEach { $0.close() }; exit(1) }
