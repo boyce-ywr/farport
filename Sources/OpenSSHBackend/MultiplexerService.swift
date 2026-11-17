@@ -120,10 +120,46 @@ public struct MultiplexerService: Sendable {
         return session
     }
     public func rename(session: String, to name: String, cancellation: CancellationFlag = CancellationFlag()) throws {
-        guard kind.canRename else { throw WorkbenchError.message(L10n.text("herdr 不支持重命名会话。")) }
         try kind.validateSessionName(name)
-        guard try !sessions(cancellation: cancellation).contains(where: { $0.name == name }) else { throw WorkbenchError.message(L10n.text("已存在同名会话，请换一个名称。")) }
+        let current = try sessions(cancellation: cancellation)
+        guard !current.contains(where: { $0.name == name }) else { throw WorkbenchError.message(L10n.text("已存在同名会话，请换一个名称。")) }
+        if kind == .herdr { try renameStoppedHerdr(session: session, to: name, sessions: current, cancellation: cancellation); return }
         _ = try run("\(Self.executableReference) --session \(RemotePath.quote(session)) action rename-session \(RemotePath.quote(name))", cancellation: cancellation).checked()
+        // rename-session 返回时改名可能尚未完成；等列表出现新名称、旧名称消失后再返回。
+        let deadline = Date().addingTimeInterval(5)
+        while true {
+            let after = try sessions(cancellation: cancellation)
+            if after.contains(where: { $0.name == name && $0.running }), !after.contains(where: { $0.name == session }) {
+                Thread.sleep(forTimeInterval: 0.3); return
+            }
+            guard Date() < deadline else { throw WorkbenchError.message(L10n.text("\(kind.title) 会话重命名后列表未更新，请刷新后确认。")) }
+            Thread.sleep(forTimeInterval: 0.2)
+        }
+    }
+    /// herdr 没有官方的会话重命名命令。已停止会话的数据只在 sessions/<名称> 目录中（session.json 不含名称），
+    /// 移动该目录即可改名；仅在实测过的 0.9.x 上启用，改名后核对列表。
+    private func renameStoppedHerdr(session: String, to name: String, sessions current: [MultiplexerSession], cancellation: CancellationFlag) throws {
+        guard let source = current.first(where: { $0.name == session }) else { throw WorkbenchError.message(L10n.text("herdr 会话已不存在，请刷新后重试。")) }
+        guard !source.running else { throw WorkbenchError.message(L10n.text("herdr 只能重命名已停止的会话，请先停止会话。")) }
+        guard source.renamable, let directory = source.directory else { throw WorkbenchError.message(L10n.text("herdr 的 default 会话不能重命名。")) }
+        guard case .available(let text) = try availability(cancellation: cancellation), let version = MultiplexerKind.parseVersion(text), version.0 == 0, version.1 == 9 else {
+            throw WorkbenchError.message(L10n.text("当前 herdr 版本未验证重命名（仅支持 0.9.x），未改动会话。"))
+        }
+        let target = RemotePath.join(RemotePath.parent(directory), name)
+        let from = RemotePath.quote(directory), to = RemotePath.quote(target)
+        _ = try run("[ -d \(from) ] && [ -f \(from)/session.json ] && [ ! -e \(to) ] && [ ! -L \(to) ] || exit 3; mv \(from) \(to)", cancellation: cancellation).checked()
+        let after = try sessions(cancellation: cancellation)
+        guard after.contains(where: { $0.name == name && !$0.running }), !after.contains(where: { $0.name == session }) else {
+            throw WorkbenchError.message(L10n.text("herdr 会话重命名后列表未更新，请刷新后确认。"))
+        }
+    }
+    /// 停止 herdr 会话：结束其中全部进程，保留布局记录，之后可恢复。
+    public func stop(session: String, cancellation: CancellationFlag = CancellationFlag()) throws {
+        guard kind == .herdr else { return }
+        _ = try run("\(Self.executableReference) session stop \(RemotePath.quote(session)) --json", cancellation: cancellation).checked()
+        guard try sessions(cancellation: cancellation).contains(where: { $0.name == session && !$0.running }) else {
+            throw WorkbenchError.message(L10n.text("herdr 会话仍在运行，请刷新后确认。"))
+        }
     }
     /// 结束并删除会话：运行中的会话会终止其中全部进程；已退出的只删除记录。
     public func kill(session: MultiplexerSession, cancellation: CancellationFlag = CancellationFlag()) throws {

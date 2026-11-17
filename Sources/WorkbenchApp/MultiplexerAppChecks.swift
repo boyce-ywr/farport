@@ -21,8 +21,8 @@ enum MultiplexerAppChecks {
             let place = host == nil ? "本机" : "回环SSH"
             let zellij = MultiplexerService(kind: .zellij, transport: store.transport, host: host)
             let herdr = MultiplexerService(kind: .herdr, transport: store.transport, host: host)
-            let zellijName = "farport-test-ui-z\(index)\(suffix)", herdrName = "farport-test-ui-h\(index)\(suffix)"
-            cleanup += [(zellij, MultiplexerSession(kind: .zellij, name: zellijName, running: true)), (herdr, MultiplexerSession(kind: .herdr, name: herdrName, running: true))]
+            let zellijName = "farport-test-ui-z\(index)\(suffix)", originalHerdr = "farport-test-ui-h\(index)\(suffix)", herdrName = originalHerdr + "r"
+            cleanup += [(zellij, MultiplexerSession(kind: .zellij, name: zellijName, running: true)), (herdr, MultiplexerSession(kind: .herdr, name: originalHerdr, running: true)), (herdr, MultiplexerSession(kind: .herdr, name: herdrName, running: true))]
 
             // 会话页模型：检测版本、列出会话与窗格。
             _ = try await detached { try zellij.createDetached(name: zellijName) }
@@ -46,15 +46,31 @@ enum MultiplexerAppChecks {
             print("PASS · \(place) Zellij 终端附着成功，关闭标签只分离、会话继续运行")
 
             // herdr：终端内新建并进入，关闭标签后会话仍在。
-            workspace.attachMultiplexer(host, attachment: MultiplexerAttachment(kind: .herdr, session: herdrName, create: true))
+            workspace.attachMultiplexer(host, attachment: MultiplexerAttachment(kind: .herdr, session: originalHerdr, create: true))
             guard let herdrTerminal = workspace.selectedTerminal, herdrTerminal.multiplexer?.kind == .herdr else { throw WorkbenchError.message("\(place) herdr 标签未创建") }
-            try await wait("\(place) herdr 未在终端中创建会话") { (try? await detached { try herdr.sessions() })?.contains { $0.name == herdrName && $0.running } == true }
-            try await wait("\(place) herdr 会话没有工作区窗格") { let session = MultiplexerSession(kind: .herdr, name: herdrName, running: true); return ((try? await detached { try herdr.panes(of: [session]) }) ?? []).isEmpty == false }
+            try await wait("\(place) herdr 未在终端中创建会话") { (try? await detached { try herdr.sessions() })?.contains { $0.name == originalHerdr && $0.running } == true }
+            try await wait("\(place) herdr 会话没有工作区窗格") { let session = MultiplexerSession(kind: .herdr, name: originalHerdr, running: true); return ((try? await detached { try herdr.panes(of: [session]) }) ?? []).isEmpty == false }
             try snapshot(herdrTerminal.terminal.window, output: output.deletingLastPathComponent().appendingPathComponent("herdr-\(index).png"))
             workspace.close(herdrTerminal)
             try await Task.sleep(for: .seconds(1))
-            guard try await detached({ try herdr.sessions() }).contains(where: { $0.name == herdrName && $0.running }) else { throw WorkbenchError.message("\(place) 关闭标签结束了 herdr 会话") }
+            guard try await detached({ try herdr.sessions() }).contains(where: { $0.name == originalHerdr && $0.running }) else { throw WorkbenchError.message("\(place) 关闭标签结束了 herdr 会话") }
             print("PASS · \(place) herdr 在终端中新建并进入，关闭标签后会话继续运行")
+
+            // herdr 停止 → 会话页显示为已停止 → 重命名 → 从会话页的恢复入口进入，布局仍在。
+            try await detached { try herdr.stop(session: originalHerdr) }
+            let herdrModel = MultiplexerModel(kind: .herdr, host: host, store: store)
+            try await wait("\(place) 会话页未显示已停止的 herdr 会话") { await herdrModel.refresh(); return herdrModel.sessions.contains { $0.name == originalHerdr && !$0.running && $0.renamable } }
+            try await detached { try herdr.rename(session: originalHerdr, to: herdrName) }
+            await herdrModel.refresh()
+            guard herdrModel.sessions.contains(where: { $0.name == herdrName && !$0.running }), !herdrModel.sessions.contains(where: { $0.name == originalHerdr }) else { throw WorkbenchError.message("\(place) herdr 重命名后会话页未更新") }
+            workspace.attachMultiplexer(host, attachment: MultiplexerAttachment(kind: .herdr, session: herdrName))
+            guard let resumed = workspace.selectedTerminal, resumed.multiplexer?.session == herdrName, resumed.multiplexer?.create == false else { throw WorkbenchError.message("\(place) herdr 恢复未打开标签") }
+            try await wait("\(place) herdr 已停止会话未恢复布局") {
+                await herdrModel.refresh()
+                return herdrModel.sessions.contains { $0.name == herdrName && $0.running } && herdrModel.panes.contains { $0.session == herdrName }
+            }
+            workspace.close(resumed)
+            print("PASS · \(place) herdr 停止后会话页显示为已停止，重命名后从恢复入口进入，原布局仍在")
 
             // 连接时进入：唯一的 Zellij 会话自动进入（仅远端主机有此入口）。
             if var profile = host, let position = store.hosts.firstIndex(where: { $0.id == profile.id }) {

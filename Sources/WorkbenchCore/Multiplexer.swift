@@ -11,7 +11,6 @@ public enum MultiplexerKind: String, Codable, CaseIterable, Hashable, Sendable {
     public var minimumVersion: (Int, Int) {
         switch self { case .tmux: return (0, 0); case .zellij: return (0, 44); case .herdr: return (0, 9) }
     }
-    public var canRename: Bool { self != .herdr }
 
     /// Zellij/herdr 会话名称：限 ASCII 字母、数字、`.`、`_`、`-`，1–64 个字符，避免 Shell、Socket 路径与工具自身校验差异。
     public func validateSessionName(_ name: String) throws {
@@ -40,8 +39,18 @@ public struct MultiplexerSession: Identifiable, Hashable, Sendable {
     public var name: String
     /// false 表示已退出（Zellij EXITED、herdr stopped），只能删除。
     public var running: Bool
+    /// herdr 报告的会话数据目录（session_dir）；Zellij 为 nil。
+    public var directory: String? = nil
     public var id: String { kind.rawValue + ":" + name }
-    public init(kind: MultiplexerKind, name: String, running: Bool) { self.kind = kind; self.name = name; self.running = running }
+    public init(kind: MultiplexerKind, name: String, running: Bool, directory: String? = nil) { self.kind = kind; self.name = name; self.running = running; self.directory = directory }
+    /// herdr 已停止、且数据目录位于 sessions/<名称> 的会话可以重命名；default 会话的数据在 herdr 根目录，不能重命名。Zellij 只能重命名运行中的会话。
+    public var renamable: Bool {
+        switch kind {
+        case .herdr: return !running && directory.map { ($0 as NSString).lastPathComponent == name && (($0 as NSString).deletingLastPathComponent as NSString).lastPathComponent == "sessions" } == true
+        case .zellij: return running
+        case .tmux: return true
+        }
+    }
 }
 
 /// Zellij 标签或 herdr 工作区/标签中的一个终端窗格。
@@ -100,7 +109,7 @@ public enum MultiplexerParsing {
               let sessions = root["sessions"] as? [[String: Any]] else { return [] }
         return sessions.compactMap { item in
             guard let name = item["name"] as? String, (try? MultiplexerKind.herdr.validateSessionName(name)) != nil else { return nil }
-            return MultiplexerSession(kind: .herdr, name: name, running: item["running"] as? Bool ?? false)
+            return MultiplexerSession(kind: .herdr, name: name, running: item["running"] as? Bool ?? false, directory: item["session_dir"] as? String)
         }
     }
     /// herdr 的 `workspace list` 与 `pane list`；`server_not_running` 等错误返回 nil。

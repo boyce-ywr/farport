@@ -185,19 +185,32 @@ struct TmuxWorkspace: View {
             ForEach(running) { session in otherCard(session, model: other) }
         }
         if !exited.isEmpty {
+            let herdr = other.service.kind == .herdr
             VStack(alignment: .leading, spacing: 8) {
-                Text(L10n.text("已退出的 \(other.service.kind.title) 会话")).font(.system(size: 11, weight: .medium)).foregroundStyle(.secondary)
+                Text(herdr ? L10n.text("已停止的 herdr 会话") : L10n.text("已退出的 \(other.service.kind.title) 会话")).font(.system(size: 11, weight: .medium)).foregroundStyle(.secondary)
                 ForEach(exited) { session in
                     HStack {
                         Image(systemName: "moon.zzz").foregroundStyle(.secondary)
                         Text(session.name).font(.system(size: 12, design: .monospaced))
                         Spacer()
+                        if herdr {
+                            Button(L10n.text("恢复…")) {
+                                if confirm(L10n.text("恢复 herdr 会话“\(session.name)”？"), L10n.text("会在新终端标签中重新启动此会话，恢复工作区、分屏和各窗格的目录；原来运行的命令不会重新执行，滚屏内容不恢复。herdr 默认还会把支持的 Agent（如 Claude Code、Codex）恢复到原来的对话（herdr 配置 resume_agents_on_restore）。")) {
+                                    workspace.attachMultiplexer(host, attachment: MultiplexerAttachment(kind: .herdr, session: session.name))
+                                }
+                            }.disabled(other.busy)
+                            Button(L10n.text("重命名…")) {
+                                if let name = promptText(L10n.text("重命名 herdr 会话"), detail: L10n.text("herdr 没有官方的重命名命令；Farport 通过移动已停止会话的数据目录改名，仅在 herdr 0.9.x 上启用。"), initial: session.name) {
+                                    other.perform { try $0.rename(session: session.name, to: name) }
+                                }
+                            }.disabled(other.busy || !session.renamable).help(session.renamable ? "" : L10n.text("herdr 的 default 会话不能重命名。"))
+                        }
                         Button(L10n.text("删除…"), role: .destructive) {
                             if confirm(L10n.text("删除已退出的“\(session.name)”？"), L10n.text("只删除 \(other.service.kind.title) 保存的会话记录，不会恢复或重新运行其中的命令。")) { other.perform { try $0.kill(session: session) } }
                         }.disabled(other.busy)
                     }.padding(.horizontal, 12).padding(.vertical, 7).background(.quaternary.opacity(0.18), in: RoundedRectangle(cornerRadius: 8))
                 }
-                Text(L10n.text("Farport 不提供“恢复”：\(other.service.kind.title) 恢复已退出会话会重新运行记录的命令，而不是继续原来的进程。")).font(.system(size: 10)).foregroundStyle(.tertiary)
+                if !herdr { Text(L10n.text("Farport 不提供“恢复”：\(other.service.kind.title) 恢复已退出会话会重新运行记录的命令，而不是继续原来的进程。")).font(.system(size: 10)).foregroundStyle(.tertiary) }
             }
         }
     }
@@ -211,7 +224,10 @@ struct TmuxWorkspace: View {
                 Spacer()
                 Menu {
                     Button(L10n.text("重命名会话")) { if let name = promptText(L10n.text("重命名会话"), initial: session.name) { other.perform { try $0.rename(session: session.name, to: name) } } }
-                        .disabled(!kind.canRename).help(kind.canRename ? "" : L10n.text("herdr 不支持重命名会话。"))
+                        .disabled(!session.renamable).help(session.renamable ? "" : L10n.text("herdr 只能重命名已停止的会话，请先停止会话。"))
+                    if kind == .herdr {
+                        Button(L10n.text("停止会话…")) { if confirm(L10n.text("停止“\(session.name)”？"), L10n.text("这会结束此 herdr 会话中的全部窗格和正在运行的任务（包括 Agent），但保留工作区与分屏布局，之后可以恢复或重命名。")) { other.perform { try $0.stop(session: session.name) } } }
+                    }
                     Divider()
                     Button(L10n.text("结束会话…"), role: .destructive) { if confirm(L10n.text("结束“\(session.name)”？"), L10n.text("这会终止此 \(kind.title) 会话中的全部窗格和正在运行的任务（包括 Agent），并删除会话记录，无法撤销。")) { other.perform { try $0.kill(session: session) } } }
                 } label: { Image(systemName: "ellipsis") }.menuStyle(.borderlessButton).frame(width: 24)

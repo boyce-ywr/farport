@@ -14,6 +14,9 @@ func checkMultiplexers() throws {
     try expect(panes.count == 1 && panes[0].id == "terminal_0" && panes[0].command == "zsh" && panes[0].directory == "/private/tmp" && panes[0].focused, "Zellij 窗格过滤插件与已退出窗格")
     let herdr = MultiplexerParsing.herdrSessions(#"{"sessions":[{"default":true,"name":"default","running":true},{"name":"bad name","running":true},{"name":"x","running":false}]}"#)
     try expect(herdr.map(\.name) == ["default", "x"] && herdr.map(\.running) == [true, false], "herdr 会话列表解析运行状态并忽略非法名称")
+    let dirs = MultiplexerParsing.herdrSessions(#"{"sessions":[{"name":"default","running":false,"session_dir":"/u/.config/herdr"},{"name":"w","running":false,"session_dir":"/u/.config/herdr/sessions/w"},{"name":"r","running":true,"session_dir":"/u/.config/herdr/sessions/r"}]}"#)
+    try expect(dirs.map(\.renamable) == [false, true, false] && dirs[1].directory == "/u/.config/herdr/sessions/w", "herdr 仅已停止的非 default 会话可重命名")
+    try expect(MultiplexerSession(kind: .zellij, name: "z", running: true).renamable && !MultiplexerSession(kind: .zellij, name: "z", running: false).renamable, "Zellij 仅运行中会话可重命名")
     let herdrPanes = MultiplexerParsing.herdrPanes(workspaces: #"{"result":{"workspaces":[{"workspace_id":"w1","label":"proj"}]}}"#,
         panes: #"{"result":{"panes":[{"pane_id":"w1:p2","workspace_id":"w1","tab_id":"w1:t3","cwd":"/a","foreground_cwd":"/b","focused":true,"agent":"claude","agent_status":"working","terminal_title_stripped":"Claude Code"}]}}"#, session: "default")
     try expect(herdrPanes?.first.map { $0.group == "proj · t3" && $0.directory == "/b" && $0.agent == "claude" && $0.agentStatus == "working" } == true, "herdr 窗格解析工作区、目录与 Agent 状态")
@@ -85,8 +88,27 @@ func checkMultiplexersLive() throws {
                               environment: MultiplexerService.isolatedEnvironment(configuration.environment)).checked()
     let herdrPanes = try herdr.panes(of: [session])
     try expect(herdrPanes.count == 1 && herdrPanes[0].group.hasPrefix("fixture") && herdrPanes[0].directory.hasSuffix("/tmp"), "herdr 读取工作区标签、窗格与目录")
-    try rejects("herdr 重命名") { try herdr.rename(session: herdrName, to: herdrName + "-r") }
-    try herdr.kill(session: session)
-    try expect(!(try herdr.sessions().contains { $0.name == herdrName }), "herdr 结束会话后删除记录")
-    print("PASS · 本机 \(herdrVersion)：会话与窗格读取、重命名禁用、结束并删除")
+    try rejects("herdr 运行中会话重命名") { try herdr.rename(session: herdrName, to: herdrName + "-r") }
+    try rejects("herdr default 会话重命名") { try herdr.rename(session: "default", to: herdrName + "-d") }
+    try herdr.stop(session: herdrName)
+    let herdrRenamed = herdrName + "-r"
+    defer { _ = try? herdr.kill(session: MultiplexerSession(kind: .herdr, name: herdrRenamed, running: true)) }
+    try rejects("herdr 重命名为已存在的名称") { try herdr.rename(session: herdrName, to: "default") }
+    try herdr.rename(session: herdrName, to: herdrRenamed)
+    let afterRename = try herdr.sessions()
+    try expect(afterRename.contains { $0.name == herdrRenamed && !$0.running } && !afterRename.contains { $0.name == herdrName }, "herdr 已停止会话重命名后列表显示新名称")
+    let restarted = Process()
+    restarted.executableURL = URL(fileURLWithPath: "/bin/sh")
+    restarted.arguments = ["-c", MultiplexerService.script(.herdr, "exec \(MultiplexerService.executableReference) --session '\(herdrRenamed)' server")]
+    restarted.environment = MultiplexerService.isolatedEnvironment(configuration.environment)
+    restarted.standardInput = FileHandle.nullDevice; restarted.standardOutput = FileHandle.nullDevice; restarted.standardError = FileHandle.nullDevice
+    try restarted.run()
+    defer { if restarted.isRunning { restarted.terminate() } }
+    var resumed: [MultiplexerPane] = []
+    let resumeDeadline = Date().addingTimeInterval(10)
+    while resumed.isEmpty, Date() < resumeDeadline { resumed = (try? herdr.panes(of: [MultiplexerSession(kind: .herdr, name: herdrRenamed, running: true)])) ?? []; if resumed.isEmpty { Thread.sleep(forTimeInterval: 0.3) } }
+    try expect(resumed.count == 1 && resumed[0].group.hasPrefix("fixture") && resumed[0].directory.hasSuffix("/tmp"), "herdr 改名后恢复原工作区与目录")
+    try herdr.kill(session: MultiplexerSession(kind: .herdr, name: herdrRenamed, running: true))
+    try expect(!(try herdr.sessions().contains { $0.name == herdrRenamed || $0.name == herdrName }), "herdr 结束会话后删除记录")
+    print("PASS · 本机 \(herdrVersion)：会话与窗格读取、运行中与 default 拒绝重命名、停止后重命名、按新名称恢复布局、结束并删除")
 }
