@@ -1126,6 +1126,7 @@ final class Workspace: ObservableObject {
             guard let self, request?.isCurrent() == true else { return }
             cancelPreferredTmuxConnection(); connect(host)
         }
+        request.order = { [weak self] in self?.store.sessionOrder(hostID: host.id, kind: kind) ?? [] }
         preferredTmuxConnection = request
     }
     /// 按设置新建本机终端：普通 Shell，或进入本机 tmux/Zellij/herdr 会话（规则同主机“连接时进入”）。
@@ -1149,6 +1150,7 @@ final class Workspace: ObservableObject {
             guard let self, request?.isCurrent() == true else { return }
             cancelPreferredTmuxConnection(); connectLocal()
         }
+        request.order = { [weak self] in self?.store.sessionOrder(hostID: nil, kind: kind) ?? [] }
         preferredTmuxConnection = request
     }
     func cancelPreferredTmuxConnection() {

@@ -42,6 +42,13 @@ func checkMultiplexers() throws {
     try expect(MultiplexerService.attachScript(MultiplexerAttachment(kind: .herdr, session: "w", create: true)).contains("--session 'w'"), "herdr 新建经 --session 在终端中创建")
     let environment = MultiplexerService.isolatedEnvironment(["TMUX": "1", "TMUX_PANE": "%1", "ZELLIJ": "0", "ZELLIJ_SESSION_NAME": "s", "HERDR_ENV": "1", "HERDR_PANE_ID": "w1:p1", "PATH": "/bin", "HERDR": "keep"])
     try expect(environment == ["PATH": "/bin", "HERDR": "keep"], "本机终端清除外层多路复用器环境变量")
+    try expect(SessionOrder.apply(["a", "b", "c", "d"], name: { $0 }, saved: ["c", "gone", "a"]) == ["c", "a", "b", "d"], "排序：记录中的会话在前，新会话按原顺序在后，已结束的记录忽略")
+    try expect(SessionOrder.apply(["a", "b"], name: { $0 }, saved: []) == ["a", "b"], "排序：无记录时保持工具顺序")
+    try expect(SessionOrder.move("a", to: "c", in: ["a", "b", "c"]) == ["b", "c", "a"] && SessionOrder.move("c", to: "a", in: ["a", "b", "c"]) == ["c", "a", "b"], "拖动：向下放到目标之后，向上放到目标之前")
+    try expect(SessionOrder.move("b", .up, in: ["a", "b", "c"]) == ["b", "a", "c"] && SessionOrder.move("b", .down, in: ["a", "b", "c"]) == ["a", "c", "b"] && SessionOrder.move("c", .top, in: ["a", "b", "c"]) == ["c", "a", "b"], "菜单：上移、下移、移到最前")
+    try expect(SessionOrder.move("a", .up, in: ["a", "b"]) == ["a", "b"] && SessionOrder.move("x", .top, in: ["a"]) == ["a"] && SessionOrder.move("a", to: "a", in: ["a", "b"]) == ["a", "b"], "边界：已在最前、不存在、放到自身不变")
+    try expect(SessionOrder.rename("b", to: "z", in: ["a", "b"]) == ["a", "z"], "改名后顺序记录跟随")
+    try expect(SessionOrder.key(hostID: nil, kind: .zellij) == "local|zellij" && SessionOrder.key(hostID: nil, kind: .tmux) != SessionOrder.key(hostID: UUID(), kind: .tmux), "排序记录按主机与工具区分")
     print("PASS · Zellij/herdr 解析、名称校验、配置兼容与环境隔离")
 }
 

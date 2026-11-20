@@ -41,6 +41,19 @@ final class AppStore: ObservableObject {
     @Published var localEntryMultiplexer = UserDefaults.standard.string(forKey: "localEntryMultiplexer").flatMap(MultiplexerKind.init(rawValue:)) {
         didSet { UserDefaults.standard.set(localEntryMultiplexer?.rawValue, forKey: "localEntryMultiplexer") }
     }
+    /// 会话页手动排序：键为 SessionOrder.key（主机 × 工具），值为会话名顺序。
+    @Published private(set) var sessionOrder = (UserDefaults.standard.dictionary(forKey: "sessionOrder") as? [String: [String]]) ?? [:] {
+        didSet { UserDefaults.standard.set(sessionOrder, forKey: "sessionOrder") }
+    }
+    func sessionOrder(hostID: UUID?, kind: MultiplexerKind) -> [String] { sessionOrder[SessionOrder.key(hostID: hostID, kind: kind)] ?? [] }
+    func setSessionOrder(_ names: [String], hostID: UUID?, kind: MultiplexerKind) {
+        let key = SessionOrder.key(hostID: hostID, kind: kind)
+        sessionOrder[key] = names.isEmpty ? nil : names
+    }
+    func renameInSessionOrder(_ old: String, to new: String, hostID: UUID?, kind: MultiplexerKind) {
+        let saved = sessionOrder(hostID: hostID, kind: kind)
+        if saved.contains(old) { setSessionOrder(SessionOrder.rename(old, to: new, in: saved), hostID: hostID, kind: kind) }
+    }
     @Published var terminalClipboardWritePolicy = TerminalClipboardWritePolicy(stored: UserDefaults.standard.string(forKey: "terminalClipboardWritePolicy")) {
         didSet { UserDefaults.standard.set(terminalClipboardWritePolicy.rawValue, forKey: "terminalClipboardWritePolicy") }
     }

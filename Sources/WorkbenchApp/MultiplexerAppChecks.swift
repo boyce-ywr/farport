@@ -236,12 +236,22 @@ enum MultiplexerAppChecks {
         print("PASS · 侧栏唯一会话自动进入并复用匹配标签，分屏仍为普通 Shell")
 
         _ = try await detached { try zellij.createDetached(name: second) }
+        let savedOrder = store.sessionOrder(hostID: nil, kind: .zellij)
+        defer { store.setSessionOrder(savedOrder, hostID: nil, kind: .zellij) }
+        store.setSessionOrder([second, first], hostID: nil, kind: .zellij)
         workspace.connectLocalPreferred()
         try await wait("多会话未列出选择") { workspace.preferredTmuxConnection?.sessions.count == 2 && workspace.preferredTmuxConnection?.busy == false }
+        guard workspace.preferredTmuxConnection?.sessions.map(\.name) == [second, first] else { throw WorkbenchError.message("会话选择框未按手动顺序列出") }
+        guard (UserDefaults.standard.dictionary(forKey: "sessionOrder") as? [String: [String]])?[SessionOrder.key(hostID: nil, kind: .zellij)] == [second, first] else { throw WorkbenchError.message("手动顺序未保存") }
         guard workspace.sessions.isEmpty else { throw WorkbenchError.message("多会话时绕过了选择") }
         await workspace.preferredTmuxConnection?.choose(second)
         guard workspace.selectedTerminal?.multiplexer?.session == second else { throw WorkbenchError.message("未进入所选的本机 Zellij 会话") }
-        print("PASS · 本机 Zellij 多会话让用户选择并进入所选会话")
+        print("PASS · 本机 Zellij 多会话按手动顺序列出并保存，让用户选择并进入所选会话")
+        workspace.sessions.forEach { workspace.close($0) }
+        workspace.selectedHostID = nil; workspace.page = .tmux
+        try await Task.sleep(for: .seconds(5))
+        try snapshot(NSApp.windows.first { $0.isVisible && $0.contentView != nil }, output: URL(fileURLWithPath: FileManager.default.currentDirectoryPath + "/.test/ui-regression/session-order-\(L10n.language == .english ? "en" : "zh").png"))
+        workspace.page = .terminal
     }
     private static func clients(_ service: MultiplexerService, _ session: String) async -> Int {
         let host = service.host, transport = service.transport

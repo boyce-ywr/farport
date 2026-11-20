@@ -29,11 +29,11 @@ final class TmuxModel: ObservableObject {
             sessions = result?.0 ?? []; panes = result?.1 ?? []; errorMessage = nil
         } catch { errorMessage = error.localizedDescription }
     }
-    func perform(_ operation: @escaping @Sendable (TmuxService) throws -> Void) {
+    func perform(_ operation: @escaping @Sendable (TmuxService) throws -> Void, then success: @escaping () -> Void = {}) {
         guard !busy else { return }; busy = true
         let service = service
         Task {
-            do { try await Task.detached { try operation(service) }.value; busy = false; await refresh() }
+            do { try await Task.detached { try operation(service) }.value; success(); busy = false; await refresh() }
             catch { busy = false; errorMessage = error.localizedDescription }
         }
     }
@@ -64,11 +64,11 @@ final class MultiplexerModel: ObservableObject {
             sessions = result.1; panes = result.2; errorMessage = nil
         } catch { errorMessage = error.localizedDescription }
     }
-    func perform(_ operation: @escaping @Sendable (MultiplexerService) throws -> Void) {
+    func perform(_ operation: @escaping @Sendable (MultiplexerService) throws -> Void, then success: @escaping () -> Void = {}) {
         guard !busy else { return }; busy = true
         let service = service
         Task {
-            do { try await Task.detached { try operation(service) }.value; busy = false; await refresh() }
+            do { try await Task.detached { try operation(service) }.value; success(); busy = false; await refresh() }
             catch { busy = false; errorMessage = error.localizedDescription }
         }
     }
@@ -132,7 +132,7 @@ struct TmuxWorkspace: View {
                     VStack(alignment: .leading, spacing: 22) {
                         if !model.sessions.isEmpty {
                             section("tmux", version: nil) {
-                                ForEach(model.sessions) { session in sessionCard(session) }
+                                ForEach(ordered(model.sessions, kind: .tmux, name: \.name)) { session in sessionCard(session).sessionReordering(self, kind: .tmux, name: session.name) }
                             }
                         }
                         ForEach(others.filter { !$0.sessions.isEmpty }, id: \.service.kind) { other in otherSection(other) }
@@ -180,9 +180,9 @@ struct TmuxWorkspace: View {
     }
     @ViewBuilder private func otherSection(_ other: MultiplexerModel) -> some View {
         let version: String? = { if case .available(let text) = other.availability { return text }; return nil }()
-        let running = other.sessions.filter(\.running), exited = other.sessions.filter { !$0.running }
+        let running = ordered(other.sessions.filter(\.running), kind: other.service.kind, name: \.name), exited = other.sessions.filter { !$0.running }
         section(other.service.kind.title, version: version) {
-            ForEach(running) { session in otherCard(session, model: other) }
+            ForEach(running) { session in otherCard(session, model: other).sessionReordering(self, kind: other.service.kind, name: session.name) }
         }
         if !exited.isEmpty {
             let herdr = other.service.kind == .herdr
@@ -201,7 +201,7 @@ struct TmuxWorkspace: View {
                             }.disabled(other.busy)
                             Button(L10n.text("重命名…")) {
                                 if let name = promptText(L10n.text("重命名 herdr 会话"), detail: L10n.text("herdr 没有官方的重命名命令；Farport 通过移动已停止会话的数据目录改名，仅在 herdr 0.9.x 上启用。"), initial: session.name) {
-                                    other.perform { try $0.rename(session: session.name, to: name) }
+                                    other.perform({ try $0.rename(session: session.name, to: name) }, then: { store.renameInSessionOrder(session.name, to: name, hostID: host?.id, kind: .herdr) })
                                 }
                             }.disabled(other.busy || !session.renamable).help(session.renamable ? "" : L10n.text("herdr 的 default 会话不能重命名。"))
                         }
@@ -223,11 +223,12 @@ struct TmuxWorkspace: View {
                 VStack(alignment: .leading, spacing: 4) { Text(session.name).font(.system(size: 15, weight: .semibold)); Text(L10n.text("\(kind.title) · \(panes.count) 个窗格")).font(.system(size: 10)).foregroundStyle(.secondary) }
                 Spacer()
                 Menu {
-                    Button(L10n.text("重命名会话")) { if let name = promptText(L10n.text("重命名会话"), initial: session.name) { other.perform { try $0.rename(session: session.name, to: name) } } }
+                    Button(L10n.text("重命名会话")) { if let name = promptText(L10n.text("重命名会话"), initial: session.name) { other.perform({ try $0.rename(session: session.name, to: name) }, then: { store.renameInSessionOrder(session.name, to: name, hostID: host?.id, kind: kind) }) } }
                         .disabled(!session.renamable).help(session.renamable ? "" : L10n.text("herdr 只能重命名已停止的会话，请先停止会话。"))
                     if kind == .herdr {
                         Button(L10n.text("停止会话…")) { if confirm(L10n.text("停止“\(session.name)”？"), L10n.text("这会结束此 herdr 会话中的全部窗格和正在运行的任务（包括 Agent），但保留工作区与分屏布局，之后可以恢复或重命名。")) { other.perform { try $0.stop(session: session.name) } } }
                     }
+                    orderMenu(kind: kind, name: session.name)
                     Divider()
                     Button(L10n.text("结束会话…"), role: .destructive) { if confirm(L10n.text("结束“\(session.name)”？"), L10n.text("这会终止此 \(kind.title) 会话中的全部窗格和正在运行的任务（包括 Agent），并删除会话记录，无法撤销。")) { other.perform { try $0.kill(session: session) } } }
                 } label: { Image(systemName: "ellipsis") }.menuStyle(.borderlessButton).frame(width: 24)
@@ -251,6 +252,39 @@ struct TmuxWorkspace: View {
         }.padding(18).background(Color(nsColor: .controlBackgroundColor).opacity(0.65), in: RoundedRectangle(cornerRadius: 13))
             .overlay(RoundedRectangle(cornerRadius: 13).strokeBorder(.quaternary.opacity(0.65)))
     }
+    // MARK: 手动排序
+    func ordered<T>(_ items: [T], kind: MultiplexerKind, name: (T) -> String) -> [T] {
+        SessionOrder.apply(items, name: name, saved: store.sessionOrder(hostID: host?.id, kind: kind))
+    }
+    /// 拖动数据：限定在本页同一主机、同一工具内，避免把会话拖到其他分组。
+    func dragPayload(kind: MultiplexerKind, name: String) -> String { "farport-session|" + SessionOrder.key(hostID: host?.id, kind: kind) + "|" + name }
+    private func displayed(_ kind: MultiplexerKind) -> [String] {
+        switch kind {
+        case .tmux: return ordered(model.sessions, kind: .tmux, name: \.name).map(\.name)
+        case .zellij: return ordered(zellij.sessions.filter(\.running), kind: .zellij, name: \.name).map(\.name)
+        case .herdr: return ordered(herdr.sessions.filter(\.running), kind: .herdr, name: \.name).map(\.name)
+        }
+    }
+    /// 把拖动的会话放到目标会话的位置；返回是否接受此次拖放。
+    @discardableResult func drop(_ payload: String, kind: MultiplexerKind, onto target: String) -> Bool {
+        let prefix = "farport-session|" + SessionOrder.key(hostID: host?.id, kind: kind) + "|"
+        guard payload.hasPrefix(prefix) else { return false }
+        let moving = String(payload.dropFirst(prefix.count))
+        let current = displayed(kind)
+        guard current.contains(moving), moving != target else { return false }
+        store.setSessionOrder(SessionOrder.move(moving, to: target, in: current), hostID: host?.id, kind: kind)
+        return true
+    }
+    func move(_ name: String, _ step: SessionOrder.Step, kind: MultiplexerKind) {
+        store.setSessionOrder(SessionOrder.move(name, step, in: displayed(kind)), hostID: host?.id, kind: kind)
+    }
+    @ViewBuilder private func orderMenu(kind: MultiplexerKind, name: String) -> some View {
+        let current = displayed(kind), index = current.firstIndex(of: name) ?? 0
+        Divider()
+        Button(L10n.text("上移")) { move(name, .up, kind: kind) }.disabled(index == 0)
+        Button(L10n.text("下移")) { move(name, .down, kind: kind) }.disabled(index + 1 >= current.count)
+        Button(L10n.text("移到最前")) { move(name, .top, kind: kind) }.disabled(index == 0)
+    }
     private func metric(_ title: String, value: Int, symbol: String, caption: String) -> some View {
         HStack(alignment: .top) {
             VStack(alignment: .leading, spacing: 9) { Text(title).font(.system(size: 11)).foregroundStyle(.secondary); Text("\(value)").font(.system(size: 29, weight: .semibold, design: .rounded)); Text(caption).font(.system(size: 10)).foregroundStyle(.tertiary) }
@@ -265,7 +299,8 @@ struct TmuxWorkspace: View {
                 Spacer()
                 Menu {
                     Button(L10n.text("新建窗口")) { model.perform { try $0.createWindow(session: session.id) } }
-                    Button(L10n.text("重命名会话")) { if let name = promptText(L10n.text("重命名会话"), initial: session.name) { model.perform { try $0.rename(session: session.id, name: name) } } }
+                    Button(L10n.text("重命名会话")) { if let name = promptText(L10n.text("重命名会话"), initial: session.name) { model.perform({ try $0.rename(session: session.id, name: name) }, then: { store.renameInSessionOrder(session.name, to: name, hostID: host?.id, kind: .tmux) }) } }
+                    orderMenu(kind: .tmux, name: session.name)
                     Divider()
                     Button(L10n.text("结束会话…"), role: .destructive) { if confirm(L10n.text("结束“\(session.name)”？"), L10n.text("这会终止此远端会话中的全部窗口、窗格和正在运行的任务，无法撤销。")) { model.perform { try $0.kill(session: session.id) } } }
                 } label: { Image(systemName: "ellipsis") }.menuStyle(.borderlessButton).frame(width: 24)
@@ -301,5 +336,29 @@ struct ErrorBanner: View {
     var body: some View {
         HStack(alignment: .top, spacing: 9) { Image(systemName: "exclamationmark.triangle").foregroundStyle(.orange); Text(message).font(.system(size: 11)).textSelection(.enabled); Spacer(); Button(action: dismiss) { Image(systemName: "xmark") }.buttonStyle(.plain) }
             .padding(12).background(.orange.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
+    }
+}
+
+/// 会话卡片的拖动排序：拖起卡片，放到同组另一张卡片上即占用其位置；悬停时显示目标框。
+private struct SessionReordering: ViewModifier {
+    let page: TmuxWorkspace
+    let kind: MultiplexerKind
+    let name: String
+    @ViewState private var targeted = false
+    func body(content: Content) -> some View {
+        content
+            .overlay(RoundedRectangle(cornerRadius: 13).strokeBorder(Color.teal, lineWidth: 2).opacity(targeted ? 1 : 0))
+            .draggable(page.dragPayload(kind: kind, name: name))
+            .dropDestination(for: String.self) { items, _ in
+                guard let payload = items.first else { return false }
+                return page.drop(payload, kind: kind, onto: name)
+            } isTargeted: { targeted = $0 }
+            .help(L10n.text("拖动卡片可调整顺序"))
+    }
+}
+
+extension View {
+    func sessionReordering(_ page: TmuxWorkspace, kind: MultiplexerKind, name: String) -> some View {
+        modifier(SessionReordering(page: page, kind: kind, name: name))
     }
 }

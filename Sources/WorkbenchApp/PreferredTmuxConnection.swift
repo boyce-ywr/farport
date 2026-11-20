@@ -27,6 +27,8 @@ final class PreferredTmuxConnection: ObservableObject, Identifiable {
     var onConnect: (PreferredSession) -> Void = { _ in }
     /// 用户改为打开普通终端。
     var onPlain: () -> Void = {}
+    /// 会话页的手动排序（会话名顺序）；选择框按此顺序列出。
+    var order: () -> [String] = { [] }
     private let cancellation = CancellationFlag()
     private let list: @Sendable (CancellationFlag) throws -> [PreferredSession]
     /// nil 表示无法后台创建，确认后交给终端创建。
@@ -70,7 +72,7 @@ final class PreferredTmuxConnection: ObservableObject, Identifiable {
         do {
             let available = try await Task.detached { try list(cancellation) }.value
             guard current else { return }
-            sessions = available; loaded = true
+            sessions = SessionOrder.apply(available, name: \.name, saved: order()); loaded = true
             if available.count == 1 { onConnect(available[0]) }
         } catch { if current { failure = error.localizedDescription } }
     }
@@ -82,7 +84,7 @@ final class PreferredTmuxConnection: ObservableObject, Identifiable {
         do {
             let available = try await Task.detached { try list(cancellation) }.value
             guard current else { return }
-            sessions = available
+            sessions = SessionOrder.apply(available, name: \.name, saved: order())
             guard let session = available.first(where: { $0.id == selected.id && $0.created == selected.created }) else {
                 failure = L10n.text("所选 \(kind.title) 会话已结束或变化，请重新选择。"); return
             }
@@ -99,7 +101,7 @@ final class PreferredTmuxConnection: ObservableObject, Identifiable {
             let available = try await Task.detached { try list(cancellation) }.value
             guard current else { return }
             guard available.isEmpty else {
-                sessions = available; failure = L10n.text("目标主机已有新的 \(kind.title) 会话，请选择要进入的会话。"); return
+                sessions = SessionOrder.apply(available, name: \.name, saved: order()); failure = L10n.text("目标主机已有新的 \(kind.title) 会话，请选择要进入的会话。"); return
             }
             let session: PreferredSession
             if let make { session = try await Task.detached { try make(name, cancellation) }.value }
