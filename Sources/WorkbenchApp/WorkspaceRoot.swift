@@ -152,12 +152,18 @@ struct WorkspaceRoot: View {
                 Button(L10n.text("主机监控")) { workspace.selectedHostID = host.id; workspace.page = .monitor }
                 Button(L10n.text("打开远程 Mac 桌面…")) { workspace.screenSharingHost = host }
                 Divider()
+                let peers = store.hosts.filter { $0.group == host.group }.map(\.id), position = peers.firstIndex(of: host.id) ?? 0
+                Button(L10n.text("上移")) { store.moveHost(host.id, .up) }.disabled(position == 0)
+                Button(L10n.text("下移")) { store.moveHost(host.id, .down) }.disabled(position + 1 >= peers.count)
+                Button(L10n.text("移到最前")) { store.moveHost(host.id, .top) }.disabled(position == 0)
+                Divider()
                 Button(L10n.text("编辑主机")) { editingHost = host }
                 Button(L10n.text("清除此主机保存的凭据")) { store.forgetCredentials(host) }
                 Button(L10n.text("移除主机"), role: .destructive) {
                     if confirm(L10n.text("移除“\(host.name)”？"), L10n.text("仅移除本地配置，不删除远端文件或 tmux 会话。")) { store.removeHost(host) }
                 }
             }
+            .hostReordering(store: store, host: host)
     }
     private var pageBar: some View {
         HStack(spacing: 6) {
@@ -218,6 +224,11 @@ struct WorkspaceRoot: View {
         if screen == "preferred-tmux" {
             do { try await PreferredTmuxChecks.run(workspace: workspace, output: URL(fileURLWithPath: output)); NSApp.terminate(nil) }
             catch { fputs("FAIL · \(error.localizedDescription)\n", stderr); workspace.sessions.forEach { $0.close() }; exit(1) }
+            return
+        }
+        if screen == "host-order" {
+            do { try await HostOrderChecks.run(workspace: workspace, output: URL(fileURLWithPath: output)); NSApp.terminate(nil) }
+            catch { fputs("FAIL · \(error.localizedDescription)\n", stderr); exit(1) }
             return
         }
         if screen == "herdr-attachments" {
@@ -689,4 +700,26 @@ func confirm(_ title: String, _ detail: String) -> Bool {
     let alert = NSAlert(); alert.messageText = title; alert.informativeText = detail; alert.alertStyle = .warning
     alert.addButton(withTitle: L10n.text("确认")); alert.addButton(withTitle: L10n.text("取消"))
     return alert.runModal() == .alertFirstButtonReturn
+}
+
+/// 侧栏主机的拖动排序：拖起主机，放到同组另一台主机上即占用其位置；悬停时显示目标框。
+private struct HostReordering: ViewModifier {
+    @ObservedObject var store: AppStore
+    let host: HostProfile
+    @ViewState private var targeted = false
+    func body(content: Content) -> some View {
+        content
+            .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(host.markColor, lineWidth: 2).opacity(targeted ? 1 : 0))
+            .draggable("farport-host|" + host.id.uuidString)
+            .dropDestination(for: String.self) { items, _ in
+                guard let payload = items.first, payload.hasPrefix("farport-host|"), let id = UUID(uuidString: String(payload.dropFirst("farport-host|".count))),
+                      id != host.id, store.hosts.first(where: { $0.id == id })?.group == host.group else { return false }
+                store.moveHost(id, to: host.id)
+                return true
+            } isTargeted: { targeted = $0 }
+    }
+}
+
+extension View {
+    func hostReordering(store: AppStore, host: HostProfile) -> some View { modifier(HostReordering(store: store, host: host)) }
 }

@@ -134,6 +134,14 @@ final class AppStore: ObservableObject {
         hosts[index].lastSession = session
         do { try paths.save(hosts, to: paths.hosts) } catch { errorMessage = error.localizedDescription }
     }
+    /// 侧栏主机手动排序：只在同一分组内调整，顺序即 hosts.json 中的数组顺序。
+    func moveHost(_ id: UUID, to target: UUID) { reorderHosts { HostOrder.move(id, to: target, in: $0) } }
+    func moveHost(_ id: UUID, _ step: SessionOrder.Step) { reorderHosts { HostOrder.move(id, step, in: $0) } }
+    private func reorderHosts(_ change: ([HostProfile]) -> [HostProfile]) {
+        let reordered = change(hosts)
+        guard reordered.map(\.id) != hosts.map(\.id) else { return }
+        do { try paths.save(reordered, to: paths.hosts); hosts = reordered } catch { errorMessage = error.localizedDescription }
+    }
     func forgetCredentials(_ profile: HostProfile) {
         let query: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: "local.sshworkbench.credentials", kSecReturnAttributes as String: true, kSecMatchLimit as String: kSecMatchLimitAll]
         var results: CFTypeRef?

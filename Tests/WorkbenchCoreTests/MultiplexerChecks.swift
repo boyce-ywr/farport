@@ -49,6 +49,13 @@ func checkMultiplexers() throws {
     try expect(SessionOrder.move("a", .up, in: ["a", "b"]) == ["a", "b"] && SessionOrder.move("x", .top, in: ["a"]) == ["a"] && SessionOrder.move("a", to: "a", in: ["a", "b"]) == ["a", "b"], "边界：已在最前、不存在、放到自身不变")
     try expect(SessionOrder.rename("b", to: "z", in: ["a", "b"]) == ["a", "z"], "改名后顺序记录跟随")
     try expect(SessionOrder.key(hostID: nil, kind: .zellij) == "local|zellij" && SessionOrder.key(hostID: nil, kind: .tmux) != SessionOrder.key(hostID: UUID(), kind: .tmux), "排序记录按主机与工具区分")
+    let a = HostProfile(name: "a", group: "g1"), b = HostProfile(name: "b", group: "g2"), c = HostProfile(name: "c", group: "g1"), d = HostProfile(name: "d", group: "g1")
+    let hosts = [a, b, c, d]
+    func names(_ list: [HostProfile]) -> [String] { list.map(\.name) }
+    try expect(names(HostOrder.move(d.id, to: a.id, in: hosts)) == ["d", "a", "b", "c"] && names(HostOrder.move(a.id, to: d.id, in: hosts)) == ["b", "c", "d", "a"], "主机拖动：同组向上放到目标之前、向下放到目标之后")
+    try expect(names(HostOrder.move(a.id, to: b.id, in: hosts)) == ["a", "b", "c", "d"], "主机拖动：不同分组不移动")
+    try expect(names(HostOrder.move(c.id, .up, in: hosts)) == ["c", "a", "b", "d"] && names(HostOrder.move(a.id, .down, in: hosts)) == ["b", "c", "a", "d"] && names(HostOrder.move(d.id, .top, in: hosts)) == ["d", "a", "b", "c"], "主机菜单：按同组相邻主机上移、下移、移到最前，跳过其他分组")
+    try expect(names(HostOrder.move(a.id, .up, in: hosts)) == ["a", "b", "c", "d"] && names(HostOrder.move(b.id, .down, in: hosts)) == ["a", "b", "c", "d"], "主机菜单：组内已在最前或最后不变")
     print("PASS · Zellij/herdr 解析、名称校验、配置兼容与环境隔离")
 }
 
