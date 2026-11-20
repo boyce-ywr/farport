@@ -71,13 +71,13 @@ HTML 可引用同级目录或子目录中的图片、CSS、SVG、字体和媒体
 
 **旧版 0.1.8 构建 9 用户请更新**：当前版本包含预览服务闪退修复。
 
-从 [GitHub Releases](https://github.com/boyce-ywr/farport/releases/latest) 下载稳定版。**当前正式版为 0.1.28（34）**，会话页卡片可以拖动或用菜单手动排序；0.1.27 起 herdr 窗格里的 Docker 容器支持附件粘贴和路径点击，herdr 会话可停止、恢复和重命名；0.1.25 起本机终端可设置默认用 tmux、Zellij 或 herdr 打开；0.1.24 起“会话”页在 tmux 之外支持 Zellij 和 herdr，主机可设置连接时自动进入；终端输出中的路径可按住 Cmd 点击，tmux 中运行在 Docker 容器里的程序输出的路径也能按挂载换算后打开；0.1.21 起提供内嵌远程桌面第一期（预览）；0.1.19 起支持远端 tmux 中 Docker 容器的截图粘贴与全屏程序复制。验证范围及签名、安装限制见 [版本说明](docs/releases/0.1.28.md)。
+从 [GitHub Releases](https://github.com/boyce-ywr/farport/releases/latest) 下载稳定版。**当前正式版为 0.1.29（35）**，侧栏主机可以拖动或右键手动排序；0.1.28 起会话页卡片可手动排序；0.1.27 起 herdr 窗格里的 Docker 容器支持附件粘贴和路径点击，herdr 会话可停止、恢复和重命名；0.1.25 起本机终端可设置默认用 tmux、Zellij 或 herdr 打开；0.1.24 起“会话”页在 tmux 之外支持 Zellij 和 herdr，主机可设置连接时自动进入；终端输出中的路径可按住 Cmd 点击，tmux 中运行在 Docker 容器里的程序输出的路径也能按挂载换算后打开；0.1.21 起提供内嵌远程桌面第一期（预览）；0.1.19 起支持远端 tmux 中 Docker 容器的截图粘贴与全屏程序复制。验证范围及签名、安装限制见 [版本说明](docs/releases/0.1.29.md)。
 
 | 你的 Mac | 下载 |
 | --- | --- |
-| Apple Silicon（M 系列） | [Apple Silicon 版](https://github.com/boyce-ywr/farport/releases/download/v0.1.28/Farport-0.1.28-arm64.dmg) |
-| Intel 芯片 | [Intel 版](https://github.com/boyce-ywr/farport/releases/download/v0.1.28/Farport-0.1.28-x86_64.dmg) |
-| 不确定芯片，或需要两种架构 | [Universal 通用版](https://github.com/boyce-ywr/farport/releases/download/v0.1.28/Farport-0.1.28-universal.dmg) |
+| Apple Silicon（M 系列） | [Apple Silicon 版](https://github.com/boyce-ywr/farport/releases/download/v0.1.29/Farport-0.1.29-arm64.dmg) |
+| Intel 芯片 | [Intel 版](https://github.com/boyce-ywr/farport/releases/download/v0.1.29/Farport-0.1.29-x86_64.dmg) |
+| 不确定芯片，或需要两种架构 | [Universal 通用版](https://github.com/boyce-ywr/farport/releases/download/v0.1.29/Farport-0.1.29-universal.dmg) |
 
 1. 打开 DMG，将 **Farport.app** 拖入 **Applications（应用程序）**。
 2. 从“应用程序”打开 Farport。升级前请先保存工作并退出旧版。
