@@ -37,7 +37,7 @@ final class RemoteDesktopNSView: NSView {
             observers.append(NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] notification in
                 MainActor.assumeIsolated {
                     guard let self, notification.object as? NSWindow == nil || notification.object as? NSWindow === self.window else { return }
-                    self.releaseInput()
+                    self.releaseInput(); self.session?.focusChanged(false)
                 }
             })
         }
@@ -135,7 +135,7 @@ final class RemoteDesktopNSView: NSView {
         DispatchQueue.main.async { [weak self] in if let self, self.hasKeyboardFocus { self.session?.focusChanged(true) } }
         return true
     }
-    override func resignFirstResponder() -> Bool { releaseInput(); return true }
+    override func resignFirstResponder() -> Bool { releaseInput(); session?.focusChanged(false); return true }
     /// 失去焦点时松开所有按住的键和鼠标按钮，避免远端“粘键”。
     func releaseInput() {
         guard let client = session?.client else { pressedKeys = [:]; pressedModifiers = [:]; buttons = 0; return }

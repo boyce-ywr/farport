@@ -226,6 +226,11 @@ struct WorkspaceRoot: View {
             catch { fputs("FAIL · \(error.localizedDescription)\n", stderr); workspace.sessions.forEach { $0.close() }; exit(1) }
             return
         }
+        if screen == "desktop-ssh-clipboard" {
+            do { try await RemoteDesktopClipboardChecks.run(workspace: workspace); NSApp.terminate(nil) }
+            catch { fputs("FAIL · \(error.localizedDescription)\n", stderr); exit(1) }
+            return
+        }
         if screen == "host-order" {
             do { try await HostOrderChecks.run(workspace: workspace, output: URL(fileURLWithPath: output)); NSApp.terminate(nil) }
             catch { fputs("FAIL · \(error.localizedDescription)\n", stderr); exit(1) }

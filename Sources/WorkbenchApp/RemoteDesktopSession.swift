@@ -108,6 +108,10 @@ final class RemoteDesktopSession: ObservableObject, Identifiable {
     private var pendingRemoteClipboard: String?
     private var lastLocalChangeCount = NSPasteboard.general.changeCount
     private var ownPasteboardChange: Int?
+    /// SSH 剪贴板：是否处于桌面焦点内、最近一次与远端同步过的文本（避免把刚写入远端的内容又读回来）、被禁用的原因。
+    private var hadFocus = false
+    private var lastRemoteText: String?
+    private var sshClipboardBlocked: String?
     private var visible = true
     private var noticeTask: Task<Void, Never>?
     lazy var view: RemoteDesktopNSView = RemoteDesktopNSView(session: self)
@@ -216,6 +220,7 @@ final class RemoteDesktopSession: ObservableObject, Identifiable {
         if let saved = saveRequested { RemoteDesktopCredentialStore.save(saved.password, host: host.id, endpoint: endpoint, username: saved.username) }
         saveRequested = nil; skipSavedPassword = false; credentialError = nil
         lastCounters = (0, 0); lastFrames = 0
+        hadFocus = false; lastRemoteText = nil; sshClipboardBlocked = nil
         statsTimer?.invalidate()
         statsTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in MainActor.assumeIsolated { self?.updateStatus() } }
         client?.setPaused(!visible)
@@ -313,9 +318,18 @@ final class RemoteDesktopSession: ObservableObject, Identifiable {
         pasteboard.clearContents(); pasteboard.setString(text, forType: .string)
         ownPasteboardChange = pasteboard.changeCount; lastLocalChangeCount = pasteboard.changeCount
     }
-    /// 桌面获得或失去键盘焦点。获得时先补写远端暂存的内容，再把本地新复制的文本发给远端。
+    /// 桌面获得或失去键盘焦点。获得时先补写远端暂存的内容，再把本地新复制的文本发给远端；
+    /// macOS 远端经 SSH 同步：获得焦点时写入远端剪贴板，失去焦点时读回远端剪贴板。
     func focusChanged(_ focused: Bool) {
-        guard focused, clipboardEnabled, let client, phase == .connected else { return }
+        if !focused {
+            guard hadFocus else { return }
+            hadFocus = false
+            if clipboardEnabled, phase == .connected, usesSSHClipboard { pullRemoteClipboard() }
+            return
+        }
+        guard clipboardEnabled, let client, phase == .connected else { return }
+        hadFocus = true
+        if usesSSHClipboard { pushLocalClipboard(); return }
         if let pending = pendingRemoteClipboard { pendingRemoteClipboard = nil; writePasteboard(pending); return }
         let pasteboard = NSPasteboard.general
         guard pasteboard.changeCount != lastLocalChangeCount else { return }
@@ -323,5 +337,58 @@ final class RemoteDesktopSession: ObservableObject, Identifiable {
         guard pasteboard.changeCount != ownPasteboardChange, let text = pasteboard.string(forType: .string), !text.isEmpty else { return }
         guard text.utf8.count <= 1024 * 1024 else { show(L10n.text("剪贴板超过 1 MiB，未同步到远端。")); return }
         if !client.sendClipboard(text) { show(L10n.text("远端只支持 Latin-1 剪贴板，含中文等字符的内容未同步。")) }
+    }
+
+    // MARK: macOS 远端经 SSH 同步剪贴板
+    // macOS 自带的屏幕共享服务端不响应第三方客户端的标准 VNC 剪贴板消息（Apple 客户端使用私有扩展），
+    // 而桌面所在机器就是这台 SSH 主机时，可以直接用远端的 pbcopy / pbpaste 读写登录用户的剪贴板。
+
+    /// 桌面所在机器即 SSH 主机，且服务端为 macOS，且未发现 SSH 用户与屏幕登录用户不一致。
+    var usesSSHClipboard: Bool {
+        guard info?.isMacOS == true, sshClipboardBlocked == nil else { return false }
+        return Self.desktopIsSSHHost(endpoint: endpoint, host: host)
+    }
+    nonisolated static func desktopIsSSHHost(endpoint: ScreenSharingEndpoint, host: HostProfile) -> Bool {
+        let target = endpoint.host.lowercased()
+        return ["127.0.0.1", "localhost", "::1"].contains(target) || target == host.address.lowercased()
+    }
+    /// 远端命令：UTF-8 语言环境保证中文不乱码；先核对 SSH 用户就是屏幕当前登录用户，否则退出 3。
+    nonisolated static func sshClipboardCommand(_ action: String) -> String {
+        "/bin/sh -c " + RemotePath.quote("[ \"$(id -un)\" = \"$(stat -f %Su /dev/console 2>/dev/null)\" ] || exit 3; LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8 exec " + action)
+    }
+    private func pushLocalClipboard() {
+        let pasteboard = NSPasteboard.general
+        guard pasteboard.changeCount != lastLocalChangeCount else { return }
+        lastLocalChangeCount = pasteboard.changeCount
+        guard pasteboard.changeCount != ownPasteboardChange, let text = pasteboard.string(forType: .string), !text.isEmpty else { return }
+        guard text.utf8.count <= 1024 * 1024 else { show(L10n.text("剪贴板超过 1 MiB，未同步到远端。")); return }
+        let transport = transport, host = host, current = generation
+        Task {
+            let result = await Task.detached { try? transport.run(host, command: Self.sshClipboardCommand("pbcopy"), input: Data(text.utf8), cancellation: CancellationFlag(), timeout: 15, outputLimit: 4096) }.value
+            guard generation == current else { return }
+            handleSSHClipboard(result) { lastRemoteText = text }
+        }
+    }
+    private func pullRemoteClipboard() {
+        let transport = transport, host = host, current = generation, before = NSPasteboard.general.changeCount
+        Task {
+            let result = await Task.detached { try? transport.run(host, command: Self.sshClipboardCommand("pbpaste"), input: nil, cancellation: CancellationFlag(), timeout: 15, outputLimit: 1024 * 1024 + 1) }.value
+            guard generation == current else { return }
+            handleSSHClipboard(result) {
+                guard let result, result.output.count <= 1024 * 1024, let text = String(data: result.output, encoding: .utf8), !text.isEmpty, text != lastRemoteText else { return }
+                // 读取期间本机剪贴板又有新内容（用户在本机复制了别的），不覆盖。
+                guard NSPasteboard.general.changeCount == before else { return }
+                lastRemoteText = text; writePasteboard(text)
+            }
+        }
+    }
+    private func handleSSHClipboard(_ result: CommandResult?, success: () -> Void) {
+        guard let result else { show(L10n.text("经 SSH 同步剪贴板失败，请检查 SSH 连接。")); return }
+        if result.status == 3 {
+            sshClipboardBlocked = L10n.text("SSH 用户与远端屏幕登录用户不一致，无法经 SSH 同步剪贴板；已改用 VNC 协议同步（macOS 自带屏幕共享可能不响应）。")
+            show(sshClipboardBlocked!); return
+        }
+        guard result.status == 0 else { show(L10n.text("经 SSH 同步剪贴板失败：") + result.error.trimmingCharacters(in: .whitespacesAndNewlines)); return }
+        success()
     }
 }
